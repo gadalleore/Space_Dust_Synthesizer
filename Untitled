@@ -1,0 +1,9 @@
+cd build
+# Optional: clear old failed config
+rmdir /s /q .   # (type Y if prompted)
+
+# Generate VS project files
+cmake .. -G "Visual Studio 17 2022" -A x64
+
+# Build Release version
+cmake --build . --config Release
