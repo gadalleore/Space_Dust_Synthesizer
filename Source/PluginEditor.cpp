@@ -271,13 +271,13 @@ void MainPageComponent::resized()
     // Right side (~1/3): Two tall narrow vertical strips - Amp Envelope (left) + Master (right)
     
     // ============================================================================
-    // CONSTANTS - Consistent sizing and spacing (generous to prevent overlaps)
+    // CONSTANTS - Tight spacing for compact layout
     // ============================================================================
-    const int outerMargin = 13;           // Outer margin (increased by 10% from reduced value)
-    const int leftRightGap = 8;            // Horizontal gap between left and right sides (increased by 10% from reduced value)
-    const int topBottomGap = 15;           // Vertical gap between Oscillators and Filter (increased to give Color Level breathing room)
-    const int groupPadding = 13;          // Padding inside group boxes (horizontal increased by 10% from reduced value)
-    const int groupTitleHeight = 40;      // Height for group title area
+    const int outerMargin = 8;            // Compact outer margin
+    const int leftRightGap = 6;           // Horizontal gap between left and right sides
+    const int topBottomGap = 8;          // Vertical gap between Oscillators and Filter
+    const int groupPadding = 10;         // Padding inside group boxes
+    const int groupTitleHeight = 32;     // Compact height for group title area
     // CRITICAL: Main tab knob size must exactly match Modulation tab knob visual size
     // Modulation tab knobs appear ~75px in screenshots (correct, larger, compact-but-visible size)
     // Set Main tab knobs to 75px to match Modulation tab's visual appearance
@@ -286,12 +286,12 @@ void MainPageComponent::resized()
     const int labelGap = 5;                // Gap between label and control
     const int comboHeight = 26;           // Combo box height
     const int comboWidth = 110;           // Combo box width
-    const int verticalSpacing = 11;        // Vertical spacing between controls (reduced by 50%)
+    const int verticalSpacing = 6;       // Compact vertical spacing between controls
     // Increased horizontal spacing to give knobs more breathing room and match Modulation tab's balanced look
     const int horizontalSpacing = 50;      // Horizontal spacing between knobs (increased significantly: 18 + 32 = 50px for better visual balance)
     const int oscillatorTextBoxHeight = 12; // Text box height offset for oscillators (consistent for all)
     const int oscLabelSpacing = oscillatorTextBoxHeight + (labelGap / 2); // Consistent label spacing below text box (shared)
-    const int topPaddingReduction = 32; // ~50% reduction of (groupTitleHeight + groupPadding) for all boxes
+    const int topPaddingReduction = 24;  // Compact top padding reduction for all boxes
     
     // ============================================================================
     // CALCULATE DIMENSIONS
@@ -301,12 +301,12 @@ void MainPageComponent::resized()
     int oldTabWidth = static_cast<int>(getWidth() / 1.1);  // Reverse the 10% expansion
     int oldAvailableWidth = oldTabWidth - (2 * outerMargin);
     int availableWidth = getWidth() - (2 * outerMargin);  // New available width (10% larger)
-    int availableHeight = getHeight() - outerMargin - 20;
+    int availableHeight = getHeight() - outerMargin - 8;
     
     // Left side: Oscillators + Filter
     // Right side: Only Amp Envelope (Master section is now handled by main editor, always visible)
     // First calculate heights (needed before calculating widths)
-    const int oscHeightExtra = 30; // Extra height for Oscillators box to give Color Level breathing room
+    const int oscHeightExtra = 16;  // Compact extra height for Oscillators box
     int oscHeight = static_cast<int>(availableHeight * 0.48) + oscHeightExtra; // Oscillators gets 48% + extra pixels
     int filterHeight = availableHeight - oscHeight - topBottomGap; // Filter gets remaining
     
@@ -540,9 +540,9 @@ void MainPageComponent::resized()
     // Consistent spacing for Filter section
     // Reduce top padding by ~50%: move content up by topPaddingReduction from reduced() result (base padding reduction)
     // Reduce filterTopPadding by 50% as well to maintain proportional spacing (30px -> 15px)
-    const int filterTopPadding = 15; // Additional padding from top of filter content area (reduced for 50% overall reduction)
-    const int filterLabelGap = 8; // Gap between label and knob (for labels above)
-    const int filterRowGap = 20; // Vertical gap between filter rows
+    const int filterTopPadding = 10;  // Compact padding from top of filter content area
+    const int filterLabelGap = 6;     // Gap between label and knob
+    const int filterRowGap = 12;      // Compact vertical gap between filter rows
     
     // Apply base padding reduction (move up), then add reduced filterTopPadding
     int filterControlY = filterContent.getY() - topPaddingReduction + filterTopPadding;
@@ -644,6 +644,7 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     
     // Add all modulation page components as children (no outer Modulation box or title)
     addAndMakeVisible(parentEditor.lfo1Group);
+    addAndMakeVisible(parentEditor.lfo1EnabledButton);
     addAndMakeVisible(parentEditor.lfo1WaveformCombo);
     addAndMakeVisible(parentEditor.lfo1WaveformLabel);
     addAndMakeVisible(parentEditor.lfo1TargetCombo);
@@ -663,6 +664,7 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     addAndMakeVisible(parentEditor.lfo1RetriggerButton);
     
     addAndMakeVisible(parentEditor.lfo2Group);
+    addAndMakeVisible(parentEditor.lfo2EnabledButton);
     addAndMakeVisible(parentEditor.lfo2WaveformCombo);
     addAndMakeVisible(parentEditor.lfo2WaveformLabel);
     addAndMakeVisible(parentEditor.lfo2TargetCombo);
@@ -726,13 +728,13 @@ void ModulationPageComponent::paint(juce::Graphics& g)
 
 void ModulationPageComponent::resized()
 {
-    // Modulation page layout: LFO1 and LFO2 only (no outer Modulation box or title)
-    const int outerMargin = 11;  // Increased by 10% from reduced value
+    // Modulation page layout: LFO1 and LFO2 only (compact)
+    const int outerMargin = 8;
     auto modulationContent = juce::Rectangle<int>(
-        outerMargin + 13,  // Increased by 10% from reduced value (was 12)
-        20,
-        getWidth() - 2 * outerMargin - 28,  // Increased by 10% from reduced value (was 25)
-        getHeight() - 40
+        outerMargin + 8,
+        8,
+        getWidth() - 2 * outerMargin - 20,
+        getHeight() - 24
     );
     
     // Larger gap between LFO columns so boxes do not intersect
@@ -749,9 +751,9 @@ void ModulationPageComponent::resized()
     const int modLabelGap = 3;
     const int modRowSpacing = 6;
     const int modRateValueGap = 16;
-    // Extra padding inside each LFO box so content stays away from borders
-    const int lfoBoxPadH = 10;  // Increased by 10% from reduced value
-    const int lfoBoxPadV = 28;
+    // Extra padding inside each LFO box
+    const int lfoBoxPadH = 8;
+    const int lfoBoxPadV = 16;  // Compact vertical padding
     const int lfoContentTop = 4;
     
     // Check if filter sections are shown (each LFO has its own toggle)
@@ -809,6 +811,12 @@ void ModulationPageComponent::resized()
     int lfo1CurrentY = lfo1Content.getY() + lfoContentTop;
     int controlWidth = modComboWidth;
     int lfo1CentreX = lfo1Content.getX() + lfo1Content.getWidth() / 2;
+    const int modOnBtnW = 48;
+    const int modOnBtnH = 20;
+    
+    // LFO1 On button (upper-left like Effects tab)
+    parentEditor.lfo1EnabledButton.setBounds(lfo1Content.getX(), lfo1CurrentY, modOnBtnW, modOnBtnH);
+    lfo1CurrentY += modOnBtnH + modRowSpacing;
     
     // LFO1 Destination (Target) - above Waveform (more important)
     parentEditor.lfo1TargetLabel.setBounds(lfo1CentreX - controlWidth / 2, lfo1CurrentY, controlWidth, modLabelHeight);
@@ -919,6 +927,10 @@ void ModulationPageComponent::resized()
     auto lfo2Content = lfo2Area.reduced(lfoBoxPadH, lfoBoxPadV);
     int lfo2CurrentY = lfo2Content.getY() + lfoContentTop;
     int lfo2CentreX = lfo2Content.getX() + lfo2Content.getWidth() / 2;
+    
+    // LFO2 On button (upper-left like Effects tab)
+    parentEditor.lfo2EnabledButton.setBounds(lfo2Content.getX(), lfo2CurrentY, modOnBtnW, modOnBtnH);
+    lfo2CurrentY += modOnBtnH + modRowSpacing;
     
     // LFO2 Destination (Target) - above Waveform (more important)
     parentEditor.lfo2TargetLabel.setBounds(lfo2CentreX - controlWidth / 2, lfo2CurrentY, controlWidth, modLabelHeight);
@@ -1119,6 +1131,31 @@ EffectsPageComponent::EffectsPageComponent(SpaceDustAudioProcessorEditor& editor
     addAndMakeVisible(parentEditor.phaserStereoOffsetLabel);
     addAndMakeVisible(parentEditor.phaserVintageModeButton);
     addAndMakeVisible(parentEditor.phaserVintageModeLabel);
+    addAndMakeVisible(parentEditor.tranceGateGroup);
+    addAndMakeVisible(parentEditor.tranceGateEnabledButton);
+    addAndMakeVisible(parentEditor.tranceGateEnabledLabel);
+    addAndMakeVisible(parentEditor.tranceGatePreEffectButton);
+    addAndMakeVisible(parentEditor.tranceGatePreEffectLabel);
+    addAndMakeVisible(parentEditor.tranceGateStepsCombo);
+    addAndMakeVisible(parentEditor.tranceGateStepsLabel);
+    addAndMakeVisible(parentEditor.tranceGateSyncButton);
+    addAndMakeVisible(parentEditor.tranceGateSyncLabel);
+    addAndMakeVisible(parentEditor.tranceGateRateSlider);
+    addAndMakeVisible(parentEditor.tranceGateRateLabel);
+    addAndMakeVisible(parentEditor.tranceGateAttackSlider);
+    addAndMakeVisible(parentEditor.tranceGateReleaseSlider);
+    addAndMakeVisible(parentEditor.tranceGateMixSlider);
+    addAndMakeVisible(parentEditor.tranceGateAttackLabel);
+    addAndMakeVisible(parentEditor.tranceGateReleaseLabel);
+    addAndMakeVisible(parentEditor.tranceGateMixLabel);
+    addAndMakeVisible(parentEditor.tranceGateStep1Button);
+    addAndMakeVisible(parentEditor.tranceGateStep2Button);
+    addAndMakeVisible(parentEditor.tranceGateStep3Button);
+    addAndMakeVisible(parentEditor.tranceGateStep4Button);
+    addAndMakeVisible(parentEditor.tranceGateStep5Button);
+    addAndMakeVisible(parentEditor.tranceGateStep6Button);
+    addAndMakeVisible(parentEditor.tranceGateStep7Button);
+    addAndMakeVisible(parentEditor.tranceGateStep8Button);
     auto& apvts = parentEditor.audioProcessor.getValueTreeState();
     apvts.addParameterListener(juce::ParameterID{"delayFilterShow", 1}.getParamID(), this);
     apvts.addParameterListener(juce::ParameterID{"reverbFilterShow", 1}.getParamID(), this);
@@ -1199,54 +1236,51 @@ void EffectsPageComponent::paint(juce::Graphics& g)
 void EffectsPageComponent::resized()
 {
     auto r = getLocalBounds();
-    const int pad = 16;
-    const int colGap = 12;    // Gap between effect columns
-    const int gap = 12;       // Consistent spacing between elements
-    const int labelGap = 4;
-    const int knobSize = 56;  // Uniform knob size across all Effects (Delay, Reverb, Grain Delay)
+    const int pad = 8;        // Tighter padding
+    const int colGap = 8;     // Gap between effect columns
+    const int gap = 6;        // Tighter spacing between elements
+    const int labelGap = 2;
+    const int knobSize = 56;  // Uniform knob size for Reverb, Grain Delay, Phaser, Trance Gate
+    const int delayKnobSize = 44;  // Smaller knobs for Delay (Time, Decay, Mix in one row)
     const int filterLabelW = 62;  // Matches knob+fGap slot so "HP Cutoff" / "LP Cutoff" fit
     const int btnW = 52;
     const int btnH = 22;
     const int labelH = 14;    // Slightly taller to prevent label clipping
+    const int groupTitleH = 14;  // Space below group label (keeps On buttons clear of box border)
     
-    // Three columns: Delay | Reverb(+Phaser below) | Grain Delay (wider cols = less squish when filters on)
+    // Three columns: Delay(+Trance Gate below) | Reverb(+Phaser below) | Grain Delay
     const int colW = (r.getWidth() - 2 * pad - 2 * colGap) / 3;
     int delayColX = pad;
     int reverbColX = pad + colW + colGap;
     int grainColX = pad + 2 * (colW + colGap);
     
-    // ---- Delay section (far left) - layout first to compute content height ----
+    // ---- Delay section (far left) - On button upper-left below label, Time+Decay+Mix in one row ----
     int cx = delayColX + colW / 2;
-    int y = pad;
+    int y = pad + groupTitleH;
     
     auto placeLabel = [&](juce::Label& lbl, int w) { lbl.setBounds(cx - w/2, y, w, labelH); y += labelH + labelGap; };
     
-    placeLabel(parentEditor.delayEnabledLabel, btnW);
-    parentEditor.delayEnabledButton.setBounds(cx - btnW/2, y, btnW, btnH);
+    // On button: upper-left corner, right below the group label
+    parentEditor.delayEnabledButton.setBounds(delayColX + pad, y, btnW, btnH);
     y += btnH + gap;
     
     placeLabel(parentEditor.delaySyncLabel, btnW);
     parentEditor.delaySyncButton.setBounds(cx - btnW/2, y, btnW, btnH);
     y += btnH + gap;
     
-    // Time row: [Time knob] centered (unified straight/dotted/triplet list, no toggles)
-    int timeLeft = cx - knobSize / 2;
-    parentEditor.delayRateLabel.setBounds(timeLeft, y, knobSize, labelH);
+    // Time | Decay | Mix - all three in one row (smaller knobs)
+    const int dKg = 6;
+    const int dRowW = 3 * delayKnobSize + 2 * dKg;
+    int dRowLeft = cx - dRowW / 2;
+    parentEditor.delayRateLabel.setBounds(dRowLeft, y, delayKnobSize, labelH);
+    parentEditor.delayDecayLabel.setBounds(dRowLeft + delayKnobSize + dKg, y, delayKnobSize, labelH);
+    parentEditor.delayDryWetLabel.setBounds(dRowLeft + 2 * (delayKnobSize + dKg), y, delayKnobSize, labelH);
     y += labelH + labelGap;
-    parentEditor.delayFreeRateSlider.setBounds(timeLeft, y, knobSize, knobSize);
-    parentEditor.delayRateValueLabel.setBounds(timeLeft, y + knobSize + 2, knobSize, 12);
-    y += knobSize + 12 + gap;
-    
-    // Decay | Mix (side by side)
-    int pairGap = 10;
-    int pairW = 2 * knobSize + pairGap;
-    int pairLeft = cx - pairW / 2;
-    parentEditor.delayDecayLabel.setBounds(pairLeft, y, knobSize, labelH);
-    parentEditor.delayDryWetLabel.setBounds(pairLeft + knobSize + pairGap, y, knobSize, labelH);
-    y += labelH + labelGap;
-    parentEditor.delayDecaySlider.setBounds(pairLeft, y, knobSize, knobSize);
-    parentEditor.delayDryWetSlider.setBounds(pairLeft + knobSize + pairGap, y, knobSize, knobSize);
-    y += knobSize + gap;
+    parentEditor.delayFreeRateSlider.setBounds(dRowLeft, y, delayKnobSize, delayKnobSize);
+    parentEditor.delayDecaySlider.setBounds(dRowLeft + delayKnobSize + dKg, y, delayKnobSize, delayKnobSize);
+    parentEditor.delayDryWetSlider.setBounds(dRowLeft + 2 * (delayKnobSize + dKg), y, delayKnobSize, delayKnobSize);
+    parentEditor.delayRateValueLabel.setBounds(dRowLeft, y + delayKnobSize + 2, delayKnobSize, 12);
+    y += delayKnobSize + 12 + gap;
     
     placeLabel(parentEditor.delayPingPongLabel, 100);
     parentEditor.delayPingPongButton.setBounds(cx - 50, y, 100, btnH);
@@ -1256,7 +1290,7 @@ void EffectsPageComponent::resized()
     parentEditor.delayFilterShowButton.setBounds(cx - btnW/2, y, btnW, btnH);
     y += btnH + gap;
     
-    // ---- Filter section: HP Cutoff | HP Res | LP Cutoff | LP Res, Warm Sat ----
+    // ---- Filter section: HP Cutoff | HP Res | LP Cutoff | LP Res, Warm Sat (same knob size as other effects) ----
     bool filterShow = *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("delayFilterShow") > 0.5f;
     if (filterShow)
     {
@@ -1283,16 +1317,78 @@ void EffectsPageComponent::resized()
     const int delayContentHeight = y + pad;
     parentEditor.delayGroup.setBounds(delayColX, 0, colW, delayContentHeight);
 
-    // ---- Reverb section (center column) ----
+    // ---- Phaser section (below Delay in left column) ----
+    const int sectionGap = 8;  // Tighter gap between effect sections
+    int phaserStartY = delayContentHeight + sectionGap;
+    int pCx = delayColX + colW / 2;
+    int pY = phaserStartY + pad + groupTitleH;
+    const int pKnobSize = knobSize;
+    const int pBtnW = 48;
+    const int pBtnH = 20;
+    const int pLabelH = labelH;
+    const int pLabelGap = labelGap;
+    const int pGap = gap;
+
+    // On button: upper-left below label
+    parentEditor.phaserEnabledButton.setBounds(delayColX + pad, pY, pBtnW, pBtnH);
+    pY += pBtnH + pGap;
+
+    // Rate | Depth | Feedback - all three in one row
+    const int pKg = 6;
+    const int pRowW = 3 * pKnobSize + 2 * pKg;
+    int pRowLeft = pCx - pRowW / 2;
+    parentEditor.phaserRateLabel.setBounds(pRowLeft, pY, pKnobSize, pLabelH);
+    parentEditor.phaserDepthLabel.setBounds(pRowLeft + pKnobSize + pKg, pY, pKnobSize, pLabelH);
+    parentEditor.phaserFeedbackLabel.setBounds(pRowLeft + 2 * (pKnobSize + pKg), pY, pKnobSize, pLabelH);
+    pY += pLabelH + pLabelGap;
+    parentEditor.phaserRateSlider.setBounds(pRowLeft, pY, pKnobSize, pKnobSize);
+    parentEditor.phaserDepthSlider.setBounds(pRowLeft + pKnobSize + pKg, pY, pKnobSize, pKnobSize);
+    parentEditor.phaserFeedbackSlider.setBounds(pRowLeft + 2 * (pKnobSize + pKg), pY, pKnobSize, pKnobSize);
+    pY += pKnobSize + pGap;
+
+    parentEditor.phaserScriptModeLabel.setBounds(pCx - 50, pY, 100, pLabelH);
+    pY += pLabelH + pLabelGap;
+    parentEditor.phaserScriptModeButton.setBounds(pCx - 50, pY, 100, pBtnH);
+    pY += pBtnH + pGap;
+
+    // Width | Center - side by side to save vertical space
+    const int pPairGap = 8;
+    const int pPairW = 2 * pKnobSize + pPairGap;
+    int pPairLeft = pCx - pPairW / 2;
+    parentEditor.phaserStereoOffsetLabel.setBounds(pPairLeft, pY, pKnobSize, pLabelH);
+    parentEditor.phaserCentreLabel.setBounds(pPairLeft + pKnobSize + pPairGap, pY, pKnobSize, pLabelH);
+    pY += pLabelH + pLabelGap;
+    parentEditor.phaserStereoOffsetSlider.setBounds(pPairLeft, pY, pKnobSize, pKnobSize);
+    parentEditor.phaserCentreSlider.setBounds(pPairLeft + pKnobSize + pPairGap, pY, pKnobSize, pKnobSize);
+    pY += pKnobSize + pGap;
+
+    parentEditor.phaserStagesLabel.setBounds(pCx - 60, pY, 120, pLabelH);
+    pY += pLabelH + pLabelGap;
+    parentEditor.phaserStagesCombo.setBounds(pCx - 60, pY, 120, 20);
+    pY += 24 + pGap;
+
+    // Vintage toggle - no label above it
+    parentEditor.phaserVintageModeButton.setBounds(pCx - 50, pY, 100, pBtnH);
+    pY += pBtnH + pGap;
+
+    // Mix knob - always the lowest knob
+    parentEditor.phaserMixLabel.setBounds(pCx - pKnobSize/2, pY, pKnobSize, pLabelH);
+    pY += pLabelH + pLabelGap;
+    parentEditor.phaserMixSlider.setBounds(pCx - pKnobSize/2, pY, pKnobSize, pKnobSize);
+    pY += pKnobSize + pad;
+
+    const int phaserContentHeight = pY - phaserStartY;
+    parentEditor.phaserGroup.setBounds(delayColX, phaserStartY, colW, phaserContentHeight);
+
+    // ---- Reverb section (center column) - On button upper-left, Mix lowest ----
     int rCx = reverbColX + colW / 2;
-    int rY = pad;
-    const int rKnobSize = knobSize;  // Same as Delay and Grain Delay
+    int rY = pad + groupTitleH;
+    const int rKnobSize = knobSize;
     const int rBtnW = 48;
     const int rBtnH = 20;
     
-    parentEditor.reverbEnabledLabel.setBounds(rCx - rBtnW/2, rY, rBtnW, labelH);
-    rY += labelH + labelGap;
-    parentEditor.reverbEnabledButton.setBounds(rCx - rBtnW/2, rY, rBtnW, rBtnH);
+    // On button: upper-left below label
+    parentEditor.reverbEnabledButton.setBounds(reverbColX + pad, rY, rBtnW, rBtnH);
     rY += rBtnH + gap;
     
     parentEditor.reverbTypeLabel.setBounds(rCx - 60, rY, 120, labelH);
@@ -1300,18 +1396,13 @@ void EffectsPageComponent::resized()
     parentEditor.reverbTypeCombo.setBounds(rCx - 60, rY, 120, 20);
     rY += 24 + gap;
     
-    // Row 1: Mix | Decay
-    int rPairGap = 8;
-    int rPairW = 2 * rKnobSize + rPairGap;
-    int rPairLeft = rCx - rPairW / 2;
-    parentEditor.reverbWetMixLabel.setBounds(rPairLeft, rY, rKnobSize, labelH);
-    parentEditor.reverbDecayTimeLabel.setBounds(rPairLeft + rKnobSize + rPairGap, rY, rKnobSize, labelH);
+    // Decay (Mix moves to bottom)
+    parentEditor.reverbDecayTimeLabel.setBounds(rCx - rKnobSize/2, rY, rKnobSize, labelH);
     rY += labelH + labelGap;
-    parentEditor.reverbWetMixSlider.setBounds(rPairLeft, rY, rKnobSize, rKnobSize);
-    parentEditor.reverbDecayTimeSlider.setBounds(rPairLeft + rKnobSize + rPairGap, rY, rKnobSize, rKnobSize);
+    parentEditor.reverbDecayTimeSlider.setBounds(rCx - rKnobSize/2, rY, rKnobSize, rKnobSize);
     rY += rKnobSize + gap;
     
-    // Filter toggle (like delay)
+    // Filter toggle
     parentEditor.reverbFilterShowButton.setBounds(rCx - btnW/2, rY, btnW, btnH);
     rY += btnH + gap;
     
@@ -1334,118 +1425,122 @@ void EffectsPageComponent::resized()
         parentEditor.reverbFilterWarmSaturationButton.setBounds(rCx - 60, rY, 120, btnH);
         rY += btnH + gap;
     }
-    rY += pad;
+    
+    // Mix knob - always the lowest knob
+    parentEditor.reverbWetMixLabel.setBounds(rCx - rKnobSize/2, rY, rKnobSize, labelH);
+    rY += labelH + labelGap;
+    parentEditor.reverbWetMixSlider.setBounds(rCx - rKnobSize/2, rY, rKnobSize, rKnobSize);
+    rY += rKnobSize + pad;
     
     const int reverbContentHeight = rY;
     parentEditor.reverbGroup.setBounds(reverbColX, 0, colW, reverbContentHeight);
 
-    // ---- Phaser section (below Reverb in center column) ----
-    const int sectionGap = 16;
-    int phaserStartY = reverbContentHeight + sectionGap;
-    int pCx = reverbColX + colW / 2;
-    int pY = phaserStartY + pad;
-    const int pKnobSize = knobSize;
-    const int pBtnW = 48;
-    const int pBtnH = 20;
-    const int pLabelH = labelH;
-    const int pLabelGap = labelGap;
-    const int pGap = gap;
+    // ---- Trance Gate section (below Reverb in center column) ----
+    const int gateSectionGap = 8;  // Tighter gap between effect sections
+    int gateStartY = reverbContentHeight + gateSectionGap;
+    int tCx = reverbColX + colW / 2;
+    int tY = gateStartY + pad + groupTitleH;
+    const int tKnobSize = knobSize;
+    const int tBtnW = 48;
+    const int tBtnH = 20;
+    const int tLabelH = labelH;
+    const int tGap = gap;
 
-    parentEditor.phaserEnabledLabel.setBounds(pCx - pBtnW/2, pY, pBtnW, pLabelH);
-    pY += pLabelH + pLabelGap;
-    parentEditor.phaserEnabledButton.setBounds(pCx - pBtnW/2, pY, pBtnW, pBtnH);
-    pY += pBtnH + pGap;
+    // On button: upper-left below label
+    parentEditor.tranceGateEnabledButton.setBounds(reverbColX + pad, tY, tBtnW, tBtnH);
+    tY += tBtnH + tGap;
 
-    parentEditor.phaserRateLabel.setBounds(pCx - pKnobSize/2, pY, pKnobSize, pLabelH);
-    pY += pLabelH + pLabelGap;
-    parentEditor.phaserRateSlider.setBounds(pCx - pKnobSize/2, pY, pKnobSize, pKnobSize);
-    pY += pKnobSize + pGap;
+    parentEditor.tranceGatePreEffectButton.setBounds(tCx - 60, tY, 120, tBtnH);
+    tY += tBtnH + tGap;
 
-    int pPairGap = 8;
-    int pPairW = 2 * pKnobSize + pPairGap;
-    int pPairLeft = pCx - pPairW / 2;
-    parentEditor.phaserDepthLabel.setBounds(pPairLeft, pY, pKnobSize, pLabelH);
-    parentEditor.phaserFeedbackLabel.setBounds(pPairLeft + pKnobSize + pPairGap, pY, pKnobSize, pLabelH);
-    pY += pLabelH + pLabelGap;
-    parentEditor.phaserDepthSlider.setBounds(pPairLeft, pY, pKnobSize, pKnobSize);
-    parentEditor.phaserFeedbackSlider.setBounds(pPairLeft + pKnobSize + pPairGap, pY, pKnobSize, pKnobSize);
-    pY += pKnobSize + pGap;
+    parentEditor.tranceGateStepsLabel.setBounds(tCx - 60, tY, 120, tLabelH);
+    tY += tLabelH + labelGap;
+    parentEditor.tranceGateStepsCombo.setBounds(tCx - 60, tY, 120, 20);
+    tY += 24 + tGap;
 
-    parentEditor.phaserScriptModeLabel.setBounds(pCx - 50, pY, 100, pLabelH);
-    pY += pLabelH + pLabelGap;
-    parentEditor.phaserScriptModeButton.setBounds(pCx - 50, pY, 100, pBtnH);
-    pY += pBtnH + pGap;
+    parentEditor.tranceGateSyncButton.setBounds(tCx - tBtnW/2, tY, tBtnW, tBtnH);
+    tY += tBtnH + tGap;
 
-    parentEditor.phaserMixLabel.setBounds(pPairLeft, pY, pKnobSize, pLabelH);
-    parentEditor.phaserCentreLabel.setBounds(pPairLeft + pKnobSize + pPairGap, pY, pKnobSize, pLabelH);
-    pY += pLabelH + pLabelGap;
-    parentEditor.phaserMixSlider.setBounds(pPairLeft, pY, pKnobSize, pKnobSize);
-    parentEditor.phaserCentreSlider.setBounds(pPairLeft + pKnobSize + pPairGap, pY, pKnobSize, pKnobSize);
-    pY += pKnobSize + pGap;
+    // Rate | Attack | Release - all three in one row
+    const int tKg = 6;
+    const int tRowW = 3 * tKnobSize + 2 * tKg;
+    int tRowLeft = tCx - tRowW / 2;
+    parentEditor.tranceGateRateLabel.setBounds(tRowLeft, tY, tKnobSize, tLabelH);
+    parentEditor.tranceGateAttackLabel.setBounds(tRowLeft + tKnobSize + tKg, tY, tKnobSize, tLabelH);
+    parentEditor.tranceGateReleaseLabel.setBounds(tRowLeft + 2 * (tKnobSize + tKg), tY, tKnobSize, tLabelH);
+    tY += tLabelH + labelGap;
+    parentEditor.tranceGateRateSlider.setBounds(tRowLeft, tY, tKnobSize, tKnobSize);
+    parentEditor.tranceGateAttackSlider.setBounds(tRowLeft + tKnobSize + tKg, tY, tKnobSize, tKnobSize);
+    parentEditor.tranceGateReleaseSlider.setBounds(tRowLeft + 2 * (tKnobSize + tKg), tY, tKnobSize, tKnobSize);
+    tY += tKnobSize + tGap;
 
-    parentEditor.phaserStagesLabel.setBounds(pCx - 60, pY, 120, pLabelH);
-    pY += pLabelH + pLabelGap;
-    parentEditor.phaserStagesCombo.setBounds(pCx - 60, pY, 120, 20);
-    pY += 24 + pGap;
+    // 8 step buttons in a row (compact)
+    const int stepBtnSize = 24;
+    const int stepTotalW = 8 * stepBtnSize + 7 * 4;
+    int stepLeft = tCx - stepTotalW / 2;
+    for (int s = 0; s < 8; ++s)
+    {
+        juce::ToggleButton* btn = nullptr;
+        switch (s)
+        {
+            case 0: btn = &parentEditor.tranceGateStep1Button; break;
+            case 1: btn = &parentEditor.tranceGateStep2Button; break;
+            case 2: btn = &parentEditor.tranceGateStep3Button; break;
+            case 3: btn = &parentEditor.tranceGateStep4Button; break;
+            case 4: btn = &parentEditor.tranceGateStep5Button; break;
+            case 5: btn = &parentEditor.tranceGateStep6Button; break;
+            case 6: btn = &parentEditor.tranceGateStep7Button; break;
+            case 7: btn = &parentEditor.tranceGateStep8Button; break;
+        }
+        if (btn)
+            btn->setBounds(stepLeft + s * (stepBtnSize + 4), tY, stepBtnSize, stepBtnSize);
+    }
+    tY += stepBtnSize + tGap;
 
-    parentEditor.phaserStereoOffsetLabel.setBounds(pCx - pKnobSize/2, pY, pKnobSize, pLabelH);
-    pY += pLabelH + pLabelGap;
-    parentEditor.phaserStereoOffsetSlider.setBounds(pCx - pKnobSize/2, pY, pKnobSize, pKnobSize);
-    pY += pKnobSize + pGap;
+    // Mix knob - always the lowest knob
+    parentEditor.tranceGateMixLabel.setBounds(tCx - tKnobSize/2, tY, tKnobSize, tLabelH);
+    tY += tLabelH + labelGap;
+    parentEditor.tranceGateMixSlider.setBounds(tCx - tKnobSize/2, tY, tKnobSize, tKnobSize);
+    tY += tKnobSize + pad;
 
-    parentEditor.phaserVintageModeLabel.setBounds(pCx - 50, pY, 100, pLabelH);
-    pY += pLabelH + pLabelGap;
-    parentEditor.phaserVintageModeButton.setBounds(pCx - 50, pY, 100, pBtnH);
-    pY += pBtnH + pad;
+    const int gateContentHeight = tY - gateStartY;
+    parentEditor.tranceGateGroup.setBounds(reverbColX, gateStartY, colW, gateContentHeight);
 
-    const int phaserContentHeight = pY - phaserStartY;
-    parentEditor.phaserGroup.setBounds(reverbColX, phaserStartY, colW, phaserContentHeight);
-
-    // ---- Grain Delay section (right column) ----
+    // ---- Grain Delay section (right column) - Time+Size+Decay, Pitch+Density+Jitter rows, Mix lowest ----
     int gCx = grainColX + colW / 2;
-    int gY = pad;
-    const int gKnobSize = knobSize;  // Same as Delay and Reverb
+    int gY = pad + groupTitleH;
+    const int gKnobSize = knobSize;
     const int gBtnW = 52;
     const int gBtnH = 22;
     const int gLabelH = labelH;
     const int gLabelGap = labelGap;
     const int gGap = gap;
 
-    parentEditor.grainDelayEnabledLabel.setBounds(gCx - gBtnW/2, gY, gBtnW, gLabelH);
-    gY += gLabelH + gLabelGap;
-    parentEditor.grainDelayEnabledButton.setBounds(gCx - gBtnW/2, gY, gBtnW, gBtnH);
+    // On button: upper-left below label
+    parentEditor.grainDelayEnabledButton.setBounds(grainColX + pad, gY, gBtnW, gBtnH);
     gY += gBtnH + gGap;
 
-    parentEditor.grainDelayTimeLabel.setBounds(gCx - gKnobSize/2, gY, gKnobSize, gLabelH);
+    // Row 1: Time | Size | Decay
+    const int gKg = 6;
+    const int gRowW = 3 * gKnobSize + 2 * gKg;
+    int gRowLeft = gCx - gRowW / 2;
+    parentEditor.grainDelayTimeLabel.setBounds(gRowLeft, gY, gKnobSize, gLabelH);
+    parentEditor.grainDelaySizeLabel.setBounds(gRowLeft + gKnobSize + gKg, gY, gKnobSize, gLabelH);
+    parentEditor.grainDelayDecayLabel.setBounds(gRowLeft + 2 * (gKnobSize + gKg), gY, gKnobSize, gLabelH);
     gY += gLabelH + gLabelGap;
-    parentEditor.grainDelayTimeSlider.setBounds(gCx - gKnobSize/2, gY, gKnobSize, gKnobSize);
+    parentEditor.grainDelayTimeSlider.setBounds(gRowLeft, gY, gKnobSize, gKnobSize);
+    parentEditor.grainDelaySizeSlider.setBounds(gRowLeft + gKnobSize + gKg, gY, gKnobSize, gKnobSize);
+    parentEditor.grainDelayDecaySlider.setBounds(gRowLeft + 2 * (gKnobSize + gKg), gY, gKnobSize, gKnobSize);
     gY += gKnobSize + gGap;
 
-    int gPairGap = 10;
-    int gPairW = 2 * gKnobSize + gPairGap;
-    int gPairLeft = gCx - gPairW / 2;
-    // Row: Size | Decay
-    parentEditor.grainDelaySizeLabel.setBounds(gPairLeft, gY, gKnobSize, gLabelH);
-    parentEditor.grainDelayDecayLabel.setBounds(gPairLeft + gKnobSize + gPairGap, gY, gKnobSize, gLabelH);
+    // Row 2: Pitch | Density | Jitter
+    parentEditor.grainDelayPitchLabel.setBounds(gRowLeft, gY, gKnobSize, gLabelH);
+    parentEditor.grainDelayDensityLabel.setBounds(gRowLeft + gKnobSize + gKg, gY, gKnobSize, gLabelH);
+    parentEditor.grainDelayJitterLabel.setBounds(gRowLeft + 2 * (gKnobSize + gKg), gY, gKnobSize, gLabelH);
     gY += gLabelH + gLabelGap;
-    parentEditor.grainDelaySizeSlider.setBounds(gPairLeft, gY, gKnobSize, gKnobSize);
-    parentEditor.grainDelayDecaySlider.setBounds(gPairLeft + gKnobSize + gPairGap, gY, gKnobSize, gKnobSize);
-    gY += gKnobSize + gGap;
-
-    // Row: Mix | Pitch
-    parentEditor.grainDelayMixLabel.setBounds(gPairLeft, gY, gKnobSize, gLabelH);
-    parentEditor.grainDelayPitchLabel.setBounds(gPairLeft + gKnobSize + gPairGap, gY, gKnobSize, gLabelH);
-    gY += gLabelH + gLabelGap;
-    parentEditor.grainDelayMixSlider.setBounds(gPairLeft, gY, gKnobSize, gKnobSize);
-    parentEditor.grainDelayPitchSlider.setBounds(gPairLeft + gKnobSize + gPairGap, gY, gKnobSize, gKnobSize);
-    gY += gKnobSize + gGap;
-
-    // Row: Density | Jitter
-    parentEditor.grainDelayDensityLabel.setBounds(gPairLeft, gY, gKnobSize, gLabelH);
-    parentEditor.grainDelayJitterLabel.setBounds(gPairLeft + gKnobSize + gPairGap, gY, gKnobSize, gLabelH);
-    gY += gLabelH + gLabelGap;
-    parentEditor.grainDelayDensitySlider.setBounds(gPairLeft, gY, gKnobSize, gKnobSize);
-    parentEditor.grainDelayJitterSlider.setBounds(gPairLeft + gKnobSize + gPairGap, gY, gKnobSize, gKnobSize);
+    parentEditor.grainDelayPitchSlider.setBounds(gRowLeft, gY, gKnobSize, gKnobSize);
+    parentEditor.grainDelayDensitySlider.setBounds(gRowLeft + gKnobSize + gKg, gY, gKnobSize, gKnobSize);
+    parentEditor.grainDelayJitterSlider.setBounds(gRowLeft + 2 * (gKnobSize + gKg), gY, gKnobSize, gKnobSize);
     gY += gKnobSize + gGap;
 
     // Ping-Pong toggle
@@ -1477,7 +1572,12 @@ void EffectsPageComponent::resized()
         parentEditor.grainDelayFilterWarmSaturationButton.setBounds(gCx - 60, gY, 120, gBtnH);
         gY += gBtnH + gGap;
     }
-    gY += pad;
+
+    // Mix knob - always the lowest knob
+    parentEditor.grainDelayMixLabel.setBounds(gCx - gKnobSize/2, gY, gKnobSize, gLabelH);
+    gY += gLabelH + gLabelGap;
+    parentEditor.grainDelayMixSlider.setBounds(gCx - gKnobSize/2, gY, gKnobSize, gKnobSize);
+    gY += gKnobSize + pad;
 
     const int grainContentHeight = gY;
     parentEditor.grainDelayGroup.setBounds(grainColX, 0, colW, grainContentHeight);
@@ -1525,6 +1625,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
       reverbGroup("Reverb", "Reverb"),
       grainDelayGroup("Grain Delay", "Grain Delay"),
       phaserGroup("Phaser", "Phaser"),
+      tranceGateGroup("Trance Gate", "Trance Gate"),
       delayFilterGroup("Filter", "Filter")
 {
     //==============================================================================
@@ -2128,6 +2229,11 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo1WaveformLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     lfo1WaveformLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
     
+    // LFO1 On toggle
+    lfo1EnabledButton.setButtonText(safeString("On"));
+    lfo1EnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "lfo1Enabled", lfo1EnabledButton);
+    
     // LFO1 Destination (Target)
     lfo1TargetCombo.addItem(safeString("Pitch"), 1);
     lfo1TargetCombo.addItem(safeString("Filter"), 2);
@@ -2135,7 +2241,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo1TargetCombo.addItem(safeString("Osc1 Vol"), 4);
     lfo1TargetCombo.addItem(safeString("Osc2 Vol"), 5);
     lfo1TargetCombo.addItem(safeString("Noise Vol"), 6);
-    lfo1TargetCombo.setSelectedId(1);  // Default to Pitch
+    lfo1TargetCombo.setSelectedId(2);  // Default to Filter
     lfo1TargetAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getValueTreeState(), "lfo1Target", lfo1TargetCombo);
     lfo1TargetLabel.setText(safeString("Destination"), juce::dontSendNotification);
@@ -2241,6 +2347,11 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo2WaveformLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     lfo2WaveformLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
     
+    // LFO2 On toggle
+    lfo2EnabledButton.setButtonText(safeString("On"));
+    lfo2EnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "lfo2Enabled", lfo2EnabledButton);
+    
     // LFO2 Destination (Target)
     lfo2TargetCombo.addItem(safeString("Pitch"), 1);
     lfo2TargetCombo.addItem(safeString("Filter"), 2);
@@ -2248,7 +2359,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo2TargetCombo.addItem(safeString("Osc1 Vol"), 4);
     lfo2TargetCombo.addItem(safeString("Osc2 Vol"), 5);
     lfo2TargetCombo.addItem(safeString("Noise Vol"), 6);
-    lfo2TargetCombo.setSelectedId(2);  // Default to Filter
+    lfo2TargetCombo.setSelectedId(1);  // Default to Pitch
     lfo2TargetAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getValueTreeState(), "lfo2Target", lfo2TargetCombo);
     lfo2TargetLabel.setText(safeString("Destination"), juce::dontSendNotification);
@@ -2809,7 +2920,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     phaserCentreSlider.setTextValueSuffix(" Hz");
     phaserCentreAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "phaserCentre", phaserCentreSlider);
-    phaserCentreLabel.setText(safeString("Centre"), juce::dontSendNotification);
+    phaserCentreLabel.setText(safeString("Center"), juce::dontSendNotification);
     phaserCentreLabel.setJustificationType(juce::Justification::centred);
     phaserCentreLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     phaserCentreLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
@@ -2837,6 +2948,107 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     phaserVintageModeLabel.setJustificationType(juce::Justification::centred);
     phaserVintageModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     phaserVintageModeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+
+    // Trance Gate Effect (Effects tab)
+    tranceGateEnabledButton.setButtonText(safeString("On"));
+    tranceGateEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateEnabled", tranceGateEnabledButton);
+    tranceGateEnabledLabel.setText(safeString("On"), juce::dontSendNotification);
+    tranceGateEnabledLabel.setJustificationType(juce::Justification::centred);
+    tranceGateEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    tranceGateEnabledLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    tranceGatePreEffectButton.setButtonText(safeString("Post Effect"));
+    tranceGatePreEffectAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGatePostEffect", tranceGatePreEffectButton);
+    tranceGatePreEffectLabel.setText(safeString("Before / After"), juce::dontSendNotification);
+    tranceGatePreEffectLabel.setJustificationType(juce::Justification::centred);
+    tranceGatePreEffectLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    tranceGatePreEffectLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    tranceGateStepsCombo.addItem(safeString("4"), 1);
+    tranceGateStepsCombo.addItem(safeString("8"), 2);
+    tranceGateStepsCombo.addItem(safeString("16"), 3);
+    tranceGateStepsCombo.setSelectedId(2);
+    tranceGateStepsAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateSteps", tranceGateStepsCombo);
+    tranceGateStepsLabel.setText(safeString("Steps"), juce::dontSendNotification);
+    tranceGateStepsLabel.setJustificationType(juce::Justification::centred);
+    tranceGateStepsLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    tranceGateStepsLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    tranceGateSyncButton.setButtonText(safeString("Sync"));
+    tranceGateSyncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateSync", tranceGateSyncButton);
+    tranceGateSyncLabel.setText(safeString("Sync"), juce::dontSendNotification);
+    tranceGateSyncLabel.setJustificationType(juce::Justification::centred);
+    tranceGateSyncLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    tranceGateSyncLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    tranceGateRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    tranceGateRateSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    tranceGateRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateRate", tranceGateRateSlider);
+    tranceGateRateLabel.setText(safeString("Rate"), juce::dontSendNotification);
+    tranceGateRateLabel.setJustificationType(juce::Justification::centred);
+    tranceGateRateLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    tranceGateRateLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    tranceGateAttackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    tranceGateAttackSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    tranceGateAttackSlider.setTextValueSuffix(" ms");
+    tranceGateAttackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateAttack", tranceGateAttackSlider);
+    tranceGateAttackLabel.setText(safeString("Attack"), juce::dontSendNotification);
+    tranceGateAttackLabel.setJustificationType(juce::Justification::centred);
+    tranceGateAttackLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    tranceGateAttackLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    tranceGateReleaseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    tranceGateReleaseSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    tranceGateReleaseSlider.setTextValueSuffix(" ms");
+    tranceGateReleaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateRelease", tranceGateReleaseSlider);
+    tranceGateReleaseLabel.setText(safeString("Release"), juce::dontSendNotification);
+    tranceGateReleaseLabel.setJustificationType(juce::Justification::centred);
+    tranceGateReleaseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    tranceGateReleaseLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    tranceGateMixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    tranceGateMixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    tranceGateMixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateMix", tranceGateMixSlider);
+    tranceGateMixLabel.setText(safeString("Mix"), juce::dontSendNotification);
+    tranceGateMixLabel.setJustificationType(juce::Justification::centred);
+    tranceGateMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    tranceGateMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    tranceGateStep1Button.setButtonText(safeString("1"));
+    tranceGateStep1Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateStep1", tranceGateStep1Button);
+    tranceGateStep2Button.setButtonText(safeString("2"));
+    tranceGateStep2Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateStep2", tranceGateStep2Button);
+    tranceGateStep3Button.setButtonText(safeString("3"));
+    tranceGateStep3Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateStep3", tranceGateStep3Button);
+    tranceGateStep4Button.setButtonText(safeString("4"));
+    tranceGateStep4Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateStep4", tranceGateStep4Button);
+    tranceGateStep5Button.setButtonText(safeString("5"));
+    tranceGateStep5Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateStep5", tranceGateStep5Button);
+    tranceGateStep6Button.setButtonText(safeString("6"));
+    tranceGateStep6Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateStep6", tranceGateStep6Button);
+    tranceGateStep7Button.setButtonText(safeString("7"));
+    tranceGateStep7Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateStep7", tranceGateStep7Button);
+    tranceGateStep8Button.setButtonText(safeString("8"));
+    tranceGateStep8Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateStep8", tranceGateStep8Button);
+
+    // Hide redundant labels to save UI space (toggles are self-evident)
+    delayEnabledLabel.setVisible(false);
+    reverbEnabledLabel.setVisible(false);
+    grainDelayEnabledLabel.setVisible(false);
+    phaserEnabledLabel.setVisible(false);
+    phaserVintageModeLabel.setVisible(false);  // Remove label above Vintage toggle
+    tranceGateEnabledLabel.setVisible(false);
+    tranceGatePreEffectLabel.setVisible(false);
+    tranceGateSyncLabel.setVisible(false);
     
     reverbFilterWarmSaturationButton.setVisible(false);
     reverbFilterHPCutoffSlider.setVisible(false);
@@ -2990,12 +3202,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         catch (...) {}
         
         // Calculate the correct window height for tabbed interface
-        // Main tab: ~800-900px (Oscillators, Filter, Envelopes, Master)
-        // Modulation tab: ~450px (LFO section)
-        // Tab bar: ~30px
-        // Title area: ~70px
-        // Use 1000px height for comfortable spacing (tabs will handle content)
-        const int calculatedHeight = 1000;  // Comfortable height for tabbed interface
+        // Effects tab needs extra height when Delay filter is toggled on (Phaser Mix knob must stay visible)
+        const int calculatedHeight = 902;  // ~5% shorter than 950
         
         DBG("Space Dust: Timer callback - Calling setSize(1120, " + juce::String(calculatedHeight) + ")");
         try
@@ -3411,23 +3619,23 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
 
     //==============================================================================
     // -- Title: Space Dust --
-    // Elegant title with subtle drop shadow only (no heavy glow)
-    auto titleArea = juce::Rectangle<int>(0, 20, getWidth(), 50);
+    // Compact title with subtle drop shadow
+    auto titleArea = juce::Rectangle<int>(0, 4, getWidth(), 36);
     
     // Draw subtle drop shadow (20-30% opacity, 1-2px offset)
     g.setColour(juce::Colour(0x33000000));  // 20% opacity black
-    g.setFont(juce::Font(juce::FontOptions(38.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(28.0f, juce::Font::bold)));
     g.drawText(safeString("Space Dust"), titleArea.translated(1, 2), juce::Justification::centred, true);
     
     // Draw main text (pure white or very light cyan)
     g.setColour(juce::Colour(0xffffffff));  // Pure white
-    g.setFont(juce::Font(juce::FontOptions(38.0f, juce::Font::bold)));
+    g.setFont(juce::Font(juce::FontOptions(28.0f, juce::Font::bold)));
     g.drawText(safeString("Space Dust"), titleArea, juce::Justification::centred, true);
     
     //==============================================================================
     // -- Subtle Divider Line Between Tabbed Content and Master Section --
     // Draw a subtle vertical line to separate the tabbed content from the always-visible Master section
-    const int titleHeight = 70;
+    const int titleHeight = 48;  // Compact: title + tab bar
     const int masterWidth = 220;
     const int masterGap = 80;  // Original gap (for reference)
     const int actualMasterGap = 40;  // Reduced by 50%
@@ -3496,7 +3704,7 @@ void SpaceDustAudioProcessorEditor::resized()
     //==============================================================================
     // -- Tabbed Component Layout --
     // Position tabbed component below title area, leaving space for Master section on right
-    const int titleHeight = 70;  // Space for title
+    const int titleHeight = 48;  // Compact: title + tab bar
     const int masterWidth = 220;  // Width of Master section
     const int masterGap = 80;     // Original gap (used for tabbedWidth calculation only)
     const int actualMasterGap = 40;  // Reduced by 50% - actual gap between tab and Master
@@ -3509,16 +3717,16 @@ void SpaceDustAudioProcessorEditor::resized()
     //==============================================================================
     // -- Master Section Layout (Always Visible, Right Side) --
     // Master section spans from below title to bottom of window
-    const int groupPadding = 13;          // Padding inside group boxes (horizontal increased by 10% from reduced value)
-    const int groupTitleHeight = 40;      // Height for group title area
+    const int groupPadding = 10;         // Padding inside group boxes
+    const int groupTitleHeight = 32;     // Compact height for group title area
     // Match Master section knobs to Modulation tab visual size (~75px)
     const int knobDiameter = 75;          // Uniform knob size (matched to Modulation tab knob visual size)
     const int labelHeight = 18;           // Label height
     const int labelGap = 5;                // Gap between label and control
     const int comboHeight = 26;           // Combo box height
     const int comboWidth = 110;           // Combo box width
-    const int verticalSpacing = 11;        // Vertical spacing between controls
-    const int topPaddingReduction = 32;   // ~50% reduction of (groupTitleHeight + groupPadding)
+    const int verticalSpacing = 6;        // Compact vertical spacing between controls
+    const int topPaddingReduction = 24;   // Compact top padding reduction
     
     // Move Master box left by reducing the gap by 50%
     // Right edge of tab is at: tabbedWidth

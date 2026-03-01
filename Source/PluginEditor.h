@@ -358,6 +358,7 @@ private:
     
     // LFO1 Sub-group and Controls
     juce::GroupComponent lfo1Group;
+    juce::ToggleButton lfo1EnabledButton;
     juce::ComboBox lfo1WaveformCombo;
     juce::ComboBox lfo1TargetCombo;  // Destination: Pitch or Filter
     juce::ToggleButton lfo1SyncButton;
@@ -379,6 +380,7 @@ private:
     
     // LFO2 Sub-group and Controls
     juce::GroupComponent lfo2Group;
+    juce::ToggleButton lfo2EnabledButton;
     juce::ComboBox lfo2WaveformCombo;
     juce::ComboBox lfo2TargetCombo;  // Destination: Pitch or Filter
     juce::ToggleButton lfo2SyncButton;
@@ -524,6 +526,33 @@ private:
     juce::ToggleButton phaserVintageModeButton;
     juce::Label phaserVintageModeLabel;
 
+    // Trance Gate Effect (Effects tab)
+    juce::GroupComponent tranceGateGroup;
+    juce::ToggleButton tranceGateEnabledButton;
+    juce::Label tranceGateEnabledLabel;
+    juce::ToggleButton tranceGatePreEffectButton;
+    juce::Label tranceGatePreEffectLabel;
+    juce::ComboBox tranceGateStepsCombo;
+    juce::Label tranceGateStepsLabel;
+    juce::ToggleButton tranceGateSyncButton;
+    juce::Label tranceGateSyncLabel;
+    juce::Slider tranceGateRateSlider;
+    juce::Label tranceGateRateLabel;
+    juce::Slider tranceGateAttackSlider;
+    juce::Slider tranceGateReleaseSlider;
+    juce::Slider tranceGateMixSlider;
+    juce::Label tranceGateAttackLabel;
+    juce::Label tranceGateReleaseLabel;
+    juce::Label tranceGateMixLabel;
+    juce::ToggleButton tranceGateStep1Button;
+    juce::ToggleButton tranceGateStep2Button;
+    juce::ToggleButton tranceGateStep3Button;
+    juce::ToggleButton tranceGateStep4Button;
+    juce::ToggleButton tranceGateStep5Button;
+    juce::ToggleButton tranceGateStep6Button;
+    juce::ToggleButton tranceGateStep7Button;
+    juce::ToggleButton tranceGateStep8Button;
+
     //==============================================================================
     // -- Parameter Attachments (Declared LAST for proper destruction order) --
     // CRITICAL: Attachments must be declared AFTER components to ensure they are
@@ -581,6 +610,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> legatoGlideAttachment;
     
     // LFO Attachments (Modulation Section)
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo1EnabledAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> lfo1WaveformAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> lfo1TargetAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo1SyncAttachment;
@@ -591,6 +621,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfo1DepthAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfo1PhaseAttachment;
     
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo2EnabledAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> lfo2WaveformAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> lfo2TargetAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo2SyncAttachment;
@@ -675,6 +706,24 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> phaserStagesAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> phaserStereoOffsetAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> phaserVintageModeAttachment;
+
+    // Trance Gate attachments
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateEnabledAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGatePreEffectAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> tranceGateStepsAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateSyncAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tranceGateRateAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tranceGateAttackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tranceGateReleaseAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tranceGateMixAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep1Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep2Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep3Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep4Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep5Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep6Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep7Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep8Attachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpaceDustAudioProcessorEditor)
 };

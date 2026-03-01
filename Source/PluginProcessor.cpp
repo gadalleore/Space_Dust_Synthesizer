@@ -42,6 +42,7 @@
 #include "SpaceDustReverb.h"
 #include "SpaceDustGrainDelay.h"
 #include "SpaceDustPhaser.h"
+#include "SpaceDustTranceGate.h"
 #include <juce_core/juce_core.h>
 #include <cstdarg>
 
@@ -731,6 +732,10 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         // Initialize phaser
         phaser_.prepare(reverbSpec);
         phaser_.reset();
+
+        // Initialize trance gate
+        tranceGate_.prepare(reverbSpec);
+        tranceGate_.reset();
         
         DBG("Space Dust: prepareToPlay - Step 4: Sample rate set to " + safeStringFromNumber(sampleRate));
     }
@@ -1257,6 +1262,7 @@ void SpaceDustAudioProcessor::releaseResources()
     delayFilterLPFb.reset();
     grainDelay_.reset();
     phaser_.reset();
+    tranceGate_.reset();
     
     // Step 3: Clear all sounds (ReferenceCountedArray<SynthesiserSound>)
     // CRITICAL: This prevents ReferenceCountedObject assertion on plugin unload
@@ -1425,7 +1431,8 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // Generate per-sample LFO values and fill buffers for voice access
     
     // Get LFO parameters
-    float lfo1Depth = *apvts.getRawParameterValue("lfo1Depth") * 2.0f / 100.0f;  // 0-2.0 (doubled strength)
+    bool lfo1Enabled = *apvts.getRawParameterValue("lfo1Enabled") > 0.5f;
+    float lfo1Depth = lfo1Enabled ? (*apvts.getRawParameterValue("lfo1Depth") * 2.0f / 100.0f) : 0.0f;  // 0-2.0 when on
     bool lfo1Sync = *apvts.getRawParameterValue("lfo1Sync") > 0.5f;
     float lfo1Rate = *apvts.getRawParameterValue("lfo1Rate");  // 0-12
     bool lfo1Triplet = *apvts.getRawParameterValue("lfo1TripletEnabled") > 0.5f;
@@ -1433,7 +1440,8 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     float lfo1PhaseParam = *apvts.getRawParameterValue("lfo1Phase");
     int lfo1Waveform = (int)*apvts.getRawParameterValue("lfo1Waveform");
     
-    float lfo2Depth = *apvts.getRawParameterValue("lfo2Depth") * 2.0f / 100.0f;  // 0-2.0 (doubled strength)
+    bool lfo2Enabled = *apvts.getRawParameterValue("lfo2Enabled") > 0.5f;
+    float lfo2Depth = lfo2Enabled ? (*apvts.getRawParameterValue("lfo2Depth") * 2.0f / 100.0f) : 0.0f;  // 0-2.0 when on
     bool lfo2Sync = *apvts.getRawParameterValue("lfo2Sync") > 0.5f;
     float lfo2Rate = *apvts.getRawParameterValue("lfo2Rate");  // 0-12
     bool lfo2Triplet = *apvts.getRawParameterValue("lfo2TripletEnabled") > 0.5f;
@@ -1793,6 +1801,33 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // Clear MIDI buffer AFTER processing (synthesizer has consumed all messages)
     // This prevents stale MIDI from accumulating across blocks
     midiMessages.clear();
+
+    //==============================================================================
+    // -- Trance Gate (Pre: gate dry synth before Delay/Reverb when Post Effect is OFF) --
+    bool tranceGateEnabled = *apvts.getRawParameterValue("tranceGateEnabled") > 0.5f;
+    bool tranceGatePostEffect = *apvts.getRawParameterValue("tranceGatePostEffect") > 0.5f;
+    if (tranceGateEnabled && !tranceGatePostEffect && buffer.getNumChannels() >= 2 && numSamples > 0)
+    {
+        SpaceDustTranceGate::Parameters tp;
+        tp.enabled = true;
+        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"tranceGateSteps", 1}.getParamID())))
+            tp.numSteps = (p->getIndex() == 0) ? 4 : (p->getIndex() == 1) ? 8 : 16;
+        else
+            tp.numSteps = 8;
+        tp.sync = *apvts.getRawParameterValue("tranceGateSync") > 0.5f;
+        tp.rate = *apvts.getRawParameterValue("tranceGateRate");
+        tp.attackMs = *apvts.getRawParameterValue("tranceGateAttack");
+        tp.releaseMs = *apvts.getRawParameterValue("tranceGateRelease");
+        tp.mix = *apvts.getRawParameterValue("tranceGateMix");
+        for (int s = 0; s < 8; ++s)
+        {
+            juce::String stepId = "tranceGateStep" + juce::String(s + 1);
+            if (auto* rp = apvts.getRawParameterValue(stepId))
+                tp.stepOn[s] = rp->load() > 0.5f;
+        }
+        tranceGate_.setParameters(tp);
+        tranceGate_.process(buffer, currentSampleRate, getPlayHead());
+    }
     
     //==============================================================================
     // -- Delay Effect --
@@ -2056,6 +2091,31 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         pp.vintageMode = *apvts.getRawParameterValue("phaserVintageMode") > 0.5f;
         phaser_.setParameters(pp);
         phaser_.process(buffer);
+    }
+
+    //==============================================================================
+    // -- Trance Gate (Post-Effect: gate wet signal after Delay/Reverb/Grain/Phaser - default) --
+    if (tranceGateEnabled && tranceGatePostEffect && buffer.getNumChannels() >= 2 && numSamples > 0)
+    {
+        SpaceDustTranceGate::Parameters tp;
+        tp.enabled = true;
+        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"tranceGateSteps", 1}.getParamID())))
+            tp.numSteps = (p->getIndex() == 0) ? 4 : (p->getIndex() == 1) ? 8 : 16;
+        else
+            tp.numSteps = 8;
+        tp.sync = *apvts.getRawParameterValue("tranceGateSync") > 0.5f;
+        tp.rate = *apvts.getRawParameterValue("tranceGateRate");
+        tp.attackMs = *apvts.getRawParameterValue("tranceGateAttack");
+        tp.releaseMs = *apvts.getRawParameterValue("tranceGateRelease");
+        tp.mix = *apvts.getRawParameterValue("tranceGateMix");
+        for (int s = 0; s < 8; ++s)
+        {
+            juce::String stepId = "tranceGateStep" + juce::String(s + 1);
+            if (auto* rp = apvts.getRawParameterValue(stepId))
+                tp.stepOn[s] = rp->load() > 0.5f;
+        }
+        tranceGate_.setParameters(tp);
+        tranceGate_.process(buffer, currentSampleRate, getPlayHead());
     }
     
     //==============================================================================
@@ -2593,11 +2653,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     
     //==============================================================================
     // -- Master Volume --
-    // Controls overall output level. Range: 0.0 to 1.0 (full gain at max).
+    // Controls overall output level. Range: 0.0 to 2.0 (doubled for when effects are on).
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"masterVolume", 1}, "Master Volume",
-            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.7f),
+            juce::NormalisableRange<float>(0.0f, 2.0f, 0.01f), 0.7f),
         "masterVolume");
     
     //==============================================================================
@@ -2610,11 +2670,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::StringArray(safeString("Sine"), safeString("Triangle"), safeString("Saw Up"), safeString("Saw Down"), safeString("Square"), safeString("S&H")), 0),
         safeString("lfo1Waveform"));
     
+    // LFO1 On (enable/disable modulation)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo1Enabled", 1}, "LFO1 On", false),
+        "lfo1Enabled");
+    
     // LFO1 Depth (0-100%)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"lfo1Depth", 1}, "LFO1 Depth",
-            juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 0.0f),
+            juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 25.0f),
         "lfo1Depth");
     
     // LFO1 Sync (on/off)
@@ -2637,7 +2703,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"lfo1Target", 1}, "LFO1 Target",
             juce::StringArray(safeString("Pitch"), safeString("Filter"),
-                safeString("Master Vol"), safeString("Osc1 Vol"), safeString("Osc2 Vol"), safeString("Noise Vol")), 0),
+                safeString("Master Vol"), safeString("Osc1 Vol"), safeString("Osc2 Vol"), safeString("Noise Vol")), 1),
         safeString("lfo1Target"));
     
     // LFO1 Phase (0-360°)
@@ -2672,11 +2738,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::StringArray(safeString("Sine"), safeString("Triangle"), safeString("Saw Up"), safeString("Saw Down"), safeString("Square"), safeString("S&H")), 0),
         safeString("lfo2Waveform"));
     
+    // LFO2 On (enable/disable modulation)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo2Enabled", 1}, "LFO2 On", false),
+        "lfo2Enabled");
+    
     // LFO2 Depth (0-100%)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"lfo2Depth", 1}, "LFO2 Depth",
-            juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 0.0f),
+            juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 25.0f),
         "lfo2Depth");
     
     // LFO2 Sync (on/off)
@@ -2697,7 +2769,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"lfo2Target", 1}, "LFO2 Target",
             juce::StringArray(safeString("Pitch"), safeString("Filter"),
-                safeString("Master Vol"), safeString("Osc1 Vol"), safeString("Osc2 Vol"), safeString("Noise Vol")), 1),
+                safeString("Master Vol"), safeString("Osc1 Vol"), safeString("Osc2 Vol"), safeString("Noise Vol")), 0),
         safeString("lfo2Target"));
     
     // LFO2 Phase (0-360°)
@@ -3051,7 +3123,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         "phaserMix");
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{"phaserCentre", 1}, "Phaser Centre",
+            juce::ParameterID{"phaserCentre", 1}, "Phaser Center",
             juce::NormalisableRange<float>(50.0f, 2000.0f, 1.0f, 0.35f), 400.0f),
         "phaserCentre");
     ADD_PARAM_WITH_LOG(params,
@@ -3068,6 +3140,78 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{"phaserVintageMode", 1}, "Phaser Vintage", false),
         "phaserVintageMode");
+
+    //==============================================================================
+    // -- Trance Gate Effect Parameters --
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateEnabled", 1}, "Trance Gate On", false),
+        "tranceGateEnabled");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGatePostEffect", 1}, "Trance Gate Post", true),
+        "tranceGatePostEffect");
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"tranceGateSteps", 1}, "Gate Steps",
+            juce::StringArray("4", "8", "16"), 1),
+        safeString("tranceGateSteps"));
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateSync", 1}, "Gate Sync", true),
+        "tranceGateSync");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"tranceGateRate", 1}, "Gate Rate",
+            juce::NormalisableRange<float>(0.0f, 12.0f, 0.01f), 4.0f),
+        "tranceGateRate");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"tranceGateAttack", 1}, "Gate Attack",
+            juce::NormalisableRange<float>(0.1f, 50.0f, 0.1f, 0.4f), 2.0f),
+        "tranceGateAttack");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"tranceGateRelease", 1}, "Gate Release",
+            juce::NormalisableRange<float>(0.1f, 50.0f, 0.1f, 0.4f), 5.0f),
+        "tranceGateRelease");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"tranceGateMix", 1}, "Gate Mix",
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 1.0f),
+        "tranceGateMix");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateStep1", 1}, "Step 1", true),
+        "tranceGateStep1");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateStep2", 1}, "Step 2", false),
+        "tranceGateStep2");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateStep3", 1}, "Step 3", true),
+        "tranceGateStep3");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateStep4", 1}, "Step 4", false),
+        "tranceGateStep4");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateStep5", 1}, "Step 5", true),
+        "tranceGateStep5");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateStep6", 1}, "Step 6", false),
+        "tranceGateStep6");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateStep7", 1}, "Step 7", true),
+        "tranceGateStep7");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateStep8", 1}, "Step 8", false),
+        "tranceGateStep8");
     
     //==============================================================================
     // -- DEBUG: createParameterLayout End --

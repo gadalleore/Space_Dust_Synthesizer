@@ -5,10 +5,12 @@ A pure CMake-based polyphonic synthesizer VST3 plugin built with JUCE 8. Cosmic 
 ## Features
 
 - **VST3 format** – VST3-only plugin
-- **8-voice polyphony** – Dual oscillators, filter, and ADSR per voice
-- **Effects chain** – Reverb, grain delay, phaser, flanger, parametric EQ
+- **8-voice polyphony** – Dual oscillators (with sub oscillator), filter, and ADSR per voice
+- **Effects chain** – Reverb, delay (with filter), phaser, flanger, trance gate (post-effect), grain delay, parametric EQ
+- **Modulation** – Two LFOs with On toggles; LFO1 targets filter, LFO2 targets pitch (25% depth default)
+- **Master volume** – 0–2.0 range for headroom
 - **MIDI input** – Full MIDI note and control support
-- **Custom UI** – SpaceDust look and feel
+- **Custom UI** – SpaceDust look and feel with compact, tabbed layout
 - **Real-time safe** – Parameter updates without allocations in the audio thread
 
 ## Prerequisites
@@ -36,18 +38,19 @@ A pure CMake-based polyphonic synthesizer VST3 plugin built with JUCE 8. Cosmic 
 
 ```
 Source/
-├── PluginProcessor.*       # Main audio processor
-├── PluginEditor.*         # Plugin UI
-├── SynthVoice.*           # Voice implementation
-├── SynthSound.*           # Sound definition
-├── SpaceDustSynthesiser.*  # Synth engine
-├── SpaceDustReverb.*      # Reverb
-├── SpaceDustGrainDelay.*  # Grain delay
-├── SpaceDustPhaser.*      # Phaser
-├── SpaceDustFlanger.*     # Flanger
-├── SpaceDustParametricEQ.*# Parametric EQ
-├── SexiconReverb.*        # Additional reverb
-└── SpaceDustLookAndFeel.* # Custom UI styling
+├── PluginProcessor.*        # Main audio processor
+├── PluginEditor.*           # Plugin UI (tabbed: Synth, Effects, Modulation)
+├── SynthVoice.*             # Voice implementation
+├── SynthSound.*             # Sound definition
+├── SpaceDustSynthesiser.*   # Synth engine
+├── SpaceDustReverb.*        # Reverb
+├── SpaceDustGrainDelay.*    # Grain delay
+├── SpaceDustPhaser.*        # Phaser (Center, Width, Stages, etc.)
+├── SpaceDustFlanger.*       # Flanger
+├── SpaceDustTranceGate.*    # Trance gate (post-effect)
+├── SpaceDustParametricEQ.*  # Parametric EQ
+├── SexiconReverb.*          # Additional reverb
+└── SpaceDustLookAndFeel.*   # Custom UI styling
 ```
 
 ## References

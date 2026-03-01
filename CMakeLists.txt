@@ -61,6 +61,8 @@ target_sources(SpaceDust PRIVATE
     Source/SpaceDustGrainDelay.h
     Source/SpaceDustPhaser.cpp
     Source/SpaceDustPhaser.h
+    Source/SpaceDustTranceGate.cpp
+    Source/SpaceDustTranceGate.h
     Source/SpaceDustFlanger.cpp
     Source/SpaceDustFlanger.h
     Source/SpaceDustParametricEQ.cpp

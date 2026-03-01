@@ -8,6 +8,7 @@
 #include "SpaceDustReverb.h"
 #include "SpaceDustGrainDelay.h"
 #include "SpaceDustPhaser.h"
+#include "SpaceDustTranceGate.h"
 #include "SpaceDustFlanger.h"
 #include "SpaceDustParametricEQ.h"
 
@@ -155,6 +156,10 @@ private:
     //==============================================================================
     // -- Grain Delay Effect State --
     SpaceDustGrainDelay grainDelay_;
+
+    //==============================================================================
+    // -- Trance Gate Effect State --
+    SpaceDustTranceGate tranceGate_;
 
     //==============================================================================
     // -- Phaser, Flanger, Parametric EQ Effect State --
