@@ -97,51 +97,60 @@ void SpaceDustLookAndFeel::drawGroupComponentOutline(juce::Graphics& g, int widt
     auto textX = x + textEdgeGap;
     auto textY = 0.0f;  // Title is at the top, above the line
 
-    auto cornerX = x + w;
-    auto cornerY = lineY + h;
+    // Use addRoundedRectangle for perfect rounded corners - no arc connection issues
+    p.addRoundedRectangle(x, lineY, w, h, cs);
 
-    // Draw complete rounded rectangle path with gap for text
-    // Start at top-left corner
-    p.startNewSubPath(x + cs, lineY);
-    
-    // If text exists, draw left part of top edge, then gap, then right part
+    const auto roundedStroke = [](float strokeW) {
+        return juce::PathStrokeType(strokeW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+    };
+
+    bool isActive = group.getProperties().getWithDefault("isActive", false);
+
+    // Blue glow when effect/LFO is enabled - inward-only, follows border curve, thick
+    if (isActive)
+    {
+        g.saveState();
+        g.excludeClipRegion(juce::Rectangle<int>(0, 0, width, static_cast<int>(lineY)));
+        const float glowThick = 18.0f;  // Thick glow band (pixels inward)
+        const int numBands = 18;         // Smooth fade
+        juce::Path glowPath;
+        glowPath.setUsingNonZeroWinding(false);  // Even-odd for rings
+        for (int i = 0; i < numBands; ++i)
+        {
+            const float outerInset = i * (glowThick / (float)numBands);
+            const float innerInset = (i + 1) * (glowThick / (float)numBands);
+            // Keep BOTH edges rounded - min 3px prevents sharp corners on outer and inner band edges
+            const float outerCs = juce::jmax(3.0f, cs - outerInset);
+            const float innerCs = juce::jmax(3.0f, cs - innerInset);
+            glowPath.clear();
+            glowPath.addRoundedRectangle(x + outerInset, lineY + outerInset,
+                                         w - 2.0f * outerInset, h - 2.0f * outerInset, outerCs);
+            glowPath.addRoundedRectangle(x + innerInset, lineY + innerInset,
+                                         w - 2.0f * innerInset, h - 2.0f * innerInset, innerCs);
+            const float t = (float)i / (float)numBands;
+            const juce::uint8 alpha = juce::uint8(90 * (1.0f - t * t));  // Fade inward
+            g.setColour(juce::Colour(alpha << 24 | 0x00b4ff));
+            g.fillPath(glowPath);
+        }
+        g.restoreState();
+    }
+
+    juce::Colour outlineCol = group.findColour(juce::GroupComponent::outlineColourId)
+                              .withMultipliedAlpha(group.isEnabled() ? 1.0f : 0.5f);
+    if (isActive)
+        outlineCol = juce::Colour(0xff00b4ff);  // Bright blue when active
+    g.setColour(outlineCol);
+
+    // Exclude label area for outline too, so top border doesn't draw through text
     if (textW > 0)
     {
-        // Left part of top edge: from rounded corner to text gap start
-        p.lineTo(textX - textEdgeGap, lineY);
-        // Move to after text gap (this creates the gap)
-        p.startNewSubPath(textX + textW + textEdgeGap, lineY);
-        // Right part of top edge: from text gap end to top-right corner
-        p.lineTo(cornerX - cs, lineY);
+        g.saveState();
+        g.excludeClipRegion(juce::Rectangle<int>(0, 0, width, static_cast<int>(lineY)));
+        g.strokePath(p, roundedStroke(isActive ? 2.5f : 2.0f));
+        g.restoreState();
     }
     else
-    {
-        // No text, draw complete top edge
-        p.lineTo(cornerX - cs, lineY);
-    }
-    
-    // Top-right corner
-    p.quadraticTo(cornerX, lineY, cornerX, lineY + cs);
-    // Right edge
-    p.lineTo(cornerX, cornerY - cs);
-    // Bottom-right corner
-    p.quadraticTo(cornerX, cornerY, cornerX - cs, cornerY);
-    // Bottom edge
-    p.lineTo(x + cs, cornerY);
-    // Bottom-left corner
-    p.quadraticTo(x, cornerY, x, cornerY - cs);
-    // Left edge
-    p.lineTo(x, lineY + cs);
-    // Top-left corner
-    p.quadraticTo(x, lineY, x + cs, lineY);
-    
-    // Close the path
-    p.closeSubPath();
-
-    g.setColour(group.findColour(juce::GroupComponent::outlineColourId)
-                .withMultipliedAlpha(group.isEnabled() ? 1.0f : 0.5f));
-
-    g.strokePath(p, juce::PathStrokeType(2.0f));
+        g.strokePath(p, roundedStroke(isActive ? 2.5f : 2.0f));
 
     // Draw enhanced title text with subtle shadow (above the line)
     if (text.isNotEmpty())
@@ -196,19 +205,21 @@ void SpaceDustLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButto
     
     bool isToggled = button.getToggleState();
     
-    // Background: glow effect when checked (brighter cyan)
+    // Background: glow effect when checked (brighter blue/cyan)
     if (isToggled)
     {
-        // Draw glow with brighter cyan background
-        g.setColour(juce::Colour(0x6600d4ff));  // 40% opacity bright cyan for glow
+        // Draw outer glow with bright blue
+        g.setColour(juce::Colour(0x5500aaff));  // ~33% opacity blue glow
+        g.fillRoundedRectangle(bounds.expanded(4.0f), cornerSize + 2.0f);
+        g.setColour(juce::Colour(0x4400d4ff));  // Inner glow
         g.fillRoundedRectangle(bounds.expanded(2.0f), cornerSize + 1.0f);
         
         // Main background: brighter cyan when checked
         g.setColour(juce::Colour(0xff1a4a5f));  // Dark cyan-blue background
         g.fillRoundedRectangle(bounds, cornerSize);
         
-        // Border: bright cyan when checked
-        g.setColour(juce::Colour(0xff6dd5fa));  // Bright cyan border
+        // Border: bright blue when checked
+        g.setColour(juce::Colour(0xff00b4ff));  // Bright blue border
         g.drawRoundedRectangle(bounds.reduced(0.5f), cornerSize, 1.5f);
     }
     else

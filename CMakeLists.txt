@@ -49,6 +49,12 @@ target_sources(SpaceDust PRIVATE
     Source/PluginProcessor.h
     Source/PluginEditor.cpp
     Source/PluginEditor.h
+    Source/Goniometer.cpp
+    Source/Goniometer.h
+    Source/OscilloscopeComponent.cpp
+    Source/OscilloscopeComponent.h
+    Source/SpectrumAnalyserComponent.cpp
+    Source/SpectrumAnalyserComponent.h
     Source/SynthVoice.cpp
     Source/SynthVoice.h
     Source/SynthSound.cpp
@@ -65,6 +71,8 @@ target_sources(SpaceDust PRIVATE
     Source/SpaceDustTranceGate.h
     Source/SpaceDustFlanger.cpp
     Source/SpaceDustFlanger.h
+    Source/SpaceDustBitCrusher.cpp
+    Source/SpaceDustBitCrusher.h
     Source/SpaceDustParametricEQ.cpp
     Source/SpaceDustParametricEQ.h
     Source/SexiconReverb.cpp

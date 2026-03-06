@@ -5,6 +5,8 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
 #include "SpaceDustLookAndFeel.h"
+#include "OscilloscopeComponent.h"
+#include "SpectrumAnalyserComponent.h"
 
 //==============================================================================
 /**
@@ -127,6 +129,32 @@ private:
 };
 
 //==============================================================================
+// -- Spectral Page Component (Lissajous drawn in-place, Oscilloscope, Spectrum) --
+class SpectralPageComponent : public juce::Component
+{
+public:
+    SpectralPageComponent(SpaceDustAudioProcessorEditor& editor);
+    ~SpectralPageComponent() override = default;
+
+    void paint(juce::Graphics& g) override;
+    void resized() override;
+
+    OscilloscopeComponent* getOscilloscope() { return oscilloscope.get(); }
+    SpectrumAnalyserComponent* getSpectrumAnalyser() { return spectrumAnalyser.get(); }
+
+private:
+    void drawLissajous(juce::Graphics& g, juce::Rectangle<int> area, const juce::AudioBuffer<float>& buffer);
+
+    SpaceDustAudioProcessorEditor& parentEditor;
+    juce::GroupComponent goniometerGroup { "Lissajous", "Lissajous" };
+    juce::GroupComponent oscilloscopeGroup { "Oscilloscope", "Oscilloscope" };
+    juce::GroupComponent spectrumGroup { "Spectrum", "Spectrum" };
+    juce::Rectangle<int> lissajousDrawArea;
+    std::unique_ptr<OscilloscopeComponent> oscilloscope;
+    std::unique_ptr<SpectrumAnalyserComponent> spectrumAnalyser;
+};
+
+//==============================================================================
 // -- Stereo Level Meter Component --
 /**
     Real-time stereo level meters for L/R channels.
@@ -166,13 +194,15 @@ private:
 //==============================================================================
 class SpaceDustAudioProcessorEditor : public juce::AudioProcessorEditor,
                                       public juce::Timer,
-                                      public juce::Slider::Listener
+                                      public juce::Slider::Listener,
+                                      public juce::Button::Listener
 {
     // Allow page components to access private members for layout
     friend class MainPageComponent;
     friend class ModulationPageComponent;
     friend class EffectsPageComponent;
     friend class SaturationColorPageComponent;
+    friend class SpectralPageComponent;
     
 public:
     SpaceDustAudioProcessorEditor(SpaceDustAudioProcessor&);
@@ -181,6 +211,8 @@ public:
     void timerCallback() override;
     void sliderValueChanged(juce::Slider* slider) override {}
     void sliderDragEnded(juce::Slider* slider) override;
+    void buttonClicked(juce::Button* button) override {}
+    void buttonStateChanged(juce::Button* button) override;
 
     //==============================================================================
     void paint(juce::Graphics&) override;
@@ -212,6 +244,7 @@ private:
     std::unique_ptr<ModulationPageComponent> modulationPage;
     std::unique_ptr<EffectsPageComponent> effectsPage;
     std::unique_ptr<SaturationColorPageComponent> saturationColorPage;
+    std::unique_ptr<SpectralPageComponent> spectralPage;
 
     //==============================================================================
     // -- GUI Components: Oscillators Section --
@@ -526,6 +559,34 @@ private:
     juce::ToggleButton phaserVintageModeButton;
     juce::Label phaserVintageModeLabel;
 
+    // Flanger Effect (Effects tab)
+    juce::GroupComponent flangerGroup;
+    juce::ToggleButton flangerEnabledButton;
+    juce::Label flangerEnabledLabel;
+    juce::Slider flangerRateSlider;
+    juce::Label flangerRateLabel;
+    juce::Slider flangerDepthSlider;
+    juce::Label flangerDepthLabel;
+    juce::Slider flangerFeedbackSlider;
+    juce::Label flangerFeedbackLabel;
+    juce::Slider flangerWidthSlider;
+    juce::Label flangerWidthLabel;
+    juce::Slider flangerMixSlider;
+    juce::Label flangerMixLabel;
+
+    // Bit Crusher Effect (Effects tab)
+    juce::GroupComponent bitCrusherGroup;
+    juce::ToggleButton bitCrusherEnabledButton;
+    juce::Label bitCrusherEnabledLabel;
+    juce::ToggleButton bitCrusherPostEffectButton;
+    juce::Label bitCrusherPostEffectLabel;
+    juce::Slider bitCrusherAmountSlider;
+    juce::Label bitCrusherAmountLabel;
+    juce::Slider bitCrusherRateSlider;
+    juce::Label bitCrusherRateLabel;
+    juce::Slider bitCrusherMixSlider;
+    juce::Label bitCrusherMixLabel;
+
     // Trance Gate Effect (Effects tab)
     juce::GroupComponent tranceGateGroup;
     juce::ToggleButton tranceGateEnabledButton;
@@ -706,6 +767,21 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> phaserStagesAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> phaserStereoOffsetAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> phaserVintageModeAttachment;
+
+    // Flanger attachments
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> flangerEnabledAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> flangerRateAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> flangerDepthAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> flangerFeedbackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> flangerWidthAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> flangerMixAttachment;
+
+    // Bit Crusher attachments
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bitCrusherEnabledAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bitCrusherPostEffectAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> bitCrusherAmountAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> bitCrusherRateAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> bitCrusherMixAttachment;
 
     // Trance Gate attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateEnabledAttachment;

@@ -7,7 +7,7 @@ globs: ["*.cpp", "*.h", "CMakeLists.txt", "*.cmake"]
 After any code generation or file changes in the Space Dust project:
 
 1. Automatically run the complete build script that handles everything:
-   cd "C:/Users/gdall/Documents/Projects/Synth VST"
+   cd <project-root>
    & .\build-and-launch.ps1
    (Do NOT pass -NoLaunch; Ableton must launch on every successful build.)
 
@@ -19,11 +19,11 @@ After any code generation or file changes in the Space Dust project:
    - Provide clear success/error messages at each step
 
    If the build script doesn't exist, fall back to manual commands:
-   cd "C:/Users/gdall/Documents/Projects/Synth VST"
+   cd <project-root>
    Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
    mkdir build
    cd build
-   cmake .. -G "Visual Studio 18 2026" -A x64
+   cmake .. -G "Visual Studio 17 2022" -A x64
    cmake --build . --config Release
    cd ..
    $customVST3 = "$env:USERPROFILE\Documents\Ableton\User Library\VST3"

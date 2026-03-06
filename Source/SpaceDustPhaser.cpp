@@ -89,7 +89,7 @@ void SpaceDustPhaser::process(juce::AudioBuffer<float>& buffer)
     const int nStages = juce::jlimit(2, kMaxStages, params_.numStages);
 
     // LFO rate in Hz, clamp to avoid instability
-    const float rateHz = juce::jlimit(0.05f, 10.0f, params_.rateHz);
+    const float rateHz = juce::jlimit(0.05f, 200.0f, params_.rateHz);
     const float phaseIncrement = rateHz / sr;
 
     // Stereo phase offset: 0.5 = 180° for maximum width
@@ -101,7 +101,7 @@ void SpaceDustPhaser::process(juce::AudioBuffer<float>& buffer)
         const float mix = smoothedMix_.getNextValue();
         const float depth = smoothedDepth_.getNextValue();
         const float centre = smoothedCentre_.getNextValue();
-        const float feedback = params_.scriptMode ? 0.0f : smoothedFeedback_.getNextValue();
+        const float feedback = smoothedFeedback_.getNextValue();
 
         // LFO: sine or triangle, with optional vintage JFET-like shaping
         auto lfoValue = [this, phaseIncrement, stereoPhaseOff](float phase, bool vintage) -> float
@@ -145,7 +145,7 @@ void SpaceDustPhaser::process(juce::AudioBuffer<float>& buffer)
             // Feedback (Block Logo): feedback from last stage output to first stage input
             // Creates resonance/mid-hump like Phase 90 Block Logo. Script = no feedback.
             const float fbPrev = (ch == 0) ? prevWetL_ : prevWetR_;
-            const float chainInput = dry + (params_.scriptMode ? 0.0f : feedback * fbPrev);
+            const float chainInput = dry + feedback * fbPrev;
 
             // Cascade through all-pass stages
             float wet = chainInput;
@@ -172,6 +172,6 @@ void SpaceDustPhaser::process(juce::AudioBuffer<float>& buffer)
     // Set targets for next block (values read at start of process)
     smoothedMix_.setTargetValue(params_.mix);
     smoothedDepth_.setTargetValue(params_.depth);
-    smoothedFeedback_.setTargetValue(params_.scriptMode ? 0.0f : params_.feedback);
+    smoothedFeedback_.setTargetValue(params_.feedback);
     smoothedCentre_.setTargetValue(params_.centreHz);
 }

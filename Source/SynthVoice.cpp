@@ -674,9 +674,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             else if (lfo1Target == 1)  // Filter
             {
                 if (modFilter1Linked)
-                    filterMod += lfo1Val * 10000.0f;
+                    filterMod += lfo1Val;  // Multiplicative: voice applies (1 + filterMod) to base
                 else if (modFilter1Show)
-                    modFilter1LfoMod = lfo1Val * 10000.0f;
+                    modFilter1LfoMod = lfo1Val;  // Same for mod filter
             }
             else if (lfo1Target == 3) osc1VolMod += lfo1Val;
             else if (lfo1Target == 4) osc2VolMod += lfo1Val;
@@ -692,9 +692,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             else if (lfo2Target == 1)  // Filter
             {
                 if (modFilter2Linked)
-                    filterMod += lfo2Val * 10000.0f;
+                    filterMod += lfo2Val;  // Multiplicative: voice applies (1 + filterMod) to base
                 else if (modFilter2Show)
-                    modFilter2LfoMod = lfo2Val * 10000.0f;
+                    modFilter2LfoMod = lfo2Val;  // Same for mod filter
             }
             else if (lfo2Target == 3) osc1VolMod += lfo2Val;
             else if (lfo2Target == 4) osc2VolMod += lfo2Val;
@@ -792,13 +792,14 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         float filterEnvOutput = filterAdsr.getNextSample();
         
         // Modulate filter cutoff with filter envelope and LFO
-        // Formula: baseCutoff + (filterEnvOutput - 0.5) * 2 * amount * scalingFactor
-        // filterEnvOutput is 0.0-1.0, so (filterEnvOutput - 0.5) * 2 gives -1.0 to +1.0
-        // filterEnvAmount is now -100.0 to 100.0, so divide by 100.0 to get -1.0 to 1.0
-        // scalingFactor doubled to 1.4f for stronger effect
+        // Envelope: baseCutoff * (1 + envMod), envMod from filter ADSR
+        // LFO: multiplicative with 0.5 scale so lfoFactor ranges 0..2 (not 0..3)
+        // Prevents hitting 20 kHz ceiling too soon so knob stays effective when turned up
         const float scalingFactor = 1.4f;
+        const float lfoFilterScale = 0.5f;
         float envModulation = (filterEnvOutput - 0.5f) * 2.0f * (filterEnvAmount / 100.0f) * scalingFactor;
-        float modulatedCutoff = baseFilterCutoff * (1.0f + envModulation) + filterMod;
+        float lfoFactor = juce::jmax(0.0f, 1.0f + filterMod * lfoFilterScale);
+        float modulatedCutoff = baseFilterCutoff * (1.0f + envModulation) * lfoFactor;
         modulatedCutoff = juce::jlimit(20.0f, 20000.0f, modulatedCutoff);  // Clamp to valid range
         filter.setCutoffFrequency(modulatedCutoff);
         
@@ -834,7 +835,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         juce::dsp::ProcessContextReplacing<float> context(singleSampleBlock);
         if (modFilter1Show && !modFilter1Linked)
         {
-            float modCutoff = juce::jlimit(20.0f, 20000.0f, modFilter1Cutoff + modFilter1LfoMod);
+            float mod1LfoFactor = juce::jmax(0.0f, 1.0f + modFilter1LfoMod * 0.5f);
+            float modCutoff = juce::jlimit(20.0f, 20000.0f, modFilter1Cutoff * mod1LfoFactor);
             modFilter1.setCutoffFrequency(modCutoff);
             modFilter1.process(context);
             if (warmSaturationMod1)
@@ -846,7 +848,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         }
         if (modFilter2Show && !modFilter2Linked)
         {
-            float modCutoff = juce::jlimit(20.0f, 20000.0f, modFilter2Cutoff + modFilter2LfoMod);
+            float mod2LfoFactor = juce::jmax(0.0f, 1.0f + modFilter2LfoMod * 0.5f);
+            float modCutoff = juce::jlimit(20.0f, 20000.0f, modFilter2Cutoff * mod2LfoFactor);
             modFilter2.setCutoffFrequency(modCutoff);
             modFilter2.process(context);
             if (warmSaturationMod2)

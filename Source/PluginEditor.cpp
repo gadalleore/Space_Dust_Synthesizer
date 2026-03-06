@@ -748,6 +748,8 @@ void ModulationPageComponent::resized()
     const int modComboWidth = 100;
     const int modButtonWidth = 70;
     const int modButtonHeight = 22;
+    const int modFilterButtonW = 75;   // Filter toggle (narrower)
+    const int modWarmSatButtonW = 128; // Warm Saturation (wider so full text fits)
     const int modLabelGap = 3;
     const int modRowSpacing = 6;
     const int modRateValueGap = 16;
@@ -811,10 +813,10 @@ void ModulationPageComponent::resized()
     int lfo1CurrentY = lfo1Content.getY() + lfoContentTop;
     int controlWidth = modComboWidth;
     int lfo1CentreX = lfo1Content.getX() + lfo1Content.getWidth() / 2;
-    const int modOnBtnW = 48;
-    const int modOnBtnH = 20;
+    const int modOnBtnW = 62;
+    const int modOnBtnH = 28;
     
-    // LFO1 On button (upper-left like Effects tab)
+    // LFO1 On button (upper-left like Effects tab, larger for visibility)
     parentEditor.lfo1EnabledButton.setBounds(lfo1Content.getX(), lfo1CurrentY, modOnBtnW, modOnBtnH);
     lfo1CurrentY += modOnBtnH + modRowSpacing;
     
@@ -867,8 +869,21 @@ void ModulationPageComponent::resized()
     parentEditor.lfo1RetriggerButton.setBounds(lfo1CentreX - modButtonWidth / 2, lfo1CurrentY, modButtonWidth, modButtonHeight);
     lfo1CurrentY += modButtonHeight + modRowSpacing;
     
-    // LFO1 Filter button (below Retrigger)
-    parentEditor.modFilterShowButton.setBounds(lfo1CentreX - modButtonWidth / 2, lfo1CurrentY, modButtonWidth, modButtonHeight);
+    // LFO1 Filter button; when on, Warm Saturation next to it (only visible when filter is on)
+    const int modFilterRowGap = 6;
+    if (modFilter1Show)
+    {
+        int modRowW = modFilterButtonW + modFilterRowGap + modWarmSatButtonW;
+        int modRowLeft = lfo1CentreX - modRowW / 2;
+        parentEditor.modFilterShowButton.setBounds(modRowLeft, lfo1CurrentY, modFilterButtonW, modButtonHeight);
+        parentEditor.warmSaturationMod1Button.setBounds(modRowLeft + modFilterButtonW + modFilterRowGap, lfo1CurrentY, modWarmSatButtonW, modButtonHeight);
+        parentEditor.warmSaturationMod1Button.setVisible(true);
+    }
+    else
+    {
+        parentEditor.modFilterShowButton.setBounds(lfo1CentreX - modFilterButtonW / 2, lfo1CurrentY, modFilterButtonW, modButtonHeight);
+        parentEditor.warmSaturationMod1Button.setVisible(false);
+    }
     lfo1CurrentY += modButtonHeight + modRowSpacing;
     
     // LFO1 Filter controls (when filter shown): Cutoff, Resonance, Mode dropdown, Link to master
@@ -892,7 +907,6 @@ void ModulationPageComponent::resized()
         lfo1CurrentY += filterComboH + modRowSpacing;
         parentEditor.modFilter1LinkButton.setBounds(lfo1CentreX - 55, lfo1CurrentY, 110, 18);
         lfo1CurrentY += 20;
-        parentEditor.warmSaturationMod1Button.setBounds(lfo1CentreX - 65, lfo1CurrentY, 130, 18);
         parentEditor.modFilter1CutoffSlider.setVisible(true);
         parentEditor.modFilter1CutoffLabel.setVisible(true);
         parentEditor.modFilter1ResonanceSlider.setVisible(true);
@@ -900,7 +914,6 @@ void ModulationPageComponent::resized()
         parentEditor.modFilter1ModeCombo.setVisible(true);
         parentEditor.modFilter1ModeLabel.setVisible(true);
         parentEditor.modFilter1LinkButton.setVisible(true);
-        parentEditor.warmSaturationMod1Button.setVisible(true);
     }
     else
     {
@@ -911,7 +924,6 @@ void ModulationPageComponent::resized()
         parentEditor.modFilter1ModeCombo.setVisible(false);
         parentEditor.modFilter1ModeLabel.setVisible(false);
         parentEditor.modFilter1LinkButton.setVisible(false);
-        parentEditor.warmSaturationMod1Button.setVisible(false);
     }
     
     // LFO2 Column (Right) - Same width as LFO1, height based on its own Filter toggle
@@ -928,7 +940,7 @@ void ModulationPageComponent::resized()
     int lfo2CurrentY = lfo2Content.getY() + lfoContentTop;
     int lfo2CentreX = lfo2Content.getX() + lfo2Content.getWidth() / 2;
     
-    // LFO2 On button (upper-left like Effects tab)
+    // LFO2 On button (upper-left like Effects tab, larger for visibility)
     parentEditor.lfo2EnabledButton.setBounds(lfo2Content.getX(), lfo2CurrentY, modOnBtnW, modOnBtnH);
     lfo2CurrentY += modOnBtnH + modRowSpacing;
     
@@ -978,10 +990,22 @@ void ModulationPageComponent::resized()
     parentEditor.lfo2RetriggerButton.setBounds(lfo2CentreX - modButtonWidth / 2, lfo2CurrentY, modButtonWidth, modButtonHeight);
     lfo2CurrentY += modButtonHeight + modRowSpacing;
     
-    // LFO2 Filter button (below Retrigger)
-    parentEditor.modFilterShowButton2.setBounds(lfo2CentreX - modButtonWidth / 2, lfo2CurrentY, modButtonWidth, modButtonHeight);
+    // LFO2 Filter button; when on, Warm Saturation next to it (only visible when filter is on)
+    if (modFilter2Show)
+    {
+        int modRowW = modFilterButtonW + modFilterRowGap + modWarmSatButtonW;
+        int modRowLeft = lfo2CentreX - modRowW / 2;
+        parentEditor.modFilterShowButton2.setBounds(modRowLeft, lfo2CurrentY, modFilterButtonW, modButtonHeight);
+        parentEditor.warmSaturationMod2Button.setBounds(modRowLeft + modFilterButtonW + modFilterRowGap, lfo2CurrentY, modWarmSatButtonW, modButtonHeight);
+        parentEditor.warmSaturationMod2Button.setVisible(true);
+    }
+    else
+    {
+        parentEditor.modFilterShowButton2.setBounds(lfo2CentreX - modFilterButtonW / 2, lfo2CurrentY, modFilterButtonW, modButtonHeight);
+        parentEditor.warmSaturationMod2Button.setVisible(false);
+    }
     lfo2CurrentY += modButtonHeight + modRowSpacing;
-    
+
     // LFO2 Filter controls (when filter shown): Cutoff, Resonance, Mode dropdown, Link to master
     // Knobs same size as Depth, centered under Filter button
     if (modFilter2Show)
@@ -1003,7 +1027,6 @@ void ModulationPageComponent::resized()
         lfo2CurrentY += filterComboH + modRowSpacing;
         parentEditor.modFilter2LinkButton.setBounds(lfo2CentreX - 55, lfo2CurrentY, 110, 18);
         lfo2CurrentY += 20;
-        parentEditor.warmSaturationMod2Button.setBounds(lfo2CentreX - 65, lfo2CurrentY, 130, 18);
         parentEditor.modFilter2CutoffSlider.setVisible(true);
         parentEditor.modFilter2CutoffLabel.setVisible(true);
         parentEditor.modFilter2ResonanceSlider.setVisible(true);
@@ -1011,7 +1034,6 @@ void ModulationPageComponent::resized()
         parentEditor.modFilter2ModeCombo.setVisible(true);
         parentEditor.modFilter2ModeLabel.setVisible(true);
         parentEditor.modFilter2LinkButton.setVisible(true);
-        parentEditor.warmSaturationMod2Button.setVisible(true);
     }
     else
     {
@@ -1022,7 +1044,6 @@ void ModulationPageComponent::resized()
         parentEditor.modFilter2ModeCombo.setVisible(false);
         parentEditor.modFilter2ModeLabel.setVisible(false);
         parentEditor.modFilter2LinkButton.setVisible(false);
-        parentEditor.warmSaturationMod2Button.setVisible(false);
     }
     
     // Hide filter group boxes (controls are now inside LFO boxes)
@@ -1131,6 +1152,30 @@ EffectsPageComponent::EffectsPageComponent(SpaceDustAudioProcessorEditor& editor
     addAndMakeVisible(parentEditor.phaserStereoOffsetLabel);
     addAndMakeVisible(parentEditor.phaserVintageModeButton);
     addAndMakeVisible(parentEditor.phaserVintageModeLabel);
+    addAndMakeVisible(parentEditor.flangerGroup);
+    addAndMakeVisible(parentEditor.flangerEnabledButton);
+    addAndMakeVisible(parentEditor.flangerEnabledLabel);
+    addAndMakeVisible(parentEditor.flangerRateSlider);
+    addAndMakeVisible(parentEditor.flangerRateLabel);
+    addAndMakeVisible(parentEditor.flangerDepthSlider);
+    addAndMakeVisible(parentEditor.flangerDepthLabel);
+    addAndMakeVisible(parentEditor.flangerFeedbackSlider);
+    addAndMakeVisible(parentEditor.flangerFeedbackLabel);
+    addAndMakeVisible(parentEditor.flangerWidthSlider);
+    addAndMakeVisible(parentEditor.flangerWidthLabel);
+    addAndMakeVisible(parentEditor.flangerMixSlider);
+    addAndMakeVisible(parentEditor.flangerMixLabel);
+    addAndMakeVisible(parentEditor.bitCrusherGroup);
+    addAndMakeVisible(parentEditor.bitCrusherEnabledButton);
+    addAndMakeVisible(parentEditor.bitCrusherEnabledLabel);
+    addAndMakeVisible(parentEditor.bitCrusherPostEffectButton);
+    addAndMakeVisible(parentEditor.bitCrusherPostEffectLabel);
+    addAndMakeVisible(parentEditor.bitCrusherAmountSlider);
+    addAndMakeVisible(parentEditor.bitCrusherAmountLabel);
+    addAndMakeVisible(parentEditor.bitCrusherRateSlider);
+    addAndMakeVisible(parentEditor.bitCrusherRateLabel);
+    addAndMakeVisible(parentEditor.bitCrusherMixSlider);
+    addAndMakeVisible(parentEditor.bitCrusherMixLabel);
     addAndMakeVisible(parentEditor.tranceGateGroup);
     addAndMakeVisible(parentEditor.tranceGateEnabledButton);
     addAndMakeVisible(parentEditor.tranceGateEnabledLabel);
@@ -1245,10 +1290,12 @@ void EffectsPageComponent::resized()
     const int filterLabelW = 62;  // Matches knob+fGap slot so "HP Cutoff" / "LP Cutoff" fit
     const int btnW = 52;
     const int btnH = 22;
+    const int onBtnW = 62;
+    const int onBtnH = 28;
     const int labelH = 14;    // Slightly taller to prevent label clipping
     const int groupTitleH = 14;  // Space below group label (keeps On buttons clear of box border)
     
-    // Three columns: Delay(+Trance Gate below) | Reverb(+Phaser below) | Grain Delay
+    // Three columns: Delay+Grain Delay (left) | Reverb+Trance Gate (center) | Phaser+Flanger+Bit Crusher (right)
     const int colW = (r.getWidth() - 2 * pad - 2 * colGap) / 3;
     int delayColX = pad;
     int reverbColX = pad + colW + colGap;
@@ -1260,9 +1307,9 @@ void EffectsPageComponent::resized()
     
     auto placeLabel = [&](juce::Label& lbl, int w) { lbl.setBounds(cx - w/2, y, w, labelH); y += labelH + labelGap; };
     
-    // On button: upper-left corner, right below the group label
-    parentEditor.delayEnabledButton.setBounds(delayColX + pad, y, btnW, btnH);
-    y += btnH + gap;
+    // On button: upper-left corner, right below the group label (larger for visibility)
+    parentEditor.delayEnabledButton.setBounds(delayColX + pad, y, onBtnW, onBtnH);
+    y += onBtnH + gap;
     
     placeLabel(parentEditor.delaySyncLabel, btnW);
     parentEditor.delaySyncButton.setBounds(cx - btnW/2, y, btnW, btnH);
@@ -1286,12 +1333,26 @@ void EffectsPageComponent::resized()
     parentEditor.delayPingPongButton.setBounds(cx - 50, y, 100, btnH);
     y += btnH + gap;
     
-    // Filter toggle
-    parentEditor.delayFilterShowButton.setBounds(cx - btnW/2, y, btnW, btnH);
+    // Filter toggle; when on, Warm Saturation next to it (only visible when filter is on)
+    bool filterShow = *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("delayFilterShow") > 0.5f;
+    const int warmSatW = 120;
+    const int filterRowGap = 6;
+    if (filterShow)
+    {
+        int rowW = btnW + filterRowGap + warmSatW;
+        int rowLeft = cx - rowW / 2;
+        parentEditor.delayFilterShowButton.setBounds(rowLeft, y, btnW, btnH);
+        parentEditor.delayFilterWarmSaturationButton.setBounds(rowLeft + btnW + filterRowGap, y, warmSatW, btnH);
+        parentEditor.delayFilterWarmSaturationButton.setVisible(true);
+    }
+    else
+    {
+        parentEditor.delayFilterShowButton.setBounds(cx - btnW/2, y, btnW, btnH);
+        parentEditor.delayFilterWarmSaturationButton.setVisible(false);
+    }
     y += btnH + gap;
     
-    // ---- Filter section: HP Cutoff | HP Res | LP Cutoff | LP Res, Warm Sat (same knob size as other effects) ----
-    bool filterShow = *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("delayFilterShow") > 0.5f;
+    // ---- Filter section: HP Cutoff | HP Res | LP Cutoff | LP Res (same knob size as other effects) ----
     if (filterShow)
     {
         int fGap = 6;
@@ -1309,76 +1370,102 @@ void EffectsPageComponent::resized()
         parentEditor.delayFilterLPCutoffSlider.setBounds(filterLeft + 2*(knobSize + fGap), y, knobSize, knobSize);
         parentEditor.delayFilterLPResonanceSlider.setBounds(filterLeft + 3*(knobSize + fGap), y, knobSize, knobSize);
         y += knobSize + gap;
-        
-        parentEditor.delayFilterWarmSaturationButton.setBounds(cx - 60, y, 120, btnH);
-        y += btnH + gap;
     }
     
     const int delayContentHeight = y + pad;
     parentEditor.delayGroup.setBounds(delayColX, 0, colW, delayContentHeight);
 
-    // ---- Phaser section (below Delay in left column) ----
+    // ---- Grain Delay section (below Delay in left column) ----
     const int sectionGap = 8;  // Tighter gap between effect sections
-    int phaserStartY = delayContentHeight + sectionGap;
-    int pCx = delayColX + colW / 2;
-    int pY = phaserStartY + pad + groupTitleH;
-    const int pKnobSize = knobSize;
-    const int pBtnW = 48;
-    const int pBtnH = 20;
-    const int pLabelH = labelH;
-    const int pLabelGap = labelGap;
-    const int pGap = gap;
+    int grainStartY = delayContentHeight + sectionGap;
+    int gCx = delayColX + colW / 2;
+    int gY = grainStartY + pad + groupTitleH;
+    const int gKnobSize = knobSize;
+    const int gBtnW = 52;
+    const int gBtnH = 22;
+    const int gOnBtnW = 62;
+    const int gOnBtnH = 28;
+    const int gLabelH = labelH;
+    const int gLabelGap = labelGap;
+    const int gGap = gap;
 
-    // On button: upper-left below label
-    parentEditor.phaserEnabledButton.setBounds(delayColX + pad, pY, pBtnW, pBtnH);
-    pY += pBtnH + pGap;
+    // On button: upper-left below label (larger for visibility)
+    parentEditor.grainDelayEnabledButton.setBounds(delayColX + pad, gY, gOnBtnW, gOnBtnH);
+    gY += gOnBtnH + gGap;
 
-    // Rate | Depth | Feedback - all three in one row
-    const int pKg = 6;
-    const int pRowW = 3 * pKnobSize + 2 * pKg;
-    int pRowLeft = pCx - pRowW / 2;
-    parentEditor.phaserRateLabel.setBounds(pRowLeft, pY, pKnobSize, pLabelH);
-    parentEditor.phaserDepthLabel.setBounds(pRowLeft + pKnobSize + pKg, pY, pKnobSize, pLabelH);
-    parentEditor.phaserFeedbackLabel.setBounds(pRowLeft + 2 * (pKnobSize + pKg), pY, pKnobSize, pLabelH);
-    pY += pLabelH + pLabelGap;
-    parentEditor.phaserRateSlider.setBounds(pRowLeft, pY, pKnobSize, pKnobSize);
-    parentEditor.phaserDepthSlider.setBounds(pRowLeft + pKnobSize + pKg, pY, pKnobSize, pKnobSize);
-    parentEditor.phaserFeedbackSlider.setBounds(pRowLeft + 2 * (pKnobSize + pKg), pY, pKnobSize, pKnobSize);
-    pY += pKnobSize + pGap;
+    // Row 1: Time | Size | Decay
+    const int gKg = 6;
+    const int gRowW = 3 * gKnobSize + 2 * gKg;
+    int gRowLeft = gCx - gRowW / 2;
+    parentEditor.grainDelayTimeLabel.setBounds(gRowLeft, gY, gKnobSize, gLabelH);
+    parentEditor.grainDelaySizeLabel.setBounds(gRowLeft + gKnobSize + gKg, gY, gKnobSize, gLabelH);
+    parentEditor.grainDelayDecayLabel.setBounds(gRowLeft + 2 * (gKnobSize + gKg), gY, gKnobSize, gLabelH);
+    gY += gLabelH + gLabelGap;
+    parentEditor.grainDelayTimeSlider.setBounds(gRowLeft, gY, gKnobSize, gKnobSize);
+    parentEditor.grainDelaySizeSlider.setBounds(gRowLeft + gKnobSize + gKg, gY, gKnobSize, gKnobSize);
+    parentEditor.grainDelayDecaySlider.setBounds(gRowLeft + 2 * (gKnobSize + gKg), gY, gKnobSize, gKnobSize);
+    gY += gKnobSize + gGap;
 
-    parentEditor.phaserScriptModeLabel.setBounds(pCx - 50, pY, 100, pLabelH);
-    pY += pLabelH + pLabelGap;
-    parentEditor.phaserScriptModeButton.setBounds(pCx - 50, pY, 100, pBtnH);
-    pY += pBtnH + pGap;
+    // Row 2: Pitch | Density | Jitter
+    parentEditor.grainDelayPitchLabel.setBounds(gRowLeft, gY, gKnobSize, gLabelH);
+    parentEditor.grainDelayDensityLabel.setBounds(gRowLeft + gKnobSize + gKg, gY, gKnobSize, gLabelH);
+    parentEditor.grainDelayJitterLabel.setBounds(gRowLeft + 2 * (gKnobSize + gKg), gY, gKnobSize, gLabelH);
+    gY += gLabelH + gLabelGap;
+    parentEditor.grainDelayPitchSlider.setBounds(gRowLeft, gY, gKnobSize, gKnobSize);
+    parentEditor.grainDelayDensitySlider.setBounds(gRowLeft + gKnobSize + gKg, gY, gKnobSize, gKnobSize);
+    parentEditor.grainDelayJitterSlider.setBounds(gRowLeft + 2 * (gKnobSize + gKg), gY, gKnobSize, gKnobSize);
+    gY += gKnobSize + gGap;
 
-    // Width | Center - side by side to save vertical space
-    const int pPairGap = 8;
-    const int pPairW = 2 * pKnobSize + pPairGap;
-    int pPairLeft = pCx - pPairW / 2;
-    parentEditor.phaserStereoOffsetLabel.setBounds(pPairLeft, pY, pKnobSize, pLabelH);
-    parentEditor.phaserCentreLabel.setBounds(pPairLeft + pKnobSize + pPairGap, pY, pKnobSize, pLabelH);
-    pY += pLabelH + pLabelGap;
-    parentEditor.phaserStereoOffsetSlider.setBounds(pPairLeft, pY, pKnobSize, pKnobSize);
-    parentEditor.phaserCentreSlider.setBounds(pPairLeft + pKnobSize + pPairGap, pY, pKnobSize, pKnobSize);
-    pY += pKnobSize + pGap;
+    // Ping-Pong toggle
+    parentEditor.grainDelayPingPongLabel.setBounds(gCx - 50, gY, 100, gLabelH);
+    gY += gLabelH + gLabelGap;
+    parentEditor.grainDelayPingPongButton.setBounds(gCx - 50, gY, 100, gBtnH);
+    gY += gBtnH + gGap;
 
-    parentEditor.phaserStagesLabel.setBounds(pCx - 60, pY, 120, pLabelH);
-    pY += pLabelH + pLabelGap;
-    parentEditor.phaserStagesCombo.setBounds(pCx - 60, pY, 120, 20);
-    pY += 24 + pGap;
-
-    // Vintage toggle - no label above it
-    parentEditor.phaserVintageModeButton.setBounds(pCx - 50, pY, 100, pBtnH);
-    pY += pBtnH + pGap;
+    // Filter toggle; when on, Warm Saturation next to it (only visible when filter is on)
+    bool grainFilterShow = *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("grainDelayFilterShow") > 0.5f;
+    const int gWarmSatW = 120;
+    const int gFilterRowGap = 6;
+    if (grainFilterShow)
+    {
+        int gFilterRowW = gBtnW + gFilterRowGap + gWarmSatW;
+        int gFilterRowLeft = gCx - gFilterRowW / 2;
+        parentEditor.grainDelayFilterShowButton.setBounds(gFilterRowLeft, gY, gBtnW, gBtnH);
+        parentEditor.grainDelayFilterWarmSaturationButton.setBounds(gFilterRowLeft + gBtnW + gFilterRowGap, gY, gWarmSatW, gBtnH);
+        parentEditor.grainDelayFilterWarmSaturationButton.setVisible(true);
+    }
+    else
+    {
+        parentEditor.grainDelayFilterShowButton.setBounds(gCx - gBtnW/2, gY, gBtnW, gBtnH);
+        parentEditor.grainDelayFilterWarmSaturationButton.setVisible(false);
+    }
+    gY += gBtnH + gGap;
+    
+    if (grainFilterShow)
+    {
+        int gFGap = 6;
+        int gFilterW = 4 * gKnobSize + 3 * gFGap;
+        int gFilterLeft = gCx - gFilterW / 2;
+        parentEditor.grainDelayFilterHPCutoffLabel.setBounds(gFilterLeft, gY, filterLabelW, gLabelH);
+        parentEditor.grainDelayFilterHPResonanceLabel.setBounds(gFilterLeft + gKnobSize + gFGap, gY, filterLabelW, gLabelH);
+        parentEditor.grainDelayFilterLPCutoffLabel.setBounds(gFilterLeft + 2*(gKnobSize + gFGap), gY, filterLabelW, gLabelH);
+        parentEditor.grainDelayFilterLPResonanceLabel.setBounds(gFilterLeft + 3*(gKnobSize + gFGap), gY, filterLabelW, gLabelH);
+        gY += gLabelH + gLabelGap;
+        parentEditor.grainDelayFilterHPCutoffSlider.setBounds(gFilterLeft, gY, gKnobSize, gKnobSize);
+        parentEditor.grainDelayFilterHPResonanceSlider.setBounds(gFilterLeft + gKnobSize + gFGap, gY, gKnobSize, gKnobSize);
+        parentEditor.grainDelayFilterLPCutoffSlider.setBounds(gFilterLeft + 2*(gKnobSize + gFGap), gY, gKnobSize, gKnobSize);
+        parentEditor.grainDelayFilterLPResonanceSlider.setBounds(gFilterLeft + 3*(gKnobSize + gFGap), gY, gKnobSize, gKnobSize);
+        gY += gKnobSize + gGap;
+    }
 
     // Mix knob - always the lowest knob
-    parentEditor.phaserMixLabel.setBounds(pCx - pKnobSize/2, pY, pKnobSize, pLabelH);
-    pY += pLabelH + pLabelGap;
-    parentEditor.phaserMixSlider.setBounds(pCx - pKnobSize/2, pY, pKnobSize, pKnobSize);
-    pY += pKnobSize + pad;
+    parentEditor.grainDelayMixLabel.setBounds(gCx - gKnobSize/2, gY, gKnobSize, gLabelH);
+    gY += gLabelH + gLabelGap;
+    parentEditor.grainDelayMixSlider.setBounds(gCx - gKnobSize/2, gY, gKnobSize, gKnobSize);
+    gY += gKnobSize + pad;
 
-    const int phaserContentHeight = pY - phaserStartY;
-    parentEditor.phaserGroup.setBounds(delayColX, phaserStartY, colW, phaserContentHeight);
+    const int grainContentHeight = gY - grainStartY;
+    parentEditor.grainDelayGroup.setBounds(delayColX, grainStartY, colW, grainContentHeight);
 
     // ---- Reverb section (center column) - On button upper-left, Mix lowest ----
     int rCx = reverbColX + colW / 2;
@@ -1386,10 +1473,12 @@ void EffectsPageComponent::resized()
     const int rKnobSize = knobSize;
     const int rBtnW = 48;
     const int rBtnH = 20;
+    const int rOnBtnW = 62;
+    const int rOnBtnH = 28;
     
-    // On button: upper-left below label
-    parentEditor.reverbEnabledButton.setBounds(reverbColX + pad, rY, rBtnW, rBtnH);
-    rY += rBtnH + gap;
+    // On button: upper-left below label (larger for visibility)
+    parentEditor.reverbEnabledButton.setBounds(reverbColX + pad, rY, rOnBtnW, rOnBtnH);
+    rY += rOnBtnH + gap;
     
     parentEditor.reverbTypeLabel.setBounds(rCx - 60, rY, 120, labelH);
     rY += labelH + labelGap;
@@ -1402,11 +1491,25 @@ void EffectsPageComponent::resized()
     parentEditor.reverbDecayTimeSlider.setBounds(rCx - rKnobSize/2, rY, rKnobSize, rKnobSize);
     rY += rKnobSize + gap;
     
-    // Filter toggle
-    parentEditor.reverbFilterShowButton.setBounds(rCx - btnW/2, rY, btnW, btnH);
-    rY += btnH + gap;
-    
+    // Filter toggle; when on, Warm Saturation next to it (only visible when filter is on)
     bool reverbFilterShow = *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("reverbFilterShow") > 0.5f;
+    const int rWarmSatW = 120;
+    const int rFilterRowGap = 6;
+    if (reverbFilterShow)
+    {
+        int rRowW = rBtnW + rFilterRowGap + rWarmSatW;
+        int rRowLeft = rCx - rRowW / 2;
+        parentEditor.reverbFilterShowButton.setBounds(rRowLeft, rY, rBtnW, rBtnH);
+        parentEditor.reverbFilterWarmSaturationButton.setBounds(rRowLeft + rBtnW + rFilterRowGap, rY, rWarmSatW, rBtnH);
+        parentEditor.reverbFilterWarmSaturationButton.setVisible(true);
+    }
+    else
+    {
+        parentEditor.reverbFilterShowButton.setBounds(rCx - rBtnW/2, rY, rBtnW, rBtnH);
+        parentEditor.reverbFilterWarmSaturationButton.setVisible(false);
+    }
+    rY += rBtnH + gap;
+    
     if (reverbFilterShow)
     {
         int rFGap = 6;
@@ -1422,8 +1525,6 @@ void EffectsPageComponent::resized()
         parentEditor.reverbFilterLPCutoffSlider.setBounds(rFilterLeft + 2*(rKnobSize + rFGap), rY, rKnobSize, rKnobSize);
         parentEditor.reverbFilterLPResonanceSlider.setBounds(rFilterLeft + 3*(rKnobSize + rFGap), rY, rKnobSize, rKnobSize);
         rY += rKnobSize + gap;
-        parentEditor.reverbFilterWarmSaturationButton.setBounds(rCx - 60, rY, 120, btnH);
-        rY += btnH + gap;
     }
     
     // Mix knob - always the lowest knob
@@ -1443,12 +1544,14 @@ void EffectsPageComponent::resized()
     const int tKnobSize = knobSize;
     const int tBtnW = 48;
     const int tBtnH = 20;
+    const int tOnBtnW = 62;
+    const int tOnBtnH = 28;
     const int tLabelH = labelH;
     const int tGap = gap;
 
-    // On button: upper-left below label
-    parentEditor.tranceGateEnabledButton.setBounds(reverbColX + pad, tY, tBtnW, tBtnH);
-    tY += tBtnH + tGap;
+    // On button: upper-left below label (larger for visibility)
+    parentEditor.tranceGateEnabledButton.setBounds(reverbColX + pad, tY, tOnBtnW, tOnBtnH);
+    tY += tOnBtnH + tGap;
 
     parentEditor.tranceGatePreEffectButton.setBounds(tCx - 60, tY, 120, tBtnH);
     tY += tBtnH + tGap;
@@ -1506,81 +1609,142 @@ void EffectsPageComponent::resized()
     const int gateContentHeight = tY - gateStartY;
     parentEditor.tranceGateGroup.setBounds(reverbColX, gateStartY, colW, gateContentHeight);
 
-    // ---- Grain Delay section (right column) - Time+Size+Decay, Pitch+Density+Jitter rows, Mix lowest ----
-    int gCx = grainColX + colW / 2;
-    int gY = pad + groupTitleH;
-    const int gKnobSize = knobSize;
-    const int gBtnW = 52;
-    const int gBtnH = 22;
-    const int gLabelH = labelH;
-    const int gLabelGap = labelGap;
-    const int gGap = gap;
+    // ---- Phaser section (right column, top) ----
+    int pCx = grainColX + colW / 2;
+    int pY = pad + groupTitleH;
+    const int pKnobSize = knobSize;
+    const int pBtnW = 48;
+    const int pBtnH = 20;
+    const int pOnBtnW = 62;
+    const int pOnBtnH = 28;
+    const int pLabelH = labelH;
+    const int pLabelGap = labelGap;
+    const int pGap = gap;
 
-    // On button: upper-left below label
-    parentEditor.grainDelayEnabledButton.setBounds(grainColX + pad, gY, gBtnW, gBtnH);
-    gY += gBtnH + gGap;
+    // On button: upper-left below label (larger for visibility)
+    parentEditor.phaserEnabledButton.setBounds(grainColX + pad, pY, pOnBtnW, pOnBtnH);
+    pY += pOnBtnH + pGap;
 
-    // Row 1: Time | Size | Decay
-    const int gKg = 6;
-    const int gRowW = 3 * gKnobSize + 2 * gKg;
-    int gRowLeft = gCx - gRowW / 2;
-    parentEditor.grainDelayTimeLabel.setBounds(gRowLeft, gY, gKnobSize, gLabelH);
-    parentEditor.grainDelaySizeLabel.setBounds(gRowLeft + gKnobSize + gKg, gY, gKnobSize, gLabelH);
-    parentEditor.grainDelayDecayLabel.setBounds(gRowLeft + 2 * (gKnobSize + gKg), gY, gKnobSize, gLabelH);
-    gY += gLabelH + gLabelGap;
-    parentEditor.grainDelayTimeSlider.setBounds(gRowLeft, gY, gKnobSize, gKnobSize);
-    parentEditor.grainDelaySizeSlider.setBounds(gRowLeft + gKnobSize + gKg, gY, gKnobSize, gKnobSize);
-    parentEditor.grainDelayDecaySlider.setBounds(gRowLeft + 2 * (gKnobSize + gKg), gY, gKnobSize, gKnobSize);
-    gY += gKnobSize + gGap;
+    // Rate | Depth | Feedback - all three in one row
+    const int pKg = 6;
+    const int pRowW = 3 * pKnobSize + 2 * pKg;
+    int pRowLeft = pCx - pRowW / 2;
+    parentEditor.phaserRateLabel.setBounds(pRowLeft, pY, pKnobSize, pLabelH);
+    parentEditor.phaserDepthLabel.setBounds(pRowLeft + pKnobSize + pKg, pY, pKnobSize, pLabelH);
+    parentEditor.phaserFeedbackLabel.setBounds(pRowLeft + 2 * (pKnobSize + pKg), pY, pKnobSize, pLabelH);
+    pY += pLabelH + pLabelGap;
+    parentEditor.phaserRateSlider.setBounds(pRowLeft, pY, pKnobSize, pKnobSize);
+    parentEditor.phaserDepthSlider.setBounds(pRowLeft + pKnobSize + pKg, pY, pKnobSize, pKnobSize);
+    parentEditor.phaserFeedbackSlider.setBounds(pRowLeft + 2 * (pKnobSize + pKg), pY, pKnobSize, pKnobSize);
+    pY += pKnobSize + pGap;
 
-    // Row 2: Pitch | Density | Jitter
-    parentEditor.grainDelayPitchLabel.setBounds(gRowLeft, gY, gKnobSize, gLabelH);
-    parentEditor.grainDelayDensityLabel.setBounds(gRowLeft + gKnobSize + gKg, gY, gKnobSize, gLabelH);
-    parentEditor.grainDelayJitterLabel.setBounds(gRowLeft + 2 * (gKnobSize + gKg), gY, gKnobSize, gLabelH);
-    gY += gLabelH + gLabelGap;
-    parentEditor.grainDelayPitchSlider.setBounds(gRowLeft, gY, gKnobSize, gKnobSize);
-    parentEditor.grainDelayDensitySlider.setBounds(gRowLeft + gKnobSize + gKg, gY, gKnobSize, gKnobSize);
-    parentEditor.grainDelayJitterSlider.setBounds(gRowLeft + 2 * (gKnobSize + gKg), gY, gKnobSize, gKnobSize);
-    gY += gKnobSize + gGap;
+    // Script and Vintage toggles - side by side
+    const int pToggleGap = 6;
+    const int pToggleW = 55;
+    const int pToggleRowW = 2 * pToggleW + pToggleGap;
+    int pToggleLeft = pCx - pToggleRowW / 2;
+    parentEditor.phaserScriptModeLabel.setBounds(pToggleLeft, pY, pToggleW, pLabelH);
+    parentEditor.phaserVintageModeLabel.setBounds(pToggleLeft + pToggleW + pToggleGap, pY, pToggleW, pLabelH);
+    pY += pLabelH + pLabelGap;
+    parentEditor.phaserScriptModeButton.setBounds(pToggleLeft, pY, pToggleW, pBtnH);
+    parentEditor.phaserVintageModeButton.setBounds(pToggleLeft + pToggleW + pToggleGap, pY, pToggleW, pBtnH);
+    pY += pBtnH + pGap;
 
-    // Ping-Pong toggle
-    parentEditor.grainDelayPingPongLabel.setBounds(gCx - 50, gY, 100, gLabelH);
-    gY += gLabelH + gLabelGap;
-    parentEditor.grainDelayPingPongButton.setBounds(gCx - 50, gY, 100, gBtnH);
-    gY += gBtnH + gGap;
+    // Width | Center - side by side to save vertical space
+    const int pPairGap = 8;
+    const int pPairW = 2 * pKnobSize + pPairGap;
+    int pPairLeft = pCx - pPairW / 2;
+    parentEditor.phaserStereoOffsetLabel.setBounds(pPairLeft, pY, pKnobSize, pLabelH);
+    parentEditor.phaserCentreLabel.setBounds(pPairLeft + pKnobSize + pPairGap, pY, pKnobSize, pLabelH);
+    pY += pLabelH + pLabelGap;
+    parentEditor.phaserStereoOffsetSlider.setBounds(pPairLeft, pY, pKnobSize, pKnobSize);
+    parentEditor.phaserCentreSlider.setBounds(pPairLeft + pKnobSize + pPairGap, pY, pKnobSize, pKnobSize);
+    pY += pKnobSize + pGap;
 
-    // Filter toggle
-    parentEditor.grainDelayFilterShowButton.setBounds(gCx - gBtnW/2, gY, gBtnW, gBtnH);
-    gY += gBtnH + gGap;
-
-    bool grainFilterShow = *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("grainDelayFilterShow") > 0.5f;
-    if (grainFilterShow)
-    {
-        int gFGap = 6;
-        int gFilterW = 4 * gKnobSize + 3 * gFGap;
-        int gFilterLeft = gCx - gFilterW / 2;
-        parentEditor.grainDelayFilterHPCutoffLabel.setBounds(gFilterLeft, gY, filterLabelW, gLabelH);
-        parentEditor.grainDelayFilterHPResonanceLabel.setBounds(gFilterLeft + gKnobSize + gFGap, gY, filterLabelW, gLabelH);
-        parentEditor.grainDelayFilterLPCutoffLabel.setBounds(gFilterLeft + 2*(gKnobSize + gFGap), gY, filterLabelW, gLabelH);
-        parentEditor.grainDelayFilterLPResonanceLabel.setBounds(gFilterLeft + 3*(gKnobSize + gFGap), gY, filterLabelW, gLabelH);
-        gY += gLabelH + gLabelGap;
-        parentEditor.grainDelayFilterHPCutoffSlider.setBounds(gFilterLeft, gY, gKnobSize, gKnobSize);
-        parentEditor.grainDelayFilterHPResonanceSlider.setBounds(gFilterLeft + gKnobSize + gFGap, gY, gKnobSize, gKnobSize);
-        parentEditor.grainDelayFilterLPCutoffSlider.setBounds(gFilterLeft + 2*(gKnobSize + gFGap), gY, gKnobSize, gKnobSize);
-        parentEditor.grainDelayFilterLPResonanceSlider.setBounds(gFilterLeft + 3*(gKnobSize + gFGap), gY, gKnobSize, gKnobSize);
-        gY += gKnobSize + gGap;
-        parentEditor.grainDelayFilterWarmSaturationButton.setBounds(gCx - 60, gY, 120, gBtnH);
-        gY += gBtnH + gGap;
-    }
+    parentEditor.phaserStagesLabel.setBounds(pCx - 60, pY, 120, pLabelH);
+    pY += pLabelH + pLabelGap;
+    parentEditor.phaserStagesCombo.setBounds(pCx - 60, pY, 120, 20);
+    pY += 24 + pGap;
 
     // Mix knob - always the lowest knob
-    parentEditor.grainDelayMixLabel.setBounds(gCx - gKnobSize/2, gY, gKnobSize, gLabelH);
-    gY += gLabelH + gLabelGap;
-    parentEditor.grainDelayMixSlider.setBounds(gCx - gKnobSize/2, gY, gKnobSize, gKnobSize);
-    gY += gKnobSize + pad;
+    parentEditor.phaserMixLabel.setBounds(pCx - pKnobSize/2, pY, pKnobSize, pLabelH);
+    pY += pLabelH + pLabelGap;
+    parentEditor.phaserMixSlider.setBounds(pCx - pKnobSize/2, pY, pKnobSize, pKnobSize);
+    pY += pKnobSize + pad;
 
-    const int grainContentHeight = gY;
-    parentEditor.grainDelayGroup.setBounds(grainColX, 0, colW, grainContentHeight);
+    const int phaserContentHeight = pY;
+    parentEditor.phaserGroup.setBounds(grainColX, 0, colW, phaserContentHeight);
+
+    // ---- Flanger section (below Phaser in right column) ----
+    int flangerStartY = phaserContentHeight + sectionGap;
+    int fCx = grainColX + colW / 2;
+    int fY = flangerStartY + pad + groupTitleH;
+    const int fKnobSize = knobSize;
+    const int fOnBtnW = 62;
+    const int fOnBtnH = 28;
+    const int fLabelH = labelH;
+    const int fLabelGap = labelGap;
+    const int fGap = gap;
+
+    parentEditor.flangerEnabledButton.setBounds(grainColX + pad, fY, fOnBtnW, fOnBtnH);
+    fY += fOnBtnH + fGap;
+
+    const int fKg = 6;
+    const int fRowW = 3 * fKnobSize + 2 * fKg;
+    int fRowLeft = fCx - fRowW / 2;
+    parentEditor.flangerRateLabel.setBounds(fRowLeft, fY, fKnobSize, fLabelH);
+    parentEditor.flangerDepthLabel.setBounds(fRowLeft + fKnobSize + fKg, fY, fKnobSize, fLabelH);
+    parentEditor.flangerFeedbackLabel.setBounds(fRowLeft + 2 * (fKnobSize + fKg), fY, fKnobSize, fLabelH);
+    fY += fLabelH + fLabelGap;
+    parentEditor.flangerRateSlider.setBounds(fRowLeft, fY, fKnobSize, fKnobSize);
+    parentEditor.flangerDepthSlider.setBounds(fRowLeft + fKnobSize + fKg, fY, fKnobSize, fKnobSize);
+    parentEditor.flangerFeedbackSlider.setBounds(fRowLeft + 2 * (fKnobSize + fKg), fY, fKnobSize, fKnobSize);
+    fY += fKnobSize + fGap;
+
+    // Width | Mix - side by side
+    const int fPairW = 2 * fKnobSize + fKg;
+    int fPairLeft = fCx - fPairW / 2;
+    parentEditor.flangerWidthLabel.setBounds(fPairLeft, fY, fKnobSize, fLabelH);
+    parentEditor.flangerMixLabel.setBounds(fPairLeft + fKnobSize + fKg, fY, fKnobSize, fLabelH);
+    fY += fLabelH + fLabelGap;
+    parentEditor.flangerWidthSlider.setBounds(fPairLeft, fY, fKnobSize, fKnobSize);
+    parentEditor.flangerMixSlider.setBounds(fPairLeft + fKnobSize + fKg, fY, fKnobSize, fKnobSize);
+    fY += fKnobSize + pad;
+    const int flangerContentHeight = fY - flangerStartY;
+    parentEditor.flangerGroup.setBounds(grainColX, flangerStartY, colW, flangerContentHeight);
+
+    // ---- Bit Crusher section (below Flanger in right column) ----
+    int bitCrusherStartY = flangerStartY + flangerContentHeight + sectionGap;
+    int bCx = grainColX + colW / 2;
+    int bY = bitCrusherStartY + pad + groupTitleH;
+    const int bKnobSize = knobSize;
+    const int bOnBtnW = 62;
+    const int bOnBtnH = 28;
+    const int bLabelH = labelH;
+    const int bLabelGap = labelGap;
+    const int bGap = gap;
+
+    parentEditor.bitCrusherEnabledButton.setBounds(grainColX + pad, bY, bOnBtnW, bOnBtnH);
+    bY += bOnBtnH + bGap;
+
+    parentEditor.bitCrusherPostEffectButton.setBounds(bCx - 60, bY, 120, 20);
+    bY += 20 + bGap;
+
+    // Amount | Rate | Mix - three knobs
+    const int bKg = 6;
+    const int bTripleW = 3 * bKnobSize + 2 * bKg;
+    int bTripleLeft = bCx - bTripleW / 2;
+    parentEditor.bitCrusherAmountLabel.setBounds(bTripleLeft, bY, bKnobSize, bLabelH);
+    parentEditor.bitCrusherRateLabel.setBounds(bTripleLeft + bKnobSize + bKg, bY, bKnobSize, bLabelH);
+    parentEditor.bitCrusherMixLabel.setBounds(bTripleLeft + 2 * (bKnobSize + bKg), bY, bKnobSize, bLabelH);
+    bY += bLabelH + bLabelGap;
+    parentEditor.bitCrusherAmountSlider.setBounds(bTripleLeft, bY, bKnobSize, bKnobSize);
+    parentEditor.bitCrusherRateSlider.setBounds(bTripleLeft + bKnobSize + bKg, bY, bKnobSize, bKnobSize);
+    parentEditor.bitCrusherMixSlider.setBounds(bTripleLeft + 2 * (bKnobSize + bKg), bY, bKnobSize, bKnobSize);
+    bY += bKnobSize + pad;
+
+    const int bitCrusherContentHeight = bY - bitCrusherStartY;
+    parentEditor.bitCrusherGroup.setBounds(grainColX, bitCrusherStartY, colW, bitCrusherContentHeight);
 }
 
 //==============================================================================
@@ -1605,6 +1769,131 @@ void SaturationColorPageComponent::resized()
 }
 
 //==============================================================================
+// -- SpectralPageComponent Implementation --
+SpectralPageComponent::SpectralPageComponent(SpaceDustAudioProcessorEditor& editor)
+    : parentEditor(editor)
+{
+    setAccessible(false);
+    addAndMakeVisible(goniometerGroup);
+    addAndMakeVisible(oscilloscopeGroup);
+    addAndMakeVisible(spectrumGroup);
+    oscilloscope = std::make_unique<OscilloscopeComponent>();
+    spectrumAnalyser = std::make_unique<SpectrumAnalyserComponent>();
+    oscilloscopeGroup.addAndMakeVisible(*oscilloscope);
+    spectrumGroup.addAndMakeVisible(*spectrumAnalyser);
+}
+
+void SpectralPageComponent::paint(juce::Graphics& g)
+{
+    g.fillAll(juce::Colour(0xff0a0a1f));
+    if (!lissajousDrawArea.isEmpty())
+        drawLissajous(g, lissajousDrawArea, parentEditor.audioProcessor.getGoniometerBuffer());
+}
+
+void SpectralPageComponent::resized()
+{
+    auto bounds = getLocalBounds();
+    if (bounds.isEmpty())
+        return;
+    const int marginH = 20;       // Left/right margin
+    const int marginTop = 8;     // Match Main tab's outerMargin - same distance from top as labels
+    const int marginBottom = 20;
+    const int pad = 12;
+    const int headerH = 28;
+
+    // Row height: Spectrum sets the height; Lissajous+Oscilloscope match it for a clean look
+    const float verticalShrink = 0.975f;
+    const float spectrumShrink = 0.95f;
+
+    // Content area - top matches Main tab (8px), sides and bottom use standard margin
+    auto content = bounds.withTrimmedTop(marginTop).withTrimmedBottom(marginBottom).reduced(marginH, 0);
+    const int totalContentH = juce::jmax(100, content.getHeight() - headerH * 2 - pad);
+    const int L = totalContentH / 2;
+
+    // Single row height for all three (Spectrum height) - clean aligned look
+    const int rowH = juce::jmax(60, static_cast<int>((L + headerH) * verticalShrink * spectrumShrink));
+
+    // Top row: Lissajous (square) | Oscilloscope (stretches to fill) - same height as Spectrum
+    auto topRow = content.withHeight(rowH);
+    const int labelSpace = 26;
+    const int innerH = rowH - 8 - labelSpace;  // Draw area height for Lissajous
+    const int gonioW = juce::jmax(80, innerH + 16);  // Square fits: width = height + padding
+    auto gonioGroupBounds = topRow.withWidth(gonioW);
+    goniometerGroup.setBounds(gonioGroupBounds);
+    oscilloscopeGroup.setBounds(topRow.withX(gonioGroupBounds.getRight()).withWidth(content.getWidth() - gonioGroupBounds.getWidth()));
+
+    // Bottom row: Spectrum - same height as top row
+    auto bottomRow = content.withY(topRow.getBottom() + pad).withHeight(rowH);
+    spectrumGroup.setBounds(bottomRow);
+
+    // Lissajous: below label, centered square
+    auto gonioInner = gonioGroupBounds.reduced(8);
+    gonioInner.removeFromTop(labelSpace);
+    const int gonioDim = juce::jmax(80, juce::jmin(gonioInner.getWidth(), gonioInner.getHeight()));
+    int gx = gonioGroupBounds.getX() + (gonioGroupBounds.getWidth() - gonioDim) / 2;
+    int gy = gonioGroupBounds.getY() + labelSpace + (gonioInner.getHeight() - gonioDim) / 2;
+    lissajousDrawArea = juce::Rectangle<int>(gx, gy, gonioDim, gonioDim);
+
+    // Content area below label, with padding
+    oscilloscope->setBounds(oscilloscopeGroup.getLocalBounds().withTrimmedTop(labelSpace).reduced(8));
+    spectrumAnalyser->setBounds(spectrumGroup.getLocalBounds().withTrimmedTop(labelSpace).reduced(8));
+}
+
+void SpectralPageComponent::drawLissajous(juce::Graphics& g, juce::Rectangle<int> area, const juce::AudioBuffer<float>& buffer)
+{
+    const int cw = area.getWidth();
+    const int ch = area.getHeight();
+    if (cw <= 0 || ch <= 0)
+        return;
+
+    const float maxGain = 3.981f;     // +12 dB
+    const juce::Colour pathColour(0xff48bde8);
+
+    int dim = juce::jmin(cw, ch);
+    int margin = juce::jmin(4, dim / 12);  // Minimal margin - curve uses nearly full area
+    float halfDim = juce::jmax(8.0f, (dim - 2 * margin) * 0.5f);
+    float cx = area.getX() + cw * 0.5f;
+    float cy = area.getY() + ch * 0.5f;
+    float left   = cx - halfDim;
+    float right  = cx + halfDim;
+    float bottom = cy + halfDim;
+    float top    = cy - halfDim;
+
+    g.saveState();
+    g.reduceClipRegion(area);
+
+    // Lissajous path only - no grid or reference circle
+    const int numS = buffer.getNumSamples();
+    if (buffer.getNumChannels() >= 2 && numS > 0)
+    {
+        juce::Path p;
+        for (int i = 0; i < numS; ++i)
+        {
+            float L = buffer.getSample(0, i);
+            float R = buffer.getSample(1, i);
+            float S = L - R;
+            float M = L + R;
+            float xCoord = juce::jmap(S, -maxGain, maxGain, left, right);
+            float yCoord = juce::jmap(M, -maxGain, maxGain, bottom, top);  // M pos = top
+            xCoord = juce::jlimit(left, right, xCoord);
+            yCoord = juce::jlimit(top, bottom, yCoord);
+            juce::Point<float> pt(xCoord, yCoord);
+            if (i == 0)
+                p.startNewSubPath(pt);
+            else if (std::isfinite(pt.x) && std::isfinite(pt.y))
+                p.lineTo(pt);
+        }
+        if (!p.isEmpty())
+        {
+            g.setColour(pathColour);
+            g.strokePath(p, juce::PathStrokeType(2.5f));
+        }
+    }
+
+    g.restoreState();
+}
+
+//==============================================================================
 // -- Constructor --
 
 SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProcessor& p)
@@ -1625,6 +1914,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
       reverbGroup("Reverb", "Reverb"),
       grainDelayGroup("Grain Delay", "Grain Delay"),
       phaserGroup("Phaser", "Phaser"),
+      flangerGroup("Flanger", "Flanger"),
+      bitCrusherGroup("Bit Crusher", "Bit Crusher"),
       tranceGateGroup("Trance Gate", "Trance Gate"),
       delayFilterGroup("Filter", "Filter")
 {
@@ -2949,6 +3240,96 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     phaserVintageModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     phaserVintageModeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
 
+    // Flanger Effect (Effects tab)
+    flangerEnabledButton.setButtonText(safeString("On"));
+    flangerEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "flangerEnabled", flangerEnabledButton);
+    flangerEnabledLabel.setText(safeString("Flanger"), juce::dontSendNotification);
+    flangerEnabledLabel.setJustificationType(juce::Justification::centred);
+    flangerEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    flangerEnabledLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    flangerRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    flangerRateSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    flangerRateSlider.setTextValueSuffix(" Hz");
+    flangerRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "flangerRate", flangerRateSlider);
+    flangerRateLabel.setText(safeString("Rate"), juce::dontSendNotification);
+    flangerRateLabel.setJustificationType(juce::Justification::centred);
+    flangerRateLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    flangerRateLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    flangerDepthSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    flangerDepthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    flangerDepthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "flangerDepth", flangerDepthSlider);
+    flangerDepthLabel.setText(safeString("Depth"), juce::dontSendNotification);
+    flangerDepthLabel.setJustificationType(juce::Justification::centred);
+    flangerDepthLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    flangerDepthLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    flangerFeedbackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    flangerFeedbackSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    flangerFeedbackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "flangerFeedback", flangerFeedbackSlider);
+    flangerFeedbackLabel.setText(safeString("Feedback"), juce::dontSendNotification);
+    flangerFeedbackLabel.setJustificationType(juce::Justification::centred);
+    flangerFeedbackLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    flangerFeedbackLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    flangerWidthSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    flangerWidthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    flangerWidthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "flangerWidth", flangerWidthSlider);
+    flangerWidthLabel.setText(safeString("Width"), juce::dontSendNotification);
+    flangerWidthLabel.setJustificationType(juce::Justification::centred);
+    flangerWidthLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    flangerWidthLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    flangerMixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    flangerMixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    flangerMixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "flangerMix", flangerMixSlider);
+    flangerMixLabel.setText(safeString("Mix"), juce::dontSendNotification);
+    flangerMixLabel.setJustificationType(juce::Justification::centred);
+    flangerMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    flangerMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+
+    // Bit Crusher Effect (Effects tab)
+    bitCrusherEnabledButton.setButtonText(safeString("On"));
+    bitCrusherEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "bitCrusherEnabled", bitCrusherEnabledButton);
+    bitCrusherEnabledLabel.setText(safeString("Bit Crusher"), juce::dontSendNotification);
+    bitCrusherEnabledLabel.setJustificationType(juce::Justification::centred);
+    bitCrusherEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    bitCrusherEnabledLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    bitCrusherPostEffectButton.setButtonText(safeString("Post Effect"));
+    bitCrusherPostEffectAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "bitCrusherPostEffect", bitCrusherPostEffectButton);
+    bitCrusherPostEffectLabel.setText(safeString("Before / After"), juce::dontSendNotification);
+    bitCrusherPostEffectLabel.setJustificationType(juce::Justification::centred);
+    bitCrusherPostEffectLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    bitCrusherPostEffectLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    bitCrusherAmountSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    bitCrusherAmountSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    bitCrusherAmountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "bitCrusherAmount", bitCrusherAmountSlider);
+    bitCrusherAmountLabel.setText(safeString("Amount"), juce::dontSendNotification);
+    bitCrusherAmountLabel.setJustificationType(juce::Justification::centred);
+    bitCrusherAmountLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    bitCrusherAmountLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    bitCrusherRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    bitCrusherRateSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    bitCrusherRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "bitCrusherRate", bitCrusherRateSlider);
+    bitCrusherRateLabel.setText(safeString("Rate"), juce::dontSendNotification);
+    bitCrusherRateLabel.setJustificationType(juce::Justification::centred);
+    bitCrusherRateLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    bitCrusherRateLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    bitCrusherMixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    bitCrusherMixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    bitCrusherMixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "bitCrusherMix", bitCrusherMixSlider);
+    bitCrusherMixLabel.setText(safeString("Mix"), juce::dontSendNotification);
+    bitCrusherMixLabel.setJustificationType(juce::Justification::centred);
+    bitCrusherMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    bitCrusherMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+
     // Trance Gate Effect (Effects tab)
     tranceGateEnabledButton.setButtonText(safeString("On"));
     tranceGateEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -3046,6 +3427,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     grainDelayEnabledLabel.setVisible(false);
     phaserEnabledLabel.setVisible(false);
     phaserVintageModeLabel.setVisible(false);  // Remove label above Vintage toggle
+    flangerEnabledLabel.setVisible(false);
+    bitCrusherEnabledLabel.setVisible(false);
+    bitCrusherPostEffectLabel.setVisible(false);
     tranceGateEnabledLabel.setVisible(false);
     tranceGatePreEffectLabel.setVisible(false);
     tranceGateSyncLabel.setVisible(false);
@@ -3071,6 +3455,30 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     delayFilterLPCutoffLabel.setVisible(false);
     delayFilterLPResonanceLabel.setVisible(false);
 
+    // Wire On toggles to glow effect/LFO groups when enabled
+    auto syncGroupGlow = [this](juce::ToggleButton& btn, juce::GroupComponent& grp) {
+        grp.getProperties().set("isActive", btn.getToggleState());
+        grp.repaint();
+    };
+    delayEnabledButton.addListener(this);
+    phaserEnabledButton.addListener(this);
+    flangerEnabledButton.addListener(this);
+    bitCrusherEnabledButton.addListener(this);
+    reverbEnabledButton.addListener(this);
+    tranceGateEnabledButton.addListener(this);
+    grainDelayEnabledButton.addListener(this);
+    lfo1EnabledButton.addListener(this);
+    lfo2EnabledButton.addListener(this);
+    syncGroupGlow(delayEnabledButton, delayGroup);
+    syncGroupGlow(phaserEnabledButton, phaserGroup);
+    syncGroupGlow(flangerEnabledButton, flangerGroup);
+    syncGroupGlow(bitCrusherEnabledButton, bitCrusherGroup);
+    syncGroupGlow(reverbEnabledButton, reverbGroup);
+    syncGroupGlow(tranceGateEnabledButton, tranceGateGroup);
+    syncGroupGlow(grainDelayEnabledButton, grainDelayGroup);
+    syncGroupGlow(lfo1EnabledButton, lfo1Group);
+    syncGroupGlow(lfo2EnabledButton, lfo2Group);
+
     grainDelayFilterHPCutoffSlider.setVisible(false);
     grainDelayFilterHPResonanceSlider.setVisible(false);
     grainDelayFilterLPCutoffSlider.setVisible(false);
@@ -3091,11 +3499,13 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         modulationPage = std::make_unique<ModulationPageComponent>(*this);
         effectsPage = std::make_unique<EffectsPageComponent>(*this);
         saturationColorPage = std::make_unique<SaturationColorPageComponent>(*this);
+        spectralPage = std::make_unique<SpectralPageComponent>(*this);
         
         tabbedComponent.addTab(safeString("Main"), juce::Colour(0xff0a0a1f), mainPage.get(), false);
         tabbedComponent.addTab(safeString("Modulation"), juce::Colour(0xff0a0a1f), modulationPage.get(), false);
         tabbedComponent.addTab(safeString("Effects"), juce::Colour(0xff0a0a1f), effectsPage.get(), false);
         tabbedComponent.addTab(safeString("Saturation Color"), juce::Colour(0xff0a0a1f), saturationColorPage.get(), false);
+        tabbedComponent.addTab(safeString("Spectral"), juce::Colour(0xff0a0a1f), spectralPage.get(), false);
         
         addAndMakeVisible(tabbedComponent);
         DBG("Space Dust: Tabbed pages created and added");
@@ -3202,7 +3612,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         catch (...) {}
         
         // Calculate the correct window height for tabbed interface
-        // Effects tab needs extra height when Delay filter is toggled on (Phaser Mix knob must stay visible)
+        // Effects tab needs extra height when Delay/Grain Delay filter is toggled on (controls must stay visible)
         const int calculatedHeight = 902;  // ~5% shorter than 950
         
         DBG("Space Dust: Timer callback - Calling setSize(1120, " + juce::String(calculatedHeight) + ")");
@@ -3326,6 +3736,15 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
     stopTimer();
     
     // Remove all listeners first
+    delayEnabledButton.removeListener(this);
+    phaserEnabledButton.removeListener(this);
+    flangerEnabledButton.removeListener(this);
+    bitCrusherEnabledButton.removeListener(this);
+    reverbEnabledButton.removeListener(this);
+    tranceGateEnabledButton.removeListener(this);
+    grainDelayEnabledButton.removeListener(this);
+    lfo1EnabledButton.removeListener(this);
+    lfo2EnabledButton.removeListener(this);
     pitchBendSlider.removeListener(this);
     if (lfo1SyncRateListener)
         lfo1SyncRateCombo.removeListener(lfo1SyncRateListener.get());
@@ -3369,6 +3788,37 @@ void SpaceDustAudioProcessorEditor::sliderDragEnded(juce::Slider* slider)
             pitchBendSlider.setValue(0.0, juce::sendNotificationSync);
         }
     }
+}
+
+//==============================================================================
+// -- Button Listener (On toggle -> group glow sync) --
+
+void SpaceDustAudioProcessorEditor::buttonStateChanged(juce::Button* button)
+{
+    if (isBeingDestroyed.load() || button == nullptr)
+        return;
+    auto sync = [](juce::ToggleButton& btn, juce::GroupComponent& grp) {
+        grp.getProperties().set("isActive", btn.getToggleState());
+        grp.repaint();
+    };
+    if (button == &delayEnabledButton)
+        sync(delayEnabledButton, delayGroup);
+    else if (button == &phaserEnabledButton)
+        sync(phaserEnabledButton, phaserGroup);
+    else if (button == &flangerEnabledButton)
+        sync(flangerEnabledButton, flangerGroup);
+    else if (button == &bitCrusherEnabledButton)
+        sync(bitCrusherEnabledButton, bitCrusherGroup);
+    else if (button == &reverbEnabledButton)
+        sync(reverbEnabledButton, reverbGroup);
+    else if (button == &tranceGateEnabledButton)
+        sync(tranceGateEnabledButton, tranceGateGroup);
+    else if (button == &grainDelayEnabledButton)
+        sync(grainDelayEnabledButton, grainDelayGroup);
+    else if (button == &lfo1EnabledButton)
+        sync(lfo1EnabledButton, lfo1Group);
+    else if (button == &lfo2EnabledButton)
+        sync(lfo2EnabledButton, lfo2Group);
 }
 
 //==============================================================================
@@ -3583,6 +4033,24 @@ void SpaceDustAudioProcessorEditor::timerCallback()
         float leftPeak = audioProcessor.getLeftPeakLevel();
         float rightPeak = audioProcessor.getRightPeakLevel();
         stereoLevelMeter->updateLevels(leftPeak, rightPeak);
+    }
+
+    // Update Spectral tab (Lissajous drawn in SpectralPage::paint, Oscilloscope, Spectrum)
+    constexpr int spectralTabIndex = 4;
+    if (spectralPage != nullptr && tabbedComponent.getCurrentTabIndex() == spectralTabIndex && !isBeingDestroyed.load())
+    {
+        const auto& buf = audioProcessor.getGoniometerBuffer();
+        spectralPage->repaint();
+        if (auto* osc = spectralPage->getOscilloscope())
+        {
+            osc->update(buf);
+            osc->repaint();
+        }
+        if (auto* spec = spectralPage->getSpectrumAnalyser())
+        {
+            spec->update(buf);
+            spec->repaint();
+        }
     }
     
     // Update Legato Glide button visibility based on voice mode

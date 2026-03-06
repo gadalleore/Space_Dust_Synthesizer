@@ -10,6 +10,7 @@
 #include "SpaceDustPhaser.h"
 #include "SpaceDustTranceGate.h"
 #include "SpaceDustFlanger.h"
+#include "SpaceDustBitCrusher.h"
 #include "SpaceDustParametricEQ.h"
 
 //==============================================================================
@@ -93,6 +94,14 @@ public:
     float lfo1SmoothedValue{0.0f};
     float lfo2SmoothedValue{0.0f};
 
+    // Sample & Hold: held random value and RNG state (audio thread only)
+    float lfo1SampleHoldValue{0.0f};
+    float lfo2SampleHoldValue{0.0f};
+    uint32_t lfo1ShState{12345u};
+    uint32_t lfo2ShState{67890u};
+    double lfo1PrevPhase{-1.0};  // For beat-phase wrap detection
+    double lfo2PrevPhase{-1.0};
+
     // Pitch bend snap-back: smooth linear ramp over 0.05s (editor triggers, processor ramps)
     std::atomic<bool> pitchBendSnapActive{false};
     std::atomic<float> pitchBendSnapStartValue{0.0f};
@@ -107,6 +116,9 @@ public:
     // Stereo level meter getters (thread-safe atomic reads)
     float getLeftPeakLevel() const;
     float getRightPeakLevel() const;
+
+    // Goniometer (Lissajous) buffer getter - thread-safe double-buffered copy of output
+    const juce::AudioBuffer<float>& getGoniometerBuffer() const;
 
 private:
     //==============================================================================
@@ -165,6 +177,7 @@ private:
     // -- Phaser, Flanger, Parametric EQ Effect State --
     SpaceDustPhaser phaser_;
     SpaceDustFlanger flanger_;
+    SpaceDustBitCrusher bitCrusher_;
     SpaceDustParametricEQ parametricEQ_;
 
     //==============================================================================
@@ -192,6 +205,14 @@ private:
     // Atomic for thread-safe access from audio thread (processBlock) and UI thread (timer)
     std::atomic<float> leftPeakLevel{0.0f};   // Peak level for left channel (0.0 = silence, 1.0 = 0 dB)
     std::atomic<float> rightPeakLevel{0.0f};  // Peak level for right channel (0.0 = silence, 1.0 = 0 dB)
+
+    //==============================================================================
+    // -- Goniometer (Lissajous) State --
+    // Double-buffered copy of output for Spectral tab goniometer display.
+    // Audio thread writes to one buffer, UI reads from the other (atomic swap).
+    static constexpr int goniometerMaxSamples = 4096;
+    juce::AudioBuffer<float> goniometerBuffer[2];
+    std::atomic<int> goniometerReadIndex{0};
     
     // -- Helper Methods --
     

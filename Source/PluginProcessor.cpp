@@ -675,6 +675,11 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         lfo2Buffer.setSize(1, samplesPerBlock);
         lfo1Buffer.clear();
         lfo2Buffer.clear();
+        // Seed Sample & Hold with initial random values (avoids first period at 0)
+        lfo1ShState = lfo1ShState * 1103515245u + 12345u;
+        lfo1SampleHoldValue = (static_cast<float>((lfo1ShState >> 16) & 0x7FFF) / 32767.5f) * 2.0f - 1.0f;
+        lfo2ShState = lfo2ShState * 1103515245u + 12345u;
+        lfo2SampleHoldValue = (static_cast<float>((lfo2ShState >> 16) & 0x7FFF) / 32767.5f) * 2.0f - 1.0f;
         
         // Initialize delay lines
         juce::dsp::ProcessSpec delaySpec;
@@ -733,9 +738,25 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         phaser_.prepare(reverbSpec);
         phaser_.reset();
 
+        // Initialize flanger
+        flanger_.prepare(reverbSpec);
+        flanger_.reset();
+
+        // Initialize bit crusher
+        bitCrusher_.prepare(reverbSpec);
+        bitCrusher_.reset();
+
         // Initialize trance gate
         tranceGate_.prepare(reverbSpec);
         tranceGate_.reset();
+
+        // Initialize goniometer buffers (double-buffered for Spectral tab Lissajous display)
+        const int gonioSamples = juce::jmin(goniometerMaxSamples, samplesPerBlock);
+        goniometerBuffer[0].setSize(2, gonioSamples, false, true, true);
+        goniometerBuffer[1].setSize(2, gonioSamples, false, true, true);
+        goniometerBuffer[0].clear();
+        goniometerBuffer[1].clear();
+        goniometerReadIndex.store(0);
         
         DBG("Space Dust: prepareToPlay - Step 4: Sample rate set to " + safeStringFromNumber(sampleRate));
     }
@@ -1262,6 +1283,8 @@ void SpaceDustAudioProcessor::releaseResources()
     delayFilterLPFb.reset();
     grainDelay_.reset();
     phaser_.reset();
+    flanger_.reset();
+    bitCrusher_.reset();
     tranceGate_.reset();
     
     // Step 3: Clear all sounds (ReferenceCountedArray<SynthesiserSound>)
@@ -1495,14 +1518,18 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 double t = (p - (0.5 - kTransition)) / (2.0 * kTransition);
                 return static_cast<float>(1.0 - 2.0 * t);  // linear crossfade
             }
-            case 5: // S&H
-            {
-                double hash = std::fmod(p * 1000.0, 1.0);
-                return static_cast<float>(hash * 2.0 - 1.0);
-            }
+            case 5: // S&H - not used here; handled via wrap detection in loop
+                return 0.0f;
             default:
                 return static_cast<float>(std::sin(p * juce::MathConstants<double>::twoPi));
         }
+    };
+
+    // Sample & Hold: generate next random value in [-1, 1] using LCG (real-time safe)
+    auto nextSampleHoldValue = [](uint32_t& state, float& held) {
+        state = state * 1103515245u + 12345u;
+        float r = static_cast<float>((state >> 16) & 0x7FFF) / 32767.5f;
+        held = r * 2.0f - 1.0f;
     };
 
     // Smoothing coefficient: ~5 samples to soften retrigger/phase jumps (prevents clicks)
@@ -1587,14 +1614,28 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                     ppqStart = *posInfo->getPpqPosition();
             }
             double periodBeats = multiplier;
+            double prevPhase = lfo1PrevPhase;
             for (int s = 0; s < numSamples; ++s)
             {
                 double ppq = ppqStart + static_cast<double>(s) / samplesPerBeat;
                 double phase = std::fmod(ppq, periodBeats) / periodBeats;
-                float raw = generateLfoValue(phase + phaseOffset, lfo1Waveform) * lfo1Depth;
+                float raw;
+                if (lfo1Waveform == 5)
+                {
+                    bool wrapped = (prevPhase < 0) || (prevPhase > 0.5 && phase < prevPhase);
+                    if (wrapped)
+                        nextSampleHoldValue(lfo1ShState, lfo1SampleHoldValue);
+                    raw = lfo1SampleHoldValue * lfo1Depth;
+                    prevPhase = phase;
+                }
+                else
+                {
+                    raw = generateLfoValue(phase + phaseOffset, lfo1Waveform) * lfo1Depth;
+                }
                 lfo1SmoothedValue += kLfoSmoothAlpha * (raw - lfo1SmoothedValue);
                 lfo1Buffer.setSample(0, s, lfo1SmoothedValue);
             }
+            lfo1PrevPhase = prevPhase;
         }
         else
         {
@@ -1602,8 +1643,13 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             double phase = lfo1CurrentPhase;
             for (int s = 0; s < numSamples; ++s)
             {
-                phase = std::fmod(phase + delta, 1.0);
-                float raw = generateLfoValue(phase + phaseOffset, lfo1Waveform) * lfo1Depth;
+                double phaseNext = phase + delta;
+                bool wrapped = (phaseNext >= 1.0);
+                if (lfo1Waveform == 5 && wrapped)
+                    nextSampleHoldValue(lfo1ShState, lfo1SampleHoldValue);
+                phase = std::fmod(phaseNext, 1.0);
+                float raw = (lfo1Waveform == 5) ? (lfo1SampleHoldValue * lfo1Depth)
+                    : (generateLfoValue(phase + phaseOffset, lfo1Waveform) * lfo1Depth);
                 lfo1SmoothedValue += kLfoSmoothAlpha * (raw - lfo1SmoothedValue);
                 lfo1Buffer.setSample(0, s, lfo1SmoothedValue);
             }
@@ -1628,8 +1674,13 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         float phaseOffset = lfo1PhaseParam / 360.0f;
         for (int s = 0; s < numSamples; ++s)
         {
-            phase = std::fmod(phase + delta, 1.0);
-            float raw = generateLfoValue(phase + phaseOffset, lfo1Waveform) * lfo1Depth;
+            double phaseNext = phase + delta;
+            bool wrapped = (phaseNext >= 1.0);
+            if (lfo1Waveform == 5 && wrapped)
+                nextSampleHoldValue(lfo1ShState, lfo1SampleHoldValue);
+            phase = std::fmod(phaseNext, 1.0);
+            float raw = (lfo1Waveform == 5) ? (lfo1SampleHoldValue * lfo1Depth)
+                : (generateLfoValue(phase + phaseOffset, lfo1Waveform) * lfo1Depth);
             lfo1SmoothedValue += kLfoSmoothAlpha * (raw - lfo1SmoothedValue);
             lfo1Buffer.setSample(0, s, lfo1SmoothedValue);
         }
@@ -1714,14 +1765,28 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                     ppqStart = *posInfo->getPpqPosition();
             }
             double periodBeats = multiplier;
+            double prevPhase = lfo2PrevPhase;
             for (int s = 0; s < numSamples; ++s)
             {
                 double ppq = ppqStart + static_cast<double>(s) / samplesPerBeat;
                 double phase = std::fmod(ppq, periodBeats) / periodBeats;
-                float raw = generateLfoValue(phase + phaseOffset, lfo2Waveform) * lfo2Depth;
+                float raw;
+                if (lfo2Waveform == 5)
+                {
+                    bool wrapped = (prevPhase < 0) || (prevPhase > 0.5 && phase < prevPhase);
+                    if (wrapped)
+                        nextSampleHoldValue(lfo2ShState, lfo2SampleHoldValue);
+                    raw = lfo2SampleHoldValue * lfo2Depth;
+                    prevPhase = phase;
+                }
+                else
+                {
+                    raw = generateLfoValue(phase + phaseOffset, lfo2Waveform) * lfo2Depth;
+                }
                 lfo2SmoothedValue += kLfoSmoothAlpha * (raw - lfo2SmoothedValue);
                 lfo2Buffer.setSample(0, s, lfo2SmoothedValue);
             }
+            lfo2PrevPhase = prevPhase;
         }
         else
         {
@@ -1729,8 +1794,13 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             double phase = lfo2CurrentPhase;
             for (int s = 0; s < numSamples; ++s)
             {
-                phase = std::fmod(phase + delta, 1.0);
-                float raw = generateLfoValue(phase + phaseOffset, lfo2Waveform) * lfo2Depth;
+                double phaseNext = phase + delta;
+                bool wrapped = (phaseNext >= 1.0);
+                if (lfo2Waveform == 5 && wrapped)
+                    nextSampleHoldValue(lfo2ShState, lfo2SampleHoldValue);
+                phase = std::fmod(phaseNext, 1.0);
+                float raw = (lfo2Waveform == 5) ? (lfo2SampleHoldValue * lfo2Depth)
+                    : (generateLfoValue(phase + phaseOffset, lfo2Waveform) * lfo2Depth);
                 lfo2SmoothedValue += kLfoSmoothAlpha * (raw - lfo2SmoothedValue);
                 lfo2Buffer.setSample(0, s, lfo2SmoothedValue);
             }
@@ -1755,8 +1825,13 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         float phaseOffset = lfo2PhaseParam / 360.0f;
         for (int s = 0; s < numSamples; ++s)
         {
-            phase = std::fmod(phase + delta, 1.0);
-            float raw = generateLfoValue(phase + phaseOffset, lfo2Waveform) * lfo2Depth;
+            double phaseNext = phase + delta;
+            bool wrapped = (phaseNext >= 1.0);
+            if (lfo2Waveform == 5 && wrapped)
+                nextSampleHoldValue(lfo2ShState, lfo2SampleHoldValue);
+            phase = std::fmod(phaseNext, 1.0);
+            float raw = (lfo2Waveform == 5) ? (lfo2SampleHoldValue * lfo2Depth)
+                : (generateLfoValue(phase + phaseOffset, lfo2Waveform) * lfo2Depth);
             lfo2SmoothedValue += kLfoSmoothAlpha * (raw - lfo2SmoothedValue);
             lfo2Buffer.setSample(0, s, lfo2SmoothedValue);
         }
@@ -1803,32 +1878,62 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     midiMessages.clear();
 
     //==============================================================================
-    // -- Trance Gate (Pre: gate dry synth before Delay/Reverb when Post Effect is OFF) --
+    // -- Effect order (TG/BC Post Effect toggles) --
+    // TG Post OFF: TG first. BC Post OFF: BC before all effects (second, after TG). BC Post ON: BC late.
+    // TG Post ON:  TG last.  BC Post OFF: BC before all effects (first). BC Post ON: BC late (after Flanger).
     bool tranceGateEnabled = *apvts.getRawParameterValue("tranceGateEnabled") > 0.5f;
     bool tranceGatePostEffect = *apvts.getRawParameterValue("tranceGatePostEffect") > 0.5f;
-    if (tranceGateEnabled && !tranceGatePostEffect && buffer.getNumChannels() >= 2 && numSamples > 0)
+    bool bitCrusherEnabled = *apvts.getRawParameterValue("bitCrusherEnabled") > 0.5f;
+    bool bitCrusherPostEffect = *apvts.getRawParameterValue("bitCrusherPostEffect") > 0.5f;
+
+    auto runBitCrusher = [&]()
     {
-        SpaceDustTranceGate::Parameters tp;
-        tp.enabled = true;
-        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"tranceGateSteps", 1}.getParamID())))
-            tp.numSteps = (p->getIndex() == 0) ? 4 : (p->getIndex() == 1) ? 8 : 16;
-        else
-            tp.numSteps = 8;
-        tp.sync = *apvts.getRawParameterValue("tranceGateSync") > 0.5f;
-        tp.rate = *apvts.getRawParameterValue("tranceGateRate");
-        tp.attackMs = *apvts.getRawParameterValue("tranceGateAttack");
-        tp.releaseMs = *apvts.getRawParameterValue("tranceGateRelease");
-        tp.mix = *apvts.getRawParameterValue("tranceGateMix");
-        for (int s = 0; s < 8; ++s)
+        if (bitCrusherEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
         {
-            juce::String stepId = "tranceGateStep" + juce::String(s + 1);
-            if (auto* rp = apvts.getRawParameterValue(stepId))
-                tp.stepOn[s] = rp->load() > 0.5f;
+            SpaceDustBitCrusher::Parameters bp;
+            bp.enabled = true;
+            bp.amount = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("bitCrusherAmount")->load());
+            bp.rate = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("bitCrusherRate")->load());
+            bp.mix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("bitCrusherMix")->load());
+            bitCrusher_.setParameters(bp);
+            bitCrusher_.process(buffer);
         }
-        tranceGate_.setParameters(tp);
-        tranceGate_.process(buffer, currentSampleRate, getPlayHead());
-    }
-    
+    };
+
+    auto runTranceGate = [&]()
+    {
+        if (tranceGateEnabled && buffer.getNumChannels() >= 2 && numSamples > 0)
+        {
+            SpaceDustTranceGate::Parameters tp;
+            tp.enabled = true;
+            if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"tranceGateSteps", 1}.getParamID())))
+                tp.numSteps = (p->getIndex() == 0) ? 4 : (p->getIndex() == 1) ? 8 : 16;
+            else
+                tp.numSteps = 8;
+            tp.sync = *apvts.getRawParameterValue("tranceGateSync") > 0.5f;
+            tp.rate = *apvts.getRawParameterValue("tranceGateRate");
+            tp.attackMs = *apvts.getRawParameterValue("tranceGateAttack");
+            tp.releaseMs = *apvts.getRawParameterValue("tranceGateRelease");
+            tp.mix = *apvts.getRawParameterValue("tranceGateMix");
+            for (int s = 0; s < 8; ++s)
+            {
+                juce::String stepId = "tranceGateStep" + juce::String(s + 1);
+                if (auto* rp = apvts.getRawParameterValue(stepId))
+                    tp.stepOn[s] = rp->load() > 0.5f;
+            }
+            tranceGate_.setParameters(tp);
+            tranceGate_.process(buffer, currentSampleRate, getPlayHead());
+        }
+    };
+
+    // -- 1) Trance Gate (Pre: when Post Effect OFF) --
+    if (tranceGateEnabled && !tranceGatePostEffect)
+        runTranceGate();
+
+    // -- 2) Bit Crusher (early: before all effects except TG. When TG Post OFF, TG is first so BC is second) --
+    if (bitCrusherEnabled && !bitCrusherPostEffect)
+        runBitCrusher();
+
     //==============================================================================
     // -- Delay Effect --
     bool delayEnabled = *apvts.getRawParameterValue("delayEnabled") > 0.5f;
@@ -1887,6 +1992,10 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     
     if (delayEnabled && delayDecay > 0.001f && numSamples > 0 && buffer.getNumChannels() >= 2)
     {
+        // Pre-effect drive: 0 dB at mix 0, 3 dB at mix full (compensates amplitude loss)
+        float delayDrive = std::pow(10.0f, delayDryWet * 3.0f / 20.0f);
+        buffer.applyGain(0, 0, numSamples, delayDrive);
+        buffer.applyGain(1, 0, numSamples, delayDrive);
         // Set smoothed targets (read once per block - real-time safe)
         smoothedDelayTime.setTargetValue(delayTimeSamples);
         smoothedDelayDecay.setTargetValue(delayDecay);
@@ -2028,12 +2137,16 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     bool reverbEnabled = *apvts.getRawParameterValue("reverbEnabled") > 0.5f;
     if (reverbEnabled && buffer.getNumChannels() >= 2 && numSamples > 0)
     {
+        float reverbWetMix = *apvts.getRawParameterValue("reverbWetMix");
+        float reverbDrive = std::pow(10.0f, reverbWetMix * 3.0f / 20.0f);
+        buffer.applyGain(0, 0, numSamples, reverbDrive);
+        buffer.applyGain(1, 0, numSamples, reverbDrive);
         SpaceDustReverb::Parameters rp;
         if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"reverbType", 1}.getParamID())))
             rp.type = p->getIndex();
         else
             rp.type = 0;
-        rp.wetMix = *apvts.getRawParameterValue("reverbWetMix");
+        rp.wetMix = reverbWetMix;
         rp.decayTime = *apvts.getRawParameterValue("reverbDecayTime");
         rp.filterOn = *apvts.getRawParameterValue("reverbFilterShow") > 0.5f;
         rp.filterWarmSaturation = *apvts.getRawParameterValue("reverbFilterWarmSaturation") > 0.5f;
@@ -2050,12 +2163,16 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     bool grainDelayEnabled = *apvts.getRawParameterValue("grainDelayEnabled") > 0.5f;
     if (grainDelayEnabled && buffer.getNumChannels() >= 2 && numSamples > 0)
     {
+        float grainMix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("grainDelayMix")->load() * 0.01f);
+        float grainDrive = std::pow(10.0f, grainMix * 3.0f / 20.0f);
+        buffer.applyGain(0, 0, numSamples, grainDrive);
+        buffer.applyGain(1, 0, numSamples, grainDrive);
         SpaceDustGrainDelay::Parameters gp;
         gp.enabled = true;
         gp.delayMs = juce::jlimit(20.0f, 2000.0f, apvts.getRawParameterValue("grainDelayTime")->load());
         gp.grainSizeMs = juce::jlimit(10.0f, 500.0f, apvts.getRawParameterValue("grainDelaySize")->load());
         gp.pitchSemitones = juce::jlimit(-12.0f, 12.0f, apvts.getRawParameterValue("grainDelayPitch")->load());
-        gp.mix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("grainDelayMix")->load() * 0.01f);
+        gp.mix = grainMix;
         gp.decay = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("grainDelayDecay")->load() * 0.015f);  // 0-150% for longer decay
         gp.density = juce::jlimit(1.0f, 8.0f, apvts.getRawParameterValue("grainDelayDensity")->load());
         gp.jitter = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("grainDelayJitter")->load() * 0.01f);
@@ -2075,13 +2192,17 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     bool phaserEnabled = *apvts.getRawParameterValue("phaserEnabled") > 0.5f;
     if (phaserEnabled && buffer.getNumChannels() >= 2 && numSamples > 0)
     {
+        float phaserMix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("phaserMix")->load());
+        float phaserDrive = std::pow(10.0f, phaserMix * 3.0f / 20.0f);
+        buffer.applyGain(0, 0, numSamples, phaserDrive);
+        buffer.applyGain(1, 0, numSamples, phaserDrive);
         SpaceDustPhaser::Parameters pp;
         pp.enabled = true;
-        pp.rateHz = juce::jlimit(0.05f, 10.0f, apvts.getRawParameterValue("phaserRate")->load());
+        pp.rateHz = juce::jlimit(0.05f, 200.0f, apvts.getRawParameterValue("phaserRate")->load());
         pp.depth = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("phaserDepth")->load());
         pp.feedback = juce::jlimit(-1.0f, 1.0f, apvts.getRawParameterValue("phaserFeedback")->load());
         pp.scriptMode = *apvts.getRawParameterValue("phaserScriptMode") > 0.5f;
-        pp.mix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("phaserMix")->load());
+        pp.mix = phaserMix;
         pp.centreHz = juce::jlimit(50.0f, 2000.0f, apvts.getRawParameterValue("phaserCentre")->load());
         if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"phaserStages", 1}.getParamID())))
             pp.numStages = (p->getIndex() == 0) ? 4 : 6;
@@ -2094,29 +2215,32 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     }
 
     //==============================================================================
-    // -- Trance Gate (Post-Effect: gate wet signal after Delay/Reverb/Grain/Phaser - default) --
-    if (tranceGateEnabled && tranceGatePostEffect && buffer.getNumChannels() >= 2 && numSamples > 0)
+    // -- Flanger Effect --
+    bool flangerEnabled = *apvts.getRawParameterValue("flangerEnabled") > 0.5f;
+    if (flangerEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
     {
-        SpaceDustTranceGate::Parameters tp;
-        tp.enabled = true;
-        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"tranceGateSteps", 1}.getParamID())))
-            tp.numSteps = (p->getIndex() == 0) ? 4 : (p->getIndex() == 1) ? 8 : 16;
-        else
-            tp.numSteps = 8;
-        tp.sync = *apvts.getRawParameterValue("tranceGateSync") > 0.5f;
-        tp.rate = *apvts.getRawParameterValue("tranceGateRate");
-        tp.attackMs = *apvts.getRawParameterValue("tranceGateAttack");
-        tp.releaseMs = *apvts.getRawParameterValue("tranceGateRelease");
-        tp.mix = *apvts.getRawParameterValue("tranceGateMix");
-        for (int s = 0; s < 8; ++s)
-        {
-            juce::String stepId = "tranceGateStep" + juce::String(s + 1);
-            if (auto* rp = apvts.getRawParameterValue(stepId))
-                tp.stepOn[s] = rp->load() > 0.5f;
-        }
-        tranceGate_.setParameters(tp);
-        tranceGate_.process(buffer, currentSampleRate, getPlayHead());
+        float flangerMix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("flangerMix")->load());
+        float flangerDrive = std::pow(10.0f, flangerMix * 3.0f / 20.0f);
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            buffer.applyGain(ch, 0, numSamples, flangerDrive);
+        SpaceDustFlanger::Parameters fp;
+        fp.enabled = true;
+        fp.rateHz = juce::jlimit(0.05f, 200.0f, apvts.getRawParameterValue("flangerRate")->load());
+        fp.depth = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("flangerDepth")->load());
+        fp.feedback = juce::jlimit(-1.0f, 1.0f, apvts.getRawParameterValue("flangerFeedback")->load());
+        fp.width = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("flangerWidth")->load());
+        fp.mix = flangerMix;
+        flanger_.setParameters(fp);
+        flanger_.process(buffer);
     }
+
+    // -- Bit Crusher (late: after Flanger, before TG) --
+    if (bitCrusherEnabled && bitCrusherPostEffect)
+        runBitCrusher();
+
+    // -- Trance Gate (Post: when Post Effect ON, always last) --
+    if (tranceGateEnabled && tranceGatePostEffect)
+        runTranceGate();
     
     //==============================================================================
     // -- Master Volume Control --
@@ -2168,6 +2292,30 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         leftPeakLevel.store(monoPeak);
         rightPeakLevel.store(monoPeak);
     }
+
+    //==============================================================================
+    // -- Goniometer (Lissajous) Buffer Copy --
+    // Double-buffered: audio thread writes to buffer UI is not reading
+    if (buffer.getNumChannels() >= 2 && numSamples > 0)
+    {
+        const int readIdx = goniometerReadIndex.load(std::memory_order_relaxed);
+        const int writeIdx = 1 - readIdx;
+        auto& dest = goniometerBuffer[writeIdx];
+        if (dest.getNumChannels() >= 2 && dest.getNumSamples() >= numSamples)
+        {
+            dest.copyFrom(0, 0, buffer, 0, 0, numSamples);
+            dest.copyFrom(1, 0, buffer, 1, 0, numSamples);
+            if (numSamples < dest.getNumSamples())
+                dest.clear(numSamples, dest.getNumSamples() - numSamples);
+            goniometerReadIndex.store(writeIdx, std::memory_order_release);
+        }
+    }
+}
+
+//==============================================================================
+const juce::AudioBuffer<float>& SpaceDustAudioProcessor::getGoniometerBuffer() const
+{
+    return goniometerBuffer[goniometerReadIndex.load(std::memory_order_acquire)];
 }
 
 //==============================================================================
@@ -3100,7 +3248,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"phaserRate", 1}, "Phaser Rate",
-            juce::NormalisableRange<float>(0.05f, 10.0f, 0.01f, 0.35f), 1.0f),
+            juce::NormalisableRange<float>(0.05f, 200.0f, 0.01f, 0.35f), 1.0f),
         "phaserRate");
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -3140,6 +3288,64 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{"phaserVintageMode", 1}, "Phaser Vintage", false),
         "phaserVintageMode");
+
+    //==============================================================================
+    // -- Flanger Effect Parameters --
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"flangerEnabled", 1}, "Flanger On", false),
+        "flangerEnabled");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"flangerRate", 1}, "Flanger Rate",
+            juce::NormalisableRange<float>(0.05f, 200.0f, 0.01f, 0.35f), 0.5f),
+        "flangerRate");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"flangerDepth", 1}, "Flanger Depth",
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f),
+        "flangerDepth");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"flangerFeedback", 1}, "Flanger Feedback",
+            juce::NormalisableRange<float>(-1.0f, 1.0f, 0.01f), 0.0f),
+        "flangerFeedback");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"flangerWidth", 1}, "Flanger Width",
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f),
+        "flangerWidth");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"flangerMix", 1}, "Flanger Mix",
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f),
+        "flangerMix");
+
+    //==============================================================================
+    // -- Bit Crusher Effect Parameters --
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"bitCrusherEnabled", 1}, "Bit Crusher On", false),
+        "bitCrusherEnabled");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"bitCrusherPostEffect", 1}, "Bit Crusher Post", true),
+        "bitCrusherPostEffect");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"bitCrusherAmount", 1}, "Bit Crusher Amount",
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f),
+        "bitCrusherAmount");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"bitCrusherRate", 1}, "Bit Crusher Rate",
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f),
+        "bitCrusherRate");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"bitCrusherMix", 1}, "Bit Crusher Mix",
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f),
+        "bitCrusherMix");
 
     //==============================================================================
     // -- Trance Gate Effect Parameters --
