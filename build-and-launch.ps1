@@ -27,12 +27,24 @@ $juceDir = $env:JUCE_DIR
 if (-not $juceDir -and (Test-Path (Join-Path $projectRoot "juce_path.local"))) {
     $juceDir = (Get-Content (Join-Path $projectRoot "juce_path.local") -Raw).Trim()
 }
-$cmakeArgs = @("..", "-G", "Visual Studio 17 2022", "-A", "x64")
-if ($juceDir) { $cmakeArgs += "-DJUCE_DIR=$juceDir" }
-Set-Location build
-& cmake @cmakeArgs
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "[Space Dust] ✗ CMake generation failed!" -ForegroundColor Red
+# Try VS 2022 first (most common), then VS 2026
+$generators = @("Visual Studio 17 2022", "Visual Studio 18 2026")
+$cmakeOk = $false
+foreach ($gen in $generators) {
+    Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
+    mkdir build -ErrorAction SilentlyContinue | Out-Null
+    $cmakeArgs = @("..", "-G", $gen, "-A", "x64")
+    if ($juceDir) { $cmakeArgs += "-DJUCE_DIR=$juceDir" }
+    Set-Location build
+    & cmake @cmakeArgs 2>&1 | Out-Null
+    if ($LASTEXITCODE -eq 0) {
+        $cmakeOk = $true
+        Write-Host "[Space Dust] Using $gen" -ForegroundColor Gray
+        break
+    }
+}
+if (-not $cmakeOk) {
+    Write-Host "[Space Dust] ✗ CMake generation failed! Install Visual Studio 2022+ with C++ workload." -ForegroundColor Red
     Set-Location ..
     exit 1
 }

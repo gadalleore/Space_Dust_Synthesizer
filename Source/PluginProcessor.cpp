@@ -746,6 +746,10 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         bitCrusher_.prepare(reverbSpec);
         bitCrusher_.reset();
 
+        // Initialize soft clipper
+        softClipper_.prepare(reverbSpec);
+        softClipper_.reset();
+
         // Initialize trance gate
         tranceGate_.prepare(reverbSpec);
         tranceGate_.reset();
@@ -1285,6 +1289,7 @@ void SpaceDustAudioProcessor::releaseResources()
     phaser_.reset();
     flanger_.reset();
     bitCrusher_.reset();
+    softClipper_.reset();
     tranceGate_.reset();
     
     // Step 3: Clear all sounds (ReferenceCountedArray<SynthesiserSound>)
@@ -2241,6 +2246,31 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // -- Trance Gate (Post: when Post Effect ON, always last) --
     if (tranceGateEnabled && tranceGatePostEffect)
         runTranceGate();
+
+    //==============================================================================
+    // -- Soft Clipper (Saturation Color) - before master volume --
+    bool softClipperEnabled = *apvts.getRawParameterValue("softClipperEnabled") > 0.5f;
+    if (softClipperEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
+    {
+        SpaceDustSoftClipper::Parameters sp;
+        sp.enabled = true;
+        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"softClipperMode", 1}.getParamID())))
+            sp.mode = p->getIndex();
+        else
+            sp.mode = 0;
+        sp.drive = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("softClipperDrive")->load());
+        sp.knee = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("softClipperKnee")->load());
+        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"softClipperOversample", 1}.getParamID())))
+        {
+            const int idx = p->getIndex();
+            sp.oversample = (idx == 0) ? 2 : (idx == 1) ? 4 : (idx == 2) ? 8 : 16;
+        }
+        else
+            sp.oversample = 2;
+        sp.mix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("softClipperMix")->load());
+        softClipper_.setParameters(sp);
+        softClipper_.process(buffer);
+    }
     
     //==============================================================================
     // -- Master Volume Control --
@@ -3346,6 +3376,38 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"bitCrusherMix", 1}, "Bit Crusher Mix",
             juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f),
         "bitCrusherMix");
+
+    //==============================================================================
+    // -- Soft Clipper Parameters (Saturation Color tab) --
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"softClipperEnabled", 1}, "Soft Clipper On", false),
+        "softClipperEnabled");
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"softClipperMode", 1}, "Soft Clipper Mode",
+            juce::StringArray("Smooth", "Crisp", "Tube", "Tape", "Guitar"), 0),
+        safeString("softClipperMode"));
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"softClipperDrive", 1}, "Soft Clipper Drive",
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.35f),
+        "softClipperDrive");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"softClipperKnee", 1}, "Soft Clipper Knee",
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.67f),
+        "softClipperKnee");
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"softClipperOversample", 1}, "Soft Clipper Oversample",
+            juce::StringArray("2x", "4x", "8x", "16x"), 1),
+        safeString("softClipperOversample"));
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"softClipperMix", 1}, "Soft Clipper Mix",
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 1.0f),
+        "softClipperMix");
 
     //==============================================================================
     // -- Trance Gate Effect Parameters --

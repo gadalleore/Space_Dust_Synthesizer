@@ -6,7 +6,7 @@ A pure CMake-based polyphonic synthesizer VST3 plugin built with JUCE 8. Cosmic 
 
 - **VST3 format** – VST3-only plugin
 - **8-voice polyphony** – Dual oscillators (with sub oscillator), filter, and ADSR per voice
-- **Effects chain** – Reverb, delay (with filter), phaser, flanger, trance gate (post-effect), grain delay, parametric EQ, bitcrusher
+- **Effects chain** – Reverb, delay (with filter), phaser, flanger, trance gate (post-effect), grain delay, parametric EQ, bitcrusher, soft clipper
 - **Modulation** – Two LFOs with On toggles; LFO1 targets filter, LFO2 targets pitch (25% depth default)
 - **Master volume** – 0–2.0 range for headroom
 - **MIDI input** – Full MIDI note and control support
@@ -31,6 +31,7 @@ A pure CMake-based polyphonic synthesizer VST3 plugin built with JUCE 8. Cosmic 
    cmake -B build -G "Visual Studio 17 2022" -A x64
    cmake --build build --config Release
    ```
+   (Use `Visual Studio 18 2026` if you have VS 2026 installed.)
 
    Or use the convenience script (builds, copies VST3, and optionally launches Ableton):
    ```powershell
@@ -59,6 +60,7 @@ Source/
 ├── SpaceDustFlanger.*       # Flanger
 ├── SpaceDustTranceGate.*    # Trance gate (post-effect)
 ├── SpaceDustBitCrusher.*    # Bitcrusher effect
+├── SpaceDustSoftClipper.*   # KClip-style soft clipper (Saturation Color tab)
 ├── SpaceDustParametricEQ.*   # Parametric EQ
 ├── SexiconReverb.*          # Additional reverb
 └── SpaceDustLookAndFeel.*   # Custom UI styling

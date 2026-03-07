@@ -585,7 +585,7 @@ private:
     juce::Slider flangerMixSlider;
     juce::Label flangerMixLabel;
 
-    // Bit Crusher Effect (Effects tab)
+    // Bit Crusher Effect (Effects tab / Saturation Color tab)
     juce::GroupComponent bitCrusherGroup;
     juce::ToggleButton bitCrusherEnabledButton;
     juce::Label bitCrusherEnabledLabel;
@@ -597,6 +597,21 @@ private:
     juce::Label bitCrusherRateLabel;
     juce::Slider bitCrusherMixSlider;
     juce::Label bitCrusherMixLabel;
+
+    // Soft Clipper Effect (Saturation Color tab)
+    juce::GroupComponent softClipperGroup;
+    juce::ToggleButton softClipperEnabledButton;
+    juce::Label softClipperEnabledLabel;
+    juce::ComboBox softClipperModeCombo;
+    juce::Label softClipperModeLabel;
+    juce::Slider softClipperDriveSlider;
+    juce::Label softClipperDriveLabel;
+    juce::Slider softClipperKneeSlider;
+    juce::Label softClipperKneeLabel;
+    juce::ComboBox softClipperOversampleCombo;
+    juce::Label softClipperOversampleLabel;
+    juce::Slider softClipperMixSlider;
+    juce::Label softClipperMixLabel;
 
     // Trance Gate Effect (Effects tab)
     juce::GroupComponent tranceGateGroup;
@@ -793,6 +808,14 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> bitCrusherAmountAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> bitCrusherRateAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> bitCrusherMixAttachment;
+
+    // Soft Clipper attachments
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> softClipperEnabledAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> softClipperModeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> softClipperDriveAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> softClipperKneeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> softClipperOversampleAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> softClipperMixAttachment;
 
     // Trance Gate attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateEnabledAttachment;

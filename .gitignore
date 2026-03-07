@@ -51,4 +51,7 @@ Thumbs.db
 
 # Local configuration (don't commit personal paths)
 juce_path.local
+
+# Debug logs (written to user Documents during runtime)
+SpaceDust_DebugLog.txt
 # launch-ableton.ps1: set $AbletonExePath for your setup (empty = auto-detect)

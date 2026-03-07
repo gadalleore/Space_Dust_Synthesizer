@@ -73,6 +73,8 @@ target_sources(SpaceDust PRIVATE
     Source/SpaceDustFlanger.h
     Source/SpaceDustBitCrusher.cpp
     Source/SpaceDustBitCrusher.h
+    Source/SpaceDustSoftClipper.cpp
+    Source/SpaceDustSoftClipper.h
     Source/SpaceDustParametricEQ.cpp
     Source/SpaceDustParametricEQ.h
     Source/SexiconReverb.cpp
@@ -82,15 +84,9 @@ target_sources(SpaceDust PRIVATE
 )
 
 # Disable VST2 replacement compatibility for VST3-only plugin
-# Enable JUCE debug logging and safety checks for Ableton crash diagnosis
-# NOTE: These are temporary debug flags - remove or disable for production builds
 target_compile_definitions(SpaceDust
     PRIVATE
         JUCE_VST3_CAN_REPLACE_VST2=0
-        JUCE_LOG_ASSERTIONS=1          # Log all assertions to file
-        JUCE_CHECK_MEMORY_LEAKS=1       # Check for memory leaks on shutdown
-        JUCE_ENABLE_ASSERTIONS=1       # Enable assertion checks
-        JUCE_FORCE_DEBUG=1             # Force debug mode even in release builds (temporary)
 )
 
 # Add JUCE modules

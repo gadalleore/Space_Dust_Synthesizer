@@ -1762,6 +1762,19 @@ SaturationColorPageComponent::SaturationColorPageComponent(SpaceDustAudioProcess
     addAndMakeVisible(parentEditor.bitCrusherRateLabel);
     addAndMakeVisible(parentEditor.bitCrusherMixSlider);
     addAndMakeVisible(parentEditor.bitCrusherMixLabel);
+    addAndMakeVisible(parentEditor.softClipperGroup);
+    addAndMakeVisible(parentEditor.softClipperEnabledButton);
+    addAndMakeVisible(parentEditor.softClipperEnabledLabel);
+    addAndMakeVisible(parentEditor.softClipperModeCombo);
+    addAndMakeVisible(parentEditor.softClipperModeLabel);
+    addAndMakeVisible(parentEditor.softClipperDriveSlider);
+    addAndMakeVisible(parentEditor.softClipperDriveLabel);
+    addAndMakeVisible(parentEditor.softClipperKneeSlider);
+    addAndMakeVisible(parentEditor.softClipperKneeLabel);
+    addAndMakeVisible(parentEditor.softClipperOversampleCombo);
+    addAndMakeVisible(parentEditor.softClipperOversampleLabel);
+    addAndMakeVisible(parentEditor.softClipperMixSlider);
+    addAndMakeVisible(parentEditor.softClipperMixLabel);
 }
 
 void SaturationColorPageComponent::paint(juce::Graphics& g)
@@ -1770,7 +1783,7 @@ void SaturationColorPageComponent::paint(juce::Graphics& g)
     float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
     avgLevel = juce::jmin(1.0f, avgLevel);
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
-    drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff), { &parentEditor.bitCrusherGroup });
+    drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff), { &parentEditor.bitCrusherGroup, &parentEditor.softClipperGroup });
 }
 
 void SaturationColorPageComponent::resized()
@@ -1783,32 +1796,63 @@ void SaturationColorPageComponent::resized()
     const int labelGap = 2;
     const int gap = 4;
 
-    // Center Bit Crusher group - compact width, centered vertically
-    const int contentW = juce::jmin(220, r.getWidth() - 2 * pad);
-    int cx = r.getCentreX();
-    int y = pad + groupTitleH;
+    // Two columns: Bit Crusher (left) | Soft Clipper (right)
+    const int colW = juce::jmin(240, (r.getWidth() - 3 * pad) / 2);
+    const int leftColX = pad;
+    const int rightColX = pad + colW + pad;
 
+    // --- Bit Crusher (left column) ---
+    // On button: upper-left with pad (match Effects tab orientation)
+    int by = pad + groupTitleH;
     const int bOnBtnW = 62;
     const int bOnBtnH = 28;
-    parentEditor.bitCrusherEnabledButton.setBounds(cx - contentW / 2 + pad, y, bOnBtnW, bOnBtnH);
-    y += bOnBtnH + gap;
-
-    parentEditor.bitCrusherPostEffectButton.setBounds(cx - 60, y, 120, 20);
-    y += 20 + gap;
-
+    int bCx = leftColX + colW / 2;
+    parentEditor.bitCrusherEnabledButton.setBounds(leftColX + pad, by, bOnBtnW, bOnBtnH);
+    by += bOnBtnH + gap;
+    parentEditor.bitCrusherPostEffectButton.setBounds(bCx - 60, by, 120, 20);
+    by += 20 + gap;
     const int bKg = 6;
     const int bTripleW = 3 * knobSize + 2 * bKg;
-    int bTripleLeft = cx - bTripleW / 2;
-    parentEditor.bitCrusherAmountLabel.setBounds(bTripleLeft, y, knobSize, labelH);
-    parentEditor.bitCrusherRateLabel.setBounds(bTripleLeft + knobSize + bKg, y, knobSize, labelH);
-    parentEditor.bitCrusherMixLabel.setBounds(bTripleLeft + 2 * (knobSize + bKg), y, knobSize, labelH);
-    y += labelH + labelGap;
-    parentEditor.bitCrusherAmountSlider.setBounds(bTripleLeft, y, knobSize, knobSize);
-    parentEditor.bitCrusherRateSlider.setBounds(bTripleLeft + knobSize + bKg, y, knobSize, knobSize);
-    parentEditor.bitCrusherMixSlider.setBounds(bTripleLeft + 2 * (knobSize + bKg), y, knobSize, knobSize);
-    y += knobSize + 24 + pad;
+    int bTripleLeft = leftColX + (colW - bTripleW) / 2;
+    parentEditor.bitCrusherAmountLabel.setBounds(bTripleLeft, by, knobSize, labelH);
+    parentEditor.bitCrusherRateLabel.setBounds(bTripleLeft + knobSize + bKg, by, knobSize, labelH);
+    parentEditor.bitCrusherMixLabel.setBounds(bTripleLeft + 2 * (knobSize + bKg), by, knobSize, labelH);
+    by += labelH + labelGap;
+    parentEditor.bitCrusherAmountSlider.setBounds(bTripleLeft, by, knobSize, knobSize);
+    parentEditor.bitCrusherRateSlider.setBounds(bTripleLeft + knobSize + bKg, by, knobSize, knobSize);
+    parentEditor.bitCrusherMixSlider.setBounds(bTripleLeft + 2 * (knobSize + bKg), by, knobSize, knobSize);
+    by += knobSize + 24 + pad;
+    parentEditor.bitCrusherGroup.setBounds(leftColX, pad, colW, by - pad);
 
-    parentEditor.bitCrusherGroup.setBounds(cx - contentW / 2, pad, contentW, y - pad);
+    // --- Soft Clipper (right column) ---
+    // On button: upper-left with pad (match Effects tab orientation)
+    int sy = pad + groupTitleH;
+    int sCx = rightColX + colW / 2;
+    const int sComboW = 100;   // Mode: Smooth/Crisp/Tube/Tape/Guitar
+    const int sOsComboW = 56;  // Oversample: 2x/4x/8x/16x
+    parentEditor.softClipperEnabledButton.setBounds(rightColX + pad, sy, bOnBtnW, bOnBtnH);
+    sy += bOnBtnH + gap;
+    parentEditor.softClipperModeCombo.setBounds(sCx - sComboW / 2, sy, sComboW, 22);
+    sy += 24 + gap;
+    parentEditor.softClipperModeLabel.setBounds(sCx - sComboW / 2, sy, sComboW, labelH);
+    sy += labelH + labelGap;
+    const int sKg = 6;
+    const int sPairW = 2 * knobSize + sKg;
+    int sPairLeft = rightColX + (colW - sPairW) / 2;
+    parentEditor.softClipperDriveLabel.setBounds(sPairLeft, sy, knobSize, labelH);
+    parentEditor.softClipperKneeLabel.setBounds(sPairLeft + knobSize + sKg, sy, knobSize, labelH);
+    sy += labelH + labelGap;
+    parentEditor.softClipperDriveSlider.setBounds(sPairLeft, sy, knobSize, knobSize);
+    parentEditor.softClipperKneeSlider.setBounds(sPairLeft + knobSize + sKg, sy, knobSize, knobSize);
+    sy += knobSize + gap;
+    parentEditor.softClipperOversampleCombo.setBounds(sCx - sOsComboW / 2, sy, sOsComboW, 22);
+    sy += 24 + gap;
+    parentEditor.softClipperOversampleLabel.setBounds(sCx - sOsComboW / 2, sy, sOsComboW, labelH);
+    sy += labelH + labelGap;
+    parentEditor.softClipperMixSlider.setBounds(sCx - knobSize / 2, sy, knobSize, knobSize);
+    parentEditor.softClipperMixLabel.setBounds(sCx - knobSize / 2, sy + knobSize + 2, knobSize, labelH);
+    sy += knobSize + labelH + 24 + pad;
+    parentEditor.softClipperGroup.setBounds(rightColX, pad, colW, sy - pad);
 }
 
 //==============================================================================
@@ -1989,6 +2033,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
       phaserGroup("Phaser", "Phaser"),
       flangerGroup("Flanger", "Flanger"),
       bitCrusherGroup("Bit Crusher", "Bit Crusher"),
+      softClipperGroup("Soft Clipper", "Soft Clipper"),
       tranceGateGroup("Trance Gate", "Trance Gate"),
       delayFilterGroup("Filter", "Filter")
 {
@@ -2083,6 +2128,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     phaserGroup.getProperties().set("viewportGlow", true);
     flangerGroup.getProperties().set("viewportGlow", true);
     bitCrusherGroup.getProperties().set("viewportGlow", true);
+    softClipperGroup.getProperties().set("viewportGlow", true);
     tranceGateGroup.getProperties().set("viewportGlow", true);
     delayFilterGroup.getProperties().set("viewportGlow", true);
 
@@ -3423,6 +3469,62 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     bitCrusherMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     bitCrusherMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
 
+    // Soft Clipper (Saturation Color tab)
+    softClipperEnabledButton.setButtonText(safeString("On"));
+    softClipperEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "softClipperEnabled", softClipperEnabledButton);
+    softClipperEnabledLabel.setText(safeString("Soft Clipper"), juce::dontSendNotification);
+    softClipperEnabledLabel.setJustificationType(juce::Justification::centred);
+    softClipperEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    softClipperEnabledLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    softClipperModeCombo.addItem(safeString("Smooth"), 1);
+    softClipperModeCombo.addItem(safeString("Crisp"), 2);
+    softClipperModeCombo.addItem(safeString("Tube"), 3);
+    softClipperModeCombo.addItem(safeString("Tape"), 4);
+    softClipperModeCombo.addItem(safeString("Guitar"), 5);
+    softClipperModeCombo.setSelectedId(1);
+    softClipperModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.getValueTreeState(), "softClipperMode", softClipperModeCombo);
+    softClipperModeLabel.setText(safeString("Mode"), juce::dontSendNotification);
+    softClipperModeLabel.setJustificationType(juce::Justification::centred);
+    softClipperModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    softClipperModeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    softClipperDriveSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    softClipperDriveSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    softClipperDriveAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "softClipperDrive", softClipperDriveSlider);
+    softClipperDriveLabel.setText(safeString("Drive"), juce::dontSendNotification);
+    softClipperDriveLabel.setJustificationType(juce::Justification::centred);
+    softClipperDriveLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    softClipperDriveLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    softClipperKneeSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    softClipperKneeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    softClipperKneeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "softClipperKnee", softClipperKneeSlider);
+    softClipperKneeLabel.setText(safeString("Knee"), juce::dontSendNotification);
+    softClipperKneeLabel.setJustificationType(juce::Justification::centred);
+    softClipperKneeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    softClipperKneeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    softClipperOversampleCombo.addItem(safeString("2x"), 1);
+    softClipperOversampleCombo.addItem(safeString("4x"), 2);
+    softClipperOversampleCombo.addItem(safeString("8x"), 3);
+    softClipperOversampleCombo.addItem(safeString("16x"), 4);
+    softClipperOversampleCombo.setSelectedId(2);
+    softClipperOversampleAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.getValueTreeState(), "softClipperOversample", softClipperOversampleCombo);
+    softClipperOversampleLabel.setText(safeString("OS"), juce::dontSendNotification);
+    softClipperOversampleLabel.setJustificationType(juce::Justification::centred);
+    softClipperOversampleLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    softClipperOversampleLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    softClipperMixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    softClipperMixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    softClipperMixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "softClipperMix", softClipperMixSlider);
+    softClipperMixLabel.setText(safeString("Mix"), juce::dontSendNotification);
+    softClipperMixLabel.setJustificationType(juce::Justification::centred);
+    softClipperMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    softClipperMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+
     // Trance Gate Effect (Effects tab)
     tranceGateEnabledButton.setButtonText(safeString("On"));
     tranceGateEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -3523,6 +3625,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     flangerEnabledLabel.setVisible(false);
     bitCrusherEnabledLabel.setVisible(false);
     bitCrusherPostEffectLabel.setVisible(false);
+    softClipperEnabledLabel.setVisible(false);
     tranceGateEnabledLabel.setVisible(false);
     tranceGatePreEffectLabel.setVisible(false);
     tranceGateSyncLabel.setVisible(false);
@@ -3557,6 +3660,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     phaserEnabledButton.addListener(this);
     flangerEnabledButton.addListener(this);
     bitCrusherEnabledButton.addListener(this);
+    softClipperEnabledButton.addListener(this);
     reverbEnabledButton.addListener(this);
     tranceGateEnabledButton.addListener(this);
     grainDelayEnabledButton.addListener(this);
@@ -3566,6 +3670,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     syncGroupGlow(phaserEnabledButton, phaserGroup);
     syncGroupGlow(flangerEnabledButton, flangerGroup);
     syncGroupGlow(bitCrusherEnabledButton, bitCrusherGroup);
+    syncGroupGlow(softClipperEnabledButton, softClipperGroup);
     syncGroupGlow(reverbEnabledButton, reverbGroup);
     syncGroupGlow(tranceGateEnabledButton, tranceGateGroup);
     syncGroupGlow(grainDelayEnabledButton, grainDelayGroup);
@@ -3833,6 +3938,7 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
     phaserEnabledButton.removeListener(this);
     flangerEnabledButton.removeListener(this);
     bitCrusherEnabledButton.removeListener(this);
+    softClipperEnabledButton.removeListener(this);
     reverbEnabledButton.removeListener(this);
     tranceGateEnabledButton.removeListener(this);
     grainDelayEnabledButton.removeListener(this);
@@ -3904,6 +4010,8 @@ void SpaceDustAudioProcessorEditor::buttonStateChanged(juce::Button* button)
         sync(flangerEnabledButton, flangerGroup);
     else if (button == &bitCrusherEnabledButton)
         sync(bitCrusherEnabledButton, bitCrusherGroup);
+    else if (button == &softClipperEnabledButton)
+        sync(softClipperEnabledButton, softClipperGroup);
     else if (button == &reverbEnabledButton)
         sync(reverbEnabledButton, reverbGroup);
     else if (button == &tranceGateEnabledButton)

@@ -12,6 +12,7 @@
 #include "SpaceDustFlanger.h"
 #include "SpaceDustBitCrusher.h"
 #include "SpaceDustParametricEQ.h"
+#include "SpaceDustSoftClipper.h"
 
 //==============================================================================
 /**
@@ -179,6 +180,7 @@ private:
     SpaceDustFlanger flanger_;
     SpaceDustBitCrusher bitCrusher_;
     SpaceDustParametricEQ parametricEQ_;
+    SpaceDustSoftClipper softClipper_;
 
     //==============================================================================
     // -- Delay Effect State --
