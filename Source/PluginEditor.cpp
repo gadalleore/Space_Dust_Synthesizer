@@ -11,6 +11,34 @@ namespace
             return "(safe fallback)";
         return juce::String(raw);
     }
+
+    // Draw glow halos directly (keeps bleed fix from LookAndFeel, overlap may add slightly)
+    void drawGlows(juce::Graphics& g, int baseAlpha, juce::Colour glowCol,
+                  std::initializer_list<const juce::Component*> groupList)
+    {
+        const float cornerSize = 6.0f, glowExtent = 18.0f;
+        const int numBands = 8;
+        for (const juce::Component* comp : groupList)
+        {
+            if (comp == nullptr || !comp->isVisible()) continue;
+            auto r = comp->getBoundsInParent().toFloat().expanded(1.0f);
+            juce::Path p;
+            p.setUsingNonZeroWinding(false);
+            for (int i = 0; i < numBands; ++i)
+            {
+                float oEx = i * (glowExtent / numBands), iEx = (i + 1) * (glowExtent / numBands);
+                float oCs = juce::jmax(4.0f, cornerSize + oEx * 0.4f), iCs = juce::jmax(4.0f, cornerSize + iEx * 0.4f);
+                auto oR = r.expanded(oEx), iR = r.expanded(iEx);
+                p.clear();
+                p.addRoundedRectangle(oR.getX(), oR.getY(), oR.getWidth(), oR.getHeight(), oCs);
+                p.addRoundedRectangle(iR.getX(), iR.getY(), iR.getWidth(), iR.getHeight(), iCs);
+                float t = (float)i / (float)numBands;
+                juce::uint8 alpha = static_cast<juce::uint8>(juce::jlimit(0, 255, static_cast<int>(baseAlpha * (1.0f - t * t))));
+                g.setColour(glowCol.withAlpha(alpha));
+                g.fillPath(p);
+            }
+        }
+    }
 }
 
 //==============================================================================
@@ -258,8 +286,12 @@ void MainPageComponent::updateSubOscVisibility()
 
 void MainPageComponent::paint(juce::Graphics& g)
 {
-    // Dark cosmic background
     g.fillAll(juce::Colour(0xff0a0a1f));
+    float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
+    avgLevel = juce::jmin(1.0f, avgLevel);
+    const int baseAlpha = 8 + static_cast<int>(44.0f * avgLevel);
+    drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff),
+        { &parentEditor.oscillatorsGroup, &parentEditor.filterGroup, &parentEditor.filterEnvGroup, &parentEditor.envelopeGroup });
 }
 
 void MainPageComponent::resized()
@@ -283,15 +315,15 @@ void MainPageComponent::resized()
     // Set Main tab knobs to 75px to match Modulation tab's visual appearance
     const int knobDiameter = 75;          // Match Modulation tab knob visual size (~75px diameter)
     const int labelHeight = 18;           // Label height (slightly larger to prevent clipping)
-    const int labelGap = 5;                // Gap between label and control
+    const int labelGap = 4;                // Gap between label and control (compact)
     const int comboHeight = 26;           // Combo box height
     const int comboWidth = 110;           // Combo box width
-    const int verticalSpacing = 6;       // Compact vertical spacing between controls
+    const int verticalSpacing = 4;       // Compact vertical spacing between controls
     // Increased horizontal spacing to give knobs more breathing room and match Modulation tab's balanced look
     const int horizontalSpacing = 50;      // Horizontal spacing between knobs (increased significantly: 18 + 32 = 50px for better visual balance)
     const int oscillatorTextBoxHeight = 12; // Text box height offset for oscillators (consistent for all)
     const int oscLabelSpacing = oscillatorTextBoxHeight + (labelGap / 2); // Consistent label spacing below text box (shared)
-    const int topPaddingReduction = 24;  // Compact top padding reduction for all boxes
+    const int topPaddingReduction = 0;   // Title now inside box - keep content below it
     
     // ============================================================================
     // CALCULATE DIMENSIONS
@@ -306,8 +338,8 @@ void MainPageComponent::resized()
     // Left side: Oscillators + Filter
     // Right side: Only Amp Envelope (Master section is now handled by main editor, always visible)
     // First calculate heights (needed before calculating widths)
-    const int oscHeightExtra = 16;  // Compact extra height for Oscillators box
-    int oscHeight = static_cast<int>(availableHeight * 0.48) + oscHeightExtra; // Oscillators gets 48% + extra pixels
+    const int oscHeightExtra = 70;  // Ensure Noise section labels (Level, Low/High Shelf) fit inside box
+    int oscHeight = static_cast<int>((static_cast<int>(availableHeight * 0.50) + oscHeightExtra) * 0.9408f);  // ~6% smaller total (4% + 2%) to give Filter more room
     int filterHeight = availableHeight - oscHeight - topBottomGap; // Filter gets remaining
     
     // Calculate target gap to match LFO 2 gap on Modulation tab
@@ -354,7 +386,7 @@ void MainPageComponent::resized()
     int oscStartY = oscContent.getY() - topPaddingReduction;
     
     // Consistent spacing constants for Oscillators section
-    const int oscRowSpacing = 35; // Vertical spacing between oscillator rows (increased to prevent overlaps)
+    const int oscRowSpacing = 28; // Vertical spacing between oscillator rows (compact)
     
     // Osc1 - Waveform combo + 3 knobs horizontally
     int osc1Y = oscStartY;
@@ -414,7 +446,7 @@ void MainPageComponent::resized()
     int osc2Bottom = osc2KnobY + knobDiameter + oscLabelSpacing + labelHeight;
     
     // Noise - Below Osc2 with proper padding
-    const int noisePadding = 20; // Padding between osc2 and noise section
+    const int noisePadding = 14; // Padding between osc2 and noise section (compact)
     int noiseY = osc2Bottom + noisePadding;
     parentEditor.noiseColorLabel.setBounds(oscContent.getX(), noiseY, comboWidth, labelHeight);
     noiseY += labelHeight + labelGap;
@@ -722,8 +754,13 @@ void ModulationPageComponent::parameterChanged(const juce::String& parameterID, 
 
 void ModulationPageComponent::paint(juce::Graphics& g)
 {
-    // Dark cosmic background
     g.fillAll(juce::Colour(0xff0a0a1f));
+    float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
+    avgLevel = juce::jmin(1.0f, avgLevel);
+    const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
+    drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff),
+        { &parentEditor.modulationGroup, &parentEditor.lfo1Group, &parentEditor.lfo2Group,
+          &parentEditor.modFilter1Group, &parentEditor.modFilter2Group });
 }
 
 void ModulationPageComponent::resized()
@@ -750,13 +787,13 @@ void ModulationPageComponent::resized()
     const int modButtonHeight = 22;
     const int modFilterButtonW = 75;   // Filter toggle (narrower)
     const int modWarmSatButtonW = 128; // Warm Saturation (wider so full text fits)
-    const int modLabelGap = 3;
-    const int modRowSpacing = 6;
-    const int modRateValueGap = 16;
-    // Extra padding inside each LFO box
+    const int modLabelGap = 2;
+    const int modRowSpacing = 4;
+    const int modRateValueGap = 12;
+    // Extra padding inside each LFO box (title now inside box - need space below it)
     const int lfoBoxPadH = 8;
-    const int lfoBoxPadV = 16;  // Compact vertical padding
-    const int lfoContentTop = 4;
+    const int lfoBoxPadV = 32;  // Match groupTitleHeight so content clears in-box title
+    const int lfoContentTop = 0;
     
     // Check if filter sections are shown (each LFO has its own toggle)
     bool modFilter1Show = parentEditor.audioProcessor.getValueTreeState().getParameter("modFilter1Show") != nullptr
@@ -765,9 +802,8 @@ void ModulationPageComponent::resized()
         && *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("modFilter2Show") > 0.5f;
     // Filter controls (Cutoff, Resonance, Mode, Link) add ~200px when shown
     const int filterControlsHeight = 200;
-    const int lfoContentMinHeight = 520;  // LFO content to Retrigger + Filter button
-    // Each LFO box expands independently based on its own Filter toggle
-    // Extra height when Link to Master (shows Master Filter On button)
+    const int lfoContentMinHeight = 540;  // Base content + smidge below filter toggle
+    // Each LFO box expands when its filter is toggled on
     int lfo1AreaHeight = lfoContentMinHeight + (modFilter1Show ? filterControlsHeight : 0);
     int lfo2AreaHeight = lfoContentMinHeight + (modFilter2Show ? filterControlsHeight : 0);
     lfo1AreaHeight = juce::jmin(lfo1AreaHeight, modulationContent.getHeight());
@@ -1165,17 +1201,6 @@ EffectsPageComponent::EffectsPageComponent(SpaceDustAudioProcessorEditor& editor
     addAndMakeVisible(parentEditor.flangerWidthLabel);
     addAndMakeVisible(parentEditor.flangerMixSlider);
     addAndMakeVisible(parentEditor.flangerMixLabel);
-    addAndMakeVisible(parentEditor.bitCrusherGroup);
-    addAndMakeVisible(parentEditor.bitCrusherEnabledButton);
-    addAndMakeVisible(parentEditor.bitCrusherEnabledLabel);
-    addAndMakeVisible(parentEditor.bitCrusherPostEffectButton);
-    addAndMakeVisible(parentEditor.bitCrusherPostEffectLabel);
-    addAndMakeVisible(parentEditor.bitCrusherAmountSlider);
-    addAndMakeVisible(parentEditor.bitCrusherAmountLabel);
-    addAndMakeVisible(parentEditor.bitCrusherRateSlider);
-    addAndMakeVisible(parentEditor.bitCrusherRateLabel);
-    addAndMakeVisible(parentEditor.bitCrusherMixSlider);
-    addAndMakeVisible(parentEditor.bitCrusherMixLabel);
     addAndMakeVisible(parentEditor.tranceGateGroup);
     addAndMakeVisible(parentEditor.tranceGateEnabledButton);
     addAndMakeVisible(parentEditor.tranceGateEnabledLabel);
@@ -1276,6 +1301,12 @@ void EffectsPageComponent::updateReverbFilterVisibility()
 void EffectsPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
+    float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
+    avgLevel = juce::jmin(1.0f, avgLevel);
+    const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
+    drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff),
+        { &parentEditor.delayGroup, &parentEditor.reverbGroup, &parentEditor.grainDelayGroup,
+          &parentEditor.phaserGroup, &parentEditor.flangerGroup, &parentEditor.tranceGateGroup, &parentEditor.delayFilterGroup });
 }
 
 void EffectsPageComponent::resized()
@@ -1283,7 +1314,7 @@ void EffectsPageComponent::resized()
     auto r = getLocalBounds();
     const int pad = 8;        // Tighter padding
     const int colGap = 8;     // Gap between effect columns
-    const int gap = 6;        // Tighter spacing between elements
+    const int gap = 4;        // Compact spacing between elements
     const int labelGap = 2;
     const int knobSize = 56;  // Uniform knob size for Reverb, Grain Delay, Phaser, Trance Gate
     const int delayKnobSize = 44;  // Smaller knobs for Delay (Time, Decay, Mix in one row)
@@ -1293,9 +1324,9 @@ void EffectsPageComponent::resized()
     const int onBtnW = 62;
     const int onBtnH = 28;
     const int labelH = 14;    // Slightly taller to prevent label clipping
-    const int groupTitleH = 14;  // Space below group label (keeps On buttons clear of box border)
+    const int groupTitleH = 32;  // Title inside box - keep content below it
     
-    // Three columns: Delay+Grain Delay (left) | Reverb+Trance Gate (center) | Phaser+Flanger+Bit Crusher (right)
+    // Three columns: Delay+Grain Delay (left) | Reverb+Trance Gate (center) | Phaser+Flanger (right) [Bit Crusher on Saturation Color tab]
     const int colW = (r.getWidth() - 2 * pad - 2 * colGap) / 3;
     int delayColX = pad;
     int reverbColX = pad + colW + colGap;
@@ -1376,7 +1407,7 @@ void EffectsPageComponent::resized()
     parentEditor.delayGroup.setBounds(delayColX, 0, colW, delayContentHeight);
 
     // ---- Grain Delay section (below Delay in left column) ----
-    const int sectionGap = 8;  // Tighter gap between effect sections
+    const int sectionGap = 6;  // Compact gap between effect sections
     int grainStartY = delayContentHeight + sectionGap;
     int gCx = delayColX + colW / 2;
     int gY = grainStartY + pad + groupTitleH;
@@ -1712,39 +1743,6 @@ void EffectsPageComponent::resized()
     fY += fKnobSize + pad;
     const int flangerContentHeight = fY - flangerStartY;
     parentEditor.flangerGroup.setBounds(grainColX, flangerStartY, colW, flangerContentHeight);
-
-    // ---- Bit Crusher section (below Flanger in right column) ----
-    int bitCrusherStartY = flangerStartY + flangerContentHeight + sectionGap;
-    int bCx = grainColX + colW / 2;
-    int bY = bitCrusherStartY + pad + groupTitleH;
-    const int bKnobSize = knobSize;
-    const int bOnBtnW = 62;
-    const int bOnBtnH = 28;
-    const int bLabelH = labelH;
-    const int bLabelGap = labelGap;
-    const int bGap = gap;
-
-    parentEditor.bitCrusherEnabledButton.setBounds(grainColX + pad, bY, bOnBtnW, bOnBtnH);
-    bY += bOnBtnH + bGap;
-
-    parentEditor.bitCrusherPostEffectButton.setBounds(bCx - 60, bY, 120, 20);
-    bY += 20 + bGap;
-
-    // Amount | Rate | Mix - three knobs
-    const int bKg = 6;
-    const int bTripleW = 3 * bKnobSize + 2 * bKg;
-    int bTripleLeft = bCx - bTripleW / 2;
-    parentEditor.bitCrusherAmountLabel.setBounds(bTripleLeft, bY, bKnobSize, bLabelH);
-    parentEditor.bitCrusherRateLabel.setBounds(bTripleLeft + bKnobSize + bKg, bY, bKnobSize, bLabelH);
-    parentEditor.bitCrusherMixLabel.setBounds(bTripleLeft + 2 * (bKnobSize + bKg), bY, bKnobSize, bLabelH);
-    bY += bLabelH + bLabelGap;
-    parentEditor.bitCrusherAmountSlider.setBounds(bTripleLeft, bY, bKnobSize, bKnobSize);
-    parentEditor.bitCrusherRateSlider.setBounds(bTripleLeft + bKnobSize + bKg, bY, bKnobSize, bKnobSize);
-    parentEditor.bitCrusherMixSlider.setBounds(bTripleLeft + 2 * (bKnobSize + bKg), bY, bKnobSize, bKnobSize);
-    bY += bKnobSize + pad;
-
-    const int bitCrusherContentHeight = bY - bitCrusherStartY;
-    parentEditor.bitCrusherGroup.setBounds(grainColX, bitCrusherStartY, colW, bitCrusherContentHeight);
 }
 
 //==============================================================================
@@ -1753,27 +1751,95 @@ SaturationColorPageComponent::SaturationColorPageComponent(SpaceDustAudioProcess
     : parentEditor(editor)
 {
     setAccessible(false);
+    addAndMakeVisible(parentEditor.bitCrusherGroup);
+    addAndMakeVisible(parentEditor.bitCrusherEnabledButton);
+    addAndMakeVisible(parentEditor.bitCrusherEnabledLabel);
+    addAndMakeVisible(parentEditor.bitCrusherPostEffectButton);
+    addAndMakeVisible(parentEditor.bitCrusherPostEffectLabel);
+    addAndMakeVisible(parentEditor.bitCrusherAmountSlider);
+    addAndMakeVisible(parentEditor.bitCrusherAmountLabel);
+    addAndMakeVisible(parentEditor.bitCrusherRateSlider);
+    addAndMakeVisible(parentEditor.bitCrusherRateLabel);
+    addAndMakeVisible(parentEditor.bitCrusherMixSlider);
+    addAndMakeVisible(parentEditor.bitCrusherMixLabel);
 }
 
 void SaturationColorPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
-    g.setColour(juce::Colour(0xffa0d8ff).withAlpha(0.4f));
-    g.setFont(juce::Font(juce::FontOptions(18.0f, juce::Font::bold)));
-    g.drawText("Saturation Color", getLocalBounds(), juce::Justification::centred, true);
+    float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
+    avgLevel = juce::jmin(1.0f, avgLevel);
+    const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
+    drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff), { &parentEditor.bitCrusherGroup });
 }
 
 void SaturationColorPageComponent::resized()
 {
-    // Canvas ready for saturation/color controls
+    auto r = getLocalBounds();
+    const int pad = 16;
+    const int groupTitleH = 32;
+    const int knobSize = 56;
+    const int labelH = 14;
+    const int labelGap = 2;
+    const int gap = 4;
+
+    // Center Bit Crusher group - compact width, centered vertically
+    const int contentW = juce::jmin(220, r.getWidth() - 2 * pad);
+    int cx = r.getCentreX();
+    int y = pad + groupTitleH;
+
+    const int bOnBtnW = 62;
+    const int bOnBtnH = 28;
+    parentEditor.bitCrusherEnabledButton.setBounds(cx - contentW / 2 + pad, y, bOnBtnW, bOnBtnH);
+    y += bOnBtnH + gap;
+
+    parentEditor.bitCrusherPostEffectButton.setBounds(cx - 60, y, 120, 20);
+    y += 20 + gap;
+
+    const int bKg = 6;
+    const int bTripleW = 3 * knobSize + 2 * bKg;
+    int bTripleLeft = cx - bTripleW / 2;
+    parentEditor.bitCrusherAmountLabel.setBounds(bTripleLeft, y, knobSize, labelH);
+    parentEditor.bitCrusherRateLabel.setBounds(bTripleLeft + knobSize + bKg, y, knobSize, labelH);
+    parentEditor.bitCrusherMixLabel.setBounds(bTripleLeft + 2 * (knobSize + bKg), y, knobSize, labelH);
+    y += labelH + labelGap;
+    parentEditor.bitCrusherAmountSlider.setBounds(bTripleLeft, y, knobSize, knobSize);
+    parentEditor.bitCrusherRateSlider.setBounds(bTripleLeft + knobSize + bKg, y, knobSize, knobSize);
+    parentEditor.bitCrusherMixSlider.setBounds(bTripleLeft + 2 * (knobSize + bKg), y, knobSize, knobSize);
+    y += knobSize + 24 + pad;
+
+    parentEditor.bitCrusherGroup.setBounds(cx - contentW / 2, pad, contentW, y - pad);
 }
 
 //==============================================================================
 // -- SpectralPageComponent Implementation --
+//==============================================================================
+// -- SpectralPageComponent::GlowOverlayComponent (draws glow on top for cleaner look) --
+SpectralPageComponent::GlowOverlayComponent::GlowOverlayComponent(SpectralPageComponent& page)
+    : pageRef(page)
+{
+    setInterceptsMouseClicks(false, false);  // Let clicks pass through to controls
+    setAccessible(false);
+}
+
+void SpectralPageComponent::GlowOverlayComponent::paint(juce::Graphics& g)
+{
+    float avgLevel = 0.5f * (pageRef.parentEditor.audioProcessor.getLeftPeakLevel() + pageRef.parentEditor.audioProcessor.getRightPeakLevel());
+    avgLevel = juce::jmin(1.0f, avgLevel);
+    const int baseAlpha = 8 + static_cast<int>(44.0f * avgLevel);
+    drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff),
+        { &pageRef.goniometerGroup, &pageRef.oscilloscopeGroup, &pageRef.spectrumGroup });
+}
+
+//==============================================================================
 SpectralPageComponent::SpectralPageComponent(SpaceDustAudioProcessorEditor& editor)
     : parentEditor(editor)
 {
     setAccessible(false);
+    // Mark spectral viewports for glow (synthwave-style, set in editor for all groups)
+    goniometerGroup.getProperties().set("viewportGlow", true);
+    oscilloscopeGroup.getProperties().set("viewportGlow", true);
+    spectrumGroup.getProperties().set("viewportGlow", true);
     addAndMakeVisible(goniometerGroup);
     addAndMakeVisible(oscilloscopeGroup);
     addAndMakeVisible(spectrumGroup);
@@ -1781,6 +1847,9 @@ SpectralPageComponent::SpectralPageComponent(SpaceDustAudioProcessorEditor& edit
     spectrumAnalyser = std::make_unique<SpectrumAnalyserComponent>();
     oscilloscopeGroup.addAndMakeVisible(*oscilloscope);
     spectrumGroup.addAndMakeVisible(*spectrumAnalyser);
+    // Glow overlay on top so Oscilloscope/Spectrum sit behind it - cleaner look
+    glowOverlay = std::make_unique<GlowOverlayComponent>(*this);
+    addAndMakeVisible(*glowOverlay);
 }
 
 void SpectralPageComponent::paint(juce::Graphics& g)
@@ -1788,6 +1857,7 @@ void SpectralPageComponent::paint(juce::Graphics& g)
     g.fillAll(juce::Colour(0xff0a0a1f));
     if (!lissajousDrawArea.isEmpty())
         drawLissajous(g, lissajousDrawArea, parentEditor.audioProcessor.getGoniometerBuffer());
+    // Glow drawn by GlowOverlayComponent (on top of Oscilloscope/Spectrum) for cleaner look
 }
 
 void SpectralPageComponent::resized()
@@ -1815,7 +1885,7 @@ void SpectralPageComponent::resized()
 
     // Top row: Lissajous (square) | Oscilloscope (stretches to fill) - same height as Spectrum
     auto topRow = content.withHeight(rowH);
-    const int labelSpace = 26;
+    const int labelSpace = 32;  // Match groupTitleHeight (title inside box)
     const int innerH = rowH - 8 - labelSpace;  // Draw area height for Lissajous
     const int gonioW = juce::jmax(80, innerH + 16);  // Square fits: width = height + padding
     auto gonioGroupBounds = topRow.withWidth(gonioW);
@@ -1837,6 +1907,9 @@ void SpectralPageComponent::resized()
     // Content area below label, with padding
     oscilloscope->setBounds(oscilloscopeGroup.getLocalBounds().withTrimmedTop(labelSpace).reduced(8));
     spectrumAnalyser->setBounds(spectrumGroup.getLocalBounds().withTrimmedTop(labelSpace).reduced(8));
+
+    if (glowOverlay != nullptr)
+        glowOverlay->setBounds(bounds);
 }
 
 void SpectralPageComponent::drawLissajous(juce::Graphics& g, juce::Rectangle<int> area, const juce::AudioBuffer<float>& buffer)
@@ -1992,7 +2065,27 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     catch (...) {}
     
     setAccessible(false);
-    
+
+    // Viewport glow on all GroupComponents (synthwave aesthetic, matches synth color scheme)
+    oscillatorsGroup.getProperties().set("viewportGlow", true);
+    filterGroup.getProperties().set("viewportGlow", true);
+    filterEnvGroup.getProperties().set("viewportGlow", true);
+    envelopeGroup.getProperties().set("viewportGlow", true);
+    masterGroup.getProperties().set("viewportGlow", true);
+    modulationGroup.getProperties().set("viewportGlow", true);
+    lfo1Group.getProperties().set("viewportGlow", true);
+    lfo2Group.getProperties().set("viewportGlow", true);
+    modFilter1Group.getProperties().set("viewportGlow", true);
+    modFilter2Group.getProperties().set("viewportGlow", true);
+    delayGroup.getProperties().set("viewportGlow", true);
+    reverbGroup.getProperties().set("viewportGlow", true);
+    grainDelayGroup.getProperties().set("viewportGlow", true);
+    phaserGroup.getProperties().set("viewportGlow", true);
+    flangerGroup.getProperties().set("viewportGlow", true);
+    bitCrusherGroup.getProperties().set("viewportGlow", true);
+    tranceGateGroup.getProperties().set("viewportGlow", true);
+    delayFilterGroup.getProperties().set("viewportGlow", true);
+
     // TooltipWindow: required for setTooltip() to display (e.g. Pan labels)
     tooltipWindow = std::make_unique<juce::TooltipWindow>(this, 500);
     
@@ -3613,7 +3706,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         
         // Calculate the correct window height for tabbed interface
         // Effects tab needs extra height when Delay/Grain Delay filter is toggled on (controls must stay visible)
-        const int calculatedHeight = 902;  // ~5% shorter than 950
+        const int calculatedHeight = 857;  // ~5% shorter than 902
         
         DBG("Space Dust: Timer callback - Calling setSize(1120, " + juce::String(calculatedHeight) + ")");
         try
@@ -3800,6 +3893,8 @@ void SpaceDustAudioProcessorEditor::buttonStateChanged(juce::Button* button)
     auto sync = [](juce::ToggleButton& btn, juce::GroupComponent& grp) {
         grp.getProperties().set("isActive", btn.getToggleState());
         grp.repaint();
+        if (auto* parent = grp.getParentComponent())
+            parent->repaint();  // Repaint page so outer halos update
     };
     if (button == &delayEnabledButton)
         sync(delayEnabledButton, delayGroup);
@@ -4027,13 +4122,14 @@ void SpaceDustAudioProcessorEditor::timerCallback()
         }
     }
     
-    // Update stereo level meters
+    // Update stereo level meters and box glow (glow brightness follows output level)
     if (stereoLevelMeter != nullptr && !isBeingDestroyed.load())
     {
         float leftPeak = audioProcessor.getLeftPeakLevel();
         float rightPeak = audioProcessor.getRightPeakLevel();
         stereoLevelMeter->updateLevels(leftPeak, rightPeak);
     }
+    repaint();  // Redraw glow halos so they follow output level
 
     // Update Spectral tab (Lissajous drawn in SpectralPage::paint, Oscilloscope, Spectrum)
     constexpr int spectralTabIndex = 4;
@@ -4101,18 +4197,15 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
     g.drawText(safeString("Space Dust"), titleArea, juce::Justification::centred, true);
     
     //==============================================================================
-    // -- Subtle Divider Line Between Tabbed Content and Master Section --
-    // Draw a subtle vertical line to separate the tabbed content from the always-visible Master section
-    const int titleHeight = 48;  // Compact: title + tab bar
-    const int masterWidth = 220;
-    const int masterGap = 80;  // Original gap (for reference)
-    const int actualMasterGap = 40;  // Reduced by 50%
-    // Calculate divider position based on actual gap
-    // Tab width has been expanded by 10%
-    int tabbedWidth = static_cast<int>((getWidth() - masterWidth - masterGap) * 0.9 * 1.1);
-    int dividerX = tabbedWidth + actualMasterGap;
-    g.setColour(juce::Colours::white.withAlpha(0.1f));
-    g.drawVerticalLine(dividerX - 10, titleHeight, getHeight());
+    // -- Master Section Glow - brightness follows output level, max-blend for consistency --
+    if (masterGroup.isVisible())
+    {
+        float avgLevel = 0.5f * (audioProcessor.getLeftPeakLevel() + audioProcessor.getRightPeakLevel());
+        avgLevel = juce::jmin(1.0f, avgLevel);
+        const int baseAlpha = 8 + static_cast<int>(44.0f * avgLevel);
+        drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff), { &masterGroup });
+    }
+
 }
 
 //==============================================================================
@@ -4194,7 +4287,7 @@ void SpaceDustAudioProcessorEditor::resized()
     const int comboHeight = 26;           // Combo box height
     const int comboWidth = 110;           // Combo box width
     const int verticalSpacing = 6;        // Compact vertical spacing between controls
-    const int topPaddingReduction = 24;   // Compact top padding reduction
+    const int topPaddingReduction = 0;    // Title inside box - keep content below
     
     // Move Master box left by reducing the gap by 50%
     // Right edge of tab is at: tabbedWidth

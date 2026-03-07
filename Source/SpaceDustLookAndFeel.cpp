@@ -81,86 +81,75 @@ void SpaceDustLookAndFeel::drawGroupComponentOutline(juce::Graphics& g, int widt
     const float textH = 17.0f;  // 16-18pt for group titles
     const float indent = 3.0f;
     const float textEdgeGap = 4.0f;
+    const float titleInset = 6.0f;  // Title padding from box edge
     auto cs = 5.0f;
 
     juce::Font f(juce::FontOptions(textH, juce::Font::bold));
 
     juce::Path p;
     auto x = indent;
-    // Position the line below the title text
-    auto lineY = f.getAscent() + 2.0f;  // Line is below the text baseline
     auto w = juce::jmax(0.0f, (float)width - x * 2.0f);
-    auto h = juce::jmax(0.0f, (float)height - lineY - indent);
+    auto h = juce::jmax(0.0f, (float)height - indent * 2.0f);  // Full height minus indent
     cs = juce::jmin(cs, w * 0.5f, h * 0.5f);
 
     auto textW = text.isEmpty() ? 0 : f.getStringWidth(text);
-    auto textX = x + textEdgeGap;
-    auto textY = 0.0f;  // Title is at the top, above the line
+    auto textX = x + titleInset;
+    auto textY = indent + titleInset;  // Title inside box, upper-left
 
-    // Use addRoundedRectangle for perfect rounded corners - no arc connection issues
-    p.addRoundedRectangle(x, lineY, w, h, cs);
+    // Box encompasses full area - no external label
+    p.addRoundedRectangle(x, indent, w, h, cs);
 
     const auto roundedStroke = [](float strokeW) {
         return juce::PathStrokeType(strokeW, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
     };
 
     bool isActive = group.getProperties().getWithDefault("isActive", false);
+    bool viewportGlow = group.getProperties().getWithDefault("viewportGlow", false);
 
-    // Blue glow when effect/LFO is enabled - inward-only, follows border curve, thick
-    if (isActive)
+    // Inward glow from border (more dramatic when effect/LFO enabled)
+    if (viewportGlow || isActive)
     {
-        g.saveState();
-        g.excludeClipRegion(juce::Rectangle<int>(0, 0, width, static_cast<int>(lineY)));
-        const float glowThick = 18.0f;  // Thick glow band (pixels inward)
-        const int numBands = 18;         // Smooth fade
+        const juce::Colour viewportBlue(0xff00b4ff);
+        const float glowThick = isActive ? 14.0f : 6.0f;
+        const int numBands = 8;
+        const float alphaScale = isActive ? 2.0f : 1.0f;
         juce::Path glowPath;
-        glowPath.setUsingNonZeroWinding(false);  // Even-odd for rings
+        glowPath.setUsingNonZeroWinding(false);
         for (int i = 0; i < numBands; ++i)
         {
             const float outerInset = i * (glowThick / (float)numBands);
             const float innerInset = (i + 1) * (glowThick / (float)numBands);
-            // Keep BOTH edges rounded - min 3px prevents sharp corners on outer and inner band edges
             const float outerCs = juce::jmax(3.0f, cs - outerInset);
             const float innerCs = juce::jmax(3.0f, cs - innerInset);
             glowPath.clear();
-            glowPath.addRoundedRectangle(x + outerInset, lineY + outerInset,
+            glowPath.addRoundedRectangle(x + outerInset, indent + outerInset,
                                          w - 2.0f * outerInset, h - 2.0f * outerInset, outerCs);
-            glowPath.addRoundedRectangle(x + innerInset, lineY + innerInset,
+            glowPath.addRoundedRectangle(x + innerInset, indent + innerInset,
                                          w - 2.0f * innerInset, h - 2.0f * innerInset, innerCs);
             const float t = (float)i / (float)numBands;
-            const juce::uint8 alpha = juce::uint8(90 * (1.0f - t * t));  // Fade inward
-            g.setColour(juce::Colour(alpha << 24 | 0x00b4ff));
+            const int baseAlpha = isActive ? 55 : 38;
+            juce::uint8 alpha = juce::uint8(juce::jlimit(0, 255, static_cast<int>(baseAlpha * alphaScale * (1.0f - t * t))));
+            g.setColour(viewportBlue.withAlpha(alpha));
             g.fillPath(glowPath);
         }
-        g.restoreState();
     }
 
     juce::Colour outlineCol = group.findColour(juce::GroupComponent::outlineColourId)
                               .withMultipliedAlpha(group.isEnabled() ? 1.0f : 0.5f);
     if (isActive)
-        outlineCol = juce::Colour(0xff00b4ff);  // Bright blue when active
+        outlineCol = juce::Colour(0xff60d4ff);   // Brighter cyan when effect/LFO on
+    else if (viewportGlow)
+        outlineCol = juce::Colour(0xff00b4ff);  // Bright blue for viewport
     g.setColour(outlineCol);
+    g.strokePath(p, roundedStroke((viewportGlow || isActive) ? 2.0f : 1.5f));
 
-    // Exclude label area for outline too, so top border doesn't draw through text
-    if (textW > 0)
-    {
-        g.saveState();
-        g.excludeClipRegion(juce::Rectangle<int>(0, 0, width, static_cast<int>(lineY)));
-        g.strokePath(p, roundedStroke(isActive ? 2.5f : 2.0f));
-        g.restoreState();
-    }
-    else
-        g.strokePath(p, roundedStroke(isActive ? 2.5f : 2.0f));
-
-    // Draw enhanced title text with subtle shadow (above the line)
+    // Title inside box, upper-left corner
     if (text.isNotEmpty())
     {
         auto textArea = juce::Rectangle<int>(static_cast<int>(textX),
                                             static_cast<int>(textY),
                                             static_cast<int>(textW + textEdgeGap * 2),
                                             static_cast<int>(textH));
-        
-        // Draw group title with subtle shadow only (no heavy glow) - same color as all other text
         drawTextWithShadow(g, text, textArea.getX(), textArea.getY(),
                           textArea.getWidth(), textArea.getHeight(),
                           juce::Justification::centredLeft,

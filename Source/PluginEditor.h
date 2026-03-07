@@ -145,6 +145,17 @@ public:
 private:
     void drawLissajous(juce::Graphics& g, juce::Rectangle<int> area, const juce::AudioBuffer<float>& buffer);
 
+    // Glow overlay - draws on top of Oscilloscope/Spectrum for cleaner look
+    class GlowOverlayComponent : public juce::Component
+    {
+    public:
+        GlowOverlayComponent(SpectralPageComponent& page);
+        void paint(juce::Graphics& g) override;
+    private:
+        SpectralPageComponent& pageRef;
+    };
+    std::unique_ptr<GlowOverlayComponent> glowOverlay;
+
     SpaceDustAudioProcessorEditor& parentEditor;
     juce::GroupComponent goniometerGroup { "Lissajous", "Lissajous" };
     juce::GroupComponent oscilloscopeGroup { "Oscilloscope", "Oscilloscope" };

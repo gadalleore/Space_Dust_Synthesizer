@@ -27,7 +27,7 @@ $juceDir = $env:JUCE_DIR
 if (-not $juceDir -and (Test-Path (Join-Path $projectRoot "juce_path.local"))) {
     $juceDir = (Get-Content (Join-Path $projectRoot "juce_path.local") -Raw).Trim()
 }
-$cmakeArgs = @("..", "-G", "Visual Studio 18 2026", "-A", "x64")
+$cmakeArgs = @("..", "-G", "Visual Studio 17 2022", "-A", "x64")
 if ($juceDir) { $cmakeArgs += "-DJUCE_DIR=$juceDir" }
 Set-Location build
 & cmake @cmakeArgs
