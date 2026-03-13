@@ -750,6 +750,32 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         softClipper_.prepare(reverbSpec);
         softClipper_.reset();
 
+        // Initialize compressor
+        compressor_.prepare(reverbSpec);
+        compressor_.reset();
+
+        // Initialize lo-fi
+        lofi_.prepare(reverbSpec);
+        lofi_.reset();
+
+        // Initialize transient
+        transient_.prepare(reverbSpec);
+        transient_.reset();
+
+        // Initialize Ka-Donk delay lines
+        {
+            juce::dsp::ProcessSpec delaySpec;
+            delaySpec.sampleRate = sampleRate;
+            delaySpec.maximumBlockSize = static_cast<juce::uint32>(samplesPerBlock);
+            delaySpec.numChannels = 1;
+            kaDonkDelayL_.prepare(delaySpec);
+            kaDonkDelayR_.prepare(delaySpec);
+            kaDonkDelayL_.reset();
+            kaDonkDelayR_.reset();
+            smoothedKaDonkDelay_.reset(sampleRate, 0.05);
+            smoothedKaDonkDelay_.setCurrentAndTargetValue(0.0f);
+        }
+
         // Initialize trance gate
         tranceGate_.prepare(reverbSpec);
         tranceGate_.reset();
@@ -1290,6 +1316,8 @@ void SpaceDustAudioProcessor::releaseResources()
     flanger_.reset();
     bitCrusher_.reset();
     softClipper_.reset();
+    compressor_.reset();
+    lofi_.reset();
     tranceGate_.reset();
     
     // Step 3: Clear all sounds (ReferenceCountedArray<SynthesiserSound>)
@@ -1867,6 +1895,35 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     updateVoicesWithParameters(0.0f, 0.0f);  // No block-based modulation, using per-sample buffers
 
     //==============================================================================
+    // -- Transient: Scan MIDI for note-on events to trigger drum transient --
+    bool transientEnabled = *apvts.getRawParameterValue("transientEnabled") > 0.5f;
+    bool transientPostEffect = *apvts.getRawParameterValue("transientPostEffect") > 0.5f;
+    if (transientEnabled)
+    {
+        for (const auto metadata : midiMessages)
+        {
+            const auto msg = metadata.getMessage();
+            if (msg.isNoteOn() && msg.getVelocity() > 0)
+            {
+                SpaceDustTransient::Parameters tp;
+                tp.enabled = true;
+                if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"transientType", 1}.getParamID())))
+                    tp.type = p->getIndex();
+                else
+                    tp.type = 0;
+                tp.mix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientMix")->load());
+                tp.postEffect = transientPostEffect;
+                tp.kaDonk = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientKaDonk")->load());
+                tp.coarse = juce::jlimit(-24.0f, 24.0f, apvts.getRawParameterValue("transientCoarse")->load());
+                tp.length = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientLength")->load());
+                transient_.setParameters(tp);
+                transient_.trigger(msg.getNoteNumber());
+                break;
+            }
+        }
+    }
+
+    //==============================================================================
     // -- Process MIDI with Mono Mode Support --
     // Call custom synthesiser methods to handle mono mode
     synth.processMidiBuffer(midiMessages, numSamples);
@@ -1881,6 +1938,50 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // Clear MIDI buffer AFTER processing (synthesizer has consumed all messages)
     // This prevents stale MIDI from accumulating across blocks
     midiMessages.clear();
+
+    //==============================================================================
+    // -- Ka-Donk Delay: delays synth output so transient leads --
+    if (transientEnabled)
+    {
+        float kaDonkAmount = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientKaDonk")->load());
+        float kaDonkDelaySamples = kaDonkAmount * static_cast<float>(currentSampleRate);
+        kaDonkDelaySamples = juce::jlimit(0.0f, static_cast<float>(kaDonkMaxSamples), kaDonkDelaySamples);
+        smoothedKaDonkDelay_.setTargetValue(kaDonkDelaySamples);
+
+        if (kaDonkDelaySamples > 0.5f && buffer.getNumChannels() >= 2 && numSamples > 0)
+        {
+            auto* dataL = buffer.getWritePointer(0);
+            auto* dataR = buffer.getWritePointer(1);
+
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float delaySmp = smoothedKaDonkDelay_.getNextValue();
+
+                kaDonkDelayL_.pushSample(0, dataL[i]);
+                kaDonkDelayR_.pushSample(0, dataR[i]);
+
+                dataL[i] = kaDonkDelayL_.popSample(0, delaySmp);
+                dataR[i] = kaDonkDelayR_.popSample(0, delaySmp);
+            }
+        }
+    }
+
+    //==============================================================================
+    // -- Transient (Pre: before all effects when Post Effect OFF) --
+    if (transientEnabled && !transientPostEffect)
+    {
+        SpaceDustTransient::Parameters tp;
+        tp.enabled = true;
+        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"transientType", 1}.getParamID())))
+            tp.type = p->getIndex();
+        tp.mix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientMix")->load());
+        tp.postEffect = false;
+        tp.kaDonk = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientKaDonk")->load());
+        tp.coarse = juce::jlimit(-24.0f, 24.0f, apvts.getRawParameterValue("transientCoarse")->load());
+        tp.length = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientLength")->load());
+        transient_.setParameters(tp);
+        transient_.process(buffer);
+    }
 
     //==============================================================================
     // -- Effect order (TG/BC Post Effect toggles) --
@@ -2239,6 +2340,22 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         flanger_.process(buffer);
     }
 
+    // -- Transient (Post: end of chain, before late BC) --
+    if (transientEnabled && transientPostEffect)
+    {
+        SpaceDustTransient::Parameters tp;
+        tp.enabled = true;
+        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"transientType", 1}.getParamID())))
+            tp.type = p->getIndex();
+        tp.mix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientMix")->load());
+        tp.postEffect = true;
+        tp.kaDonk = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientKaDonk")->load());
+        tp.coarse = juce::jlimit(-24.0f, 24.0f, apvts.getRawParameterValue("transientCoarse")->load());
+        tp.length = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientLength")->load());
+        transient_.setParameters(tp);
+        transient_.process(buffer);
+    }
+
     // -- Bit Crusher (late: after Flanger, before TG) --
     if (bitCrusherEnabled && bitCrusherPostEffect)
         runBitCrusher();
@@ -2246,6 +2363,29 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // -- Trance Gate (Post: when Post Effect ON, always last) --
     if (tranceGateEnabled && tranceGatePostEffect)
         runTranceGate();
+
+    //==============================================================================
+    // -- Compressor (Saturation Color) - after BitCrusher/TranceGate, before Soft Clipper --
+    bool compressorEnabled = *apvts.getRawParameterValue("compressorEnabled") > 0.5f;
+    if (compressorEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
+    {
+        SpaceDustCompressor::Parameters cp;
+        cp.enabled = true;
+        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"compressorType", 1}.getParamID())))
+            cp.type = p->getIndex();
+        else
+            cp.type = 0;
+        cp.thresholdDb = juce::jlimit(-60.0f, 0.0f, apvts.getRawParameterValue("compressorThreshold")->load());
+        cp.ratio = juce::jlimit(1.0f, 20.0f, apvts.getRawParameterValue("compressorRatio")->load());
+        cp.attackMs = juce::jlimit(0.1f, 80.0f, apvts.getRawParameterValue("compressorAttack")->load());
+        cp.releaseMs = juce::jlimit(5.0f, 1200.0f, apvts.getRawParameterValue("compressorRelease")->load());
+        cp.makeupGainDb = juce::jlimit(0.0f, 24.0f, apvts.getRawParameterValue("compressorMakeup")->load());
+        cp.mix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("compressorMix")->load());
+        cp.autoRelease = *apvts.getRawParameterValue("compressorAutoRelease") > 0.5f;
+        cp.softClip = *apvts.getRawParameterValue("compressorSoftClip") > 0.5f;
+        compressor_.setParameters(cp);
+        compressor_.process(buffer);
+    }
 
     //==============================================================================
     // -- Soft Clipper (Saturation Color) - before master volume --
@@ -2272,6 +2412,18 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         softClipper_.process(buffer);
     }
     
+    //==============================================================================
+    // -- Lo-Fi (Saturation Color) - end of effects chain, before master volume --
+    bool lofiEnabled = *apvts.getRawParameterValue("lofiEnabled") > 0.5f;
+    if (lofiEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
+    {
+        SpaceDustLofi::Parameters lp;
+        lp.enabled = true;
+        lp.amount = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("lofiAmount")->load());
+        lofi_.setParameters(lp);
+        lofi_.process(buffer);
+    }
+
     //==============================================================================
     // -- Master Volume Control --
     // Apply master volume to final output (real-time safe)
@@ -2745,7 +2897,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"pitchEnvTime", 1}, "Pitch Env Time",
-            juce::NormalisableRange<float>(0.0f, 5.0f, 0.001f), 0.0f),
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.001f), 0.0f),
         "pitchEnvTime");
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -3378,6 +3530,64 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         "bitCrusherMix");
 
     //==============================================================================
+    // -- Compressor Parameters (Saturation Color tab) --
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"compressorEnabled", 1}, "Compressor On", false),
+        "compressorEnabled");
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"compressorType", 1}, "Compressor Type",
+            juce::StringArray("SSL", "1176", "LA-2A"), 0),
+        safeString("compressorType"));
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"compressorThreshold", 1}, "Compressor Threshold",
+            juce::NormalisableRange<float>(-60.0f, 0.0f, 0.1f), -12.0f),
+        "compressorThreshold");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"compressorRatio", 1}, "Compressor Ratio",
+            juce::NormalisableRange<float>(1.0f, 20.0f, 0.1f, 0.5f), 4.0f),
+        "compressorRatio");
+    {
+        juce::NormalisableRange<float> compAttackRange(0.1f, 80.0f, 0.01f);
+        compAttackRange.setSkewForCentre(5.0f);
+        ADD_PARAM_WITH_LOG(params,
+            std::make_unique<juce::AudioParameterFloat>(
+                juce::ParameterID{"compressorAttack", 1}, "Compressor Attack",
+                compAttackRange, 3.0f),
+            "compressorAttack");
+    }
+    {
+        juce::NormalisableRange<float> compReleaseRange(5.0f, 1200.0f, 0.1f);
+        compReleaseRange.setSkewForCentre(100.0f);
+        ADD_PARAM_WITH_LOG(params,
+            std::make_unique<juce::AudioParameterFloat>(
+                juce::ParameterID{"compressorRelease", 1}, "Compressor Release",
+                compReleaseRange, 100.0f),
+            "compressorRelease");
+    }
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"compressorMakeup", 1}, "Compressor Makeup",
+            juce::NormalisableRange<float>(0.0f, 24.0f, 0.1f), 0.0f),
+        "compressorMakeup");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"compressorMix", 1}, "Compressor Mix",
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 1.0f),
+        "compressorMix");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"compressorAutoRelease", 1}, "Compressor Auto Release", false),
+        "compressorAutoRelease");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"compressorSoftClip", 1}, "Compressor Soft Clip", false),
+        "compressorSoftClip");
+
+    //==============================================================================
     // -- Soft Clipper Parameters (Saturation Color tab) --
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterBool>(
@@ -3408,6 +3618,56 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"softClipperMix", 1}, "Soft Clipper Mix",
             juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 1.0f),
         "softClipperMix");
+
+    //==============================================================================
+    // -- Transient Effect Parameters (Saturation Color tab) --
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"transientEnabled", 1}, "Transient On", false),
+        "transientEnabled");
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"transientType", 1}, "Transient Type",
+            juce::StringArray("808 Kick", "808 Snare", "808 Hat", "808 Open Hat",
+                              "808 Clap", "808 Tom", "808 Rim", "808 Cowbell",
+                              "909 Kick", "909 Snare"), 0),
+        safeString("transientType"));
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"transientMix", 1}, "Transient Mix",
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.5f),
+        "transientMix");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"transientPostEffect", 1}, "Transient Post", false),
+        "transientPostEffect");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"transientKaDonk", 1}, "Ka-Donk",
+            juce::NormalisableRange<float>(0.0f, 0.5f, 0.01f), 0.0f),
+        "transientKaDonk");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"transientCoarse", 1}, "Transient Coarse",
+            juce::NormalisableRange<float>(-24.0f, 24.0f, 1.0f), 0.0f),
+        "transientCoarse");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"transientLength", 1}, "Transient Length",
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 1.0f),
+        "transientLength");
+
+    //==============================================================================
+    // -- Lo-Fi Parameters (Saturation Color tab) --
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lofiEnabled", 1}, "Lo-Fi On", false),
+        "lofiEnabled");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"lofiAmount", 1}, "Lo-Fi Amount",
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f),
+        "lofiAmount");
 
     //==============================================================================
     // -- Trance Gate Effect Parameters --

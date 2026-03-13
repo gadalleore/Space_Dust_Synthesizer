@@ -1775,6 +1775,47 @@ SaturationColorPageComponent::SaturationColorPageComponent(SpaceDustAudioProcess
     addAndMakeVisible(parentEditor.softClipperOversampleLabel);
     addAndMakeVisible(parentEditor.softClipperMixSlider);
     addAndMakeVisible(parentEditor.softClipperMixLabel);
+    addAndMakeVisible(parentEditor.compressorGroup);
+    addAndMakeVisible(parentEditor.compressorEnabledButton);
+    addAndMakeVisible(parentEditor.compressorEnabledLabel);
+    addAndMakeVisible(parentEditor.compressorTypeCombo);
+    addAndMakeVisible(parentEditor.compressorTypeLabel);
+    addAndMakeVisible(parentEditor.compressorThresholdSlider);
+    addAndMakeVisible(parentEditor.compressorThresholdLabel);
+    addAndMakeVisible(parentEditor.compressorRatioSlider);
+    addAndMakeVisible(parentEditor.compressorRatioLabel);
+    addAndMakeVisible(parentEditor.compressorAttackSlider);
+    addAndMakeVisible(parentEditor.compressorAttackLabel);
+    addAndMakeVisible(parentEditor.compressorReleaseSlider);
+    addAndMakeVisible(parentEditor.compressorReleaseLabel);
+    addAndMakeVisible(parentEditor.compressorMakeupSlider);
+    addAndMakeVisible(parentEditor.compressorMakeupLabel);
+    addAndMakeVisible(parentEditor.compressorMixSlider);
+    addAndMakeVisible(parentEditor.compressorMixLabel);
+    addAndMakeVisible(parentEditor.compressorAutoReleaseButton);
+    addAndMakeVisible(parentEditor.compressorAutoReleaseLabel);
+    addAndMakeVisible(parentEditor.compressorSoftClipButton);
+    addAndMakeVisible(parentEditor.compressorSoftClipLabel);
+    addAndMakeVisible(parentEditor.lofiGroup);
+    addAndMakeVisible(parentEditor.lofiEnabledButton);
+    addAndMakeVisible(parentEditor.lofiEnabledLabel);
+    addAndMakeVisible(parentEditor.lofiAmountSlider);
+    addAndMakeVisible(parentEditor.lofiAmountLabel);
+    addAndMakeVisible(parentEditor.transientGroup);
+    addAndMakeVisible(parentEditor.transientEnabledButton);
+    addAndMakeVisible(parentEditor.transientEnabledLabel);
+    addAndMakeVisible(parentEditor.transientTypeCombo);
+    addAndMakeVisible(parentEditor.transientTypeLabel);
+    addAndMakeVisible(parentEditor.transientMixSlider);
+    addAndMakeVisible(parentEditor.transientMixLabel);
+    addAndMakeVisible(parentEditor.transientPostEffectButton);
+    addAndMakeVisible(parentEditor.transientPostEffectLabel);
+    addAndMakeVisible(parentEditor.transientKaDonkSlider);
+    addAndMakeVisible(parentEditor.transientKaDonkLabel);
+    addAndMakeVisible(parentEditor.transientCoarseSlider);
+    addAndMakeVisible(parentEditor.transientCoarseLabel);
+    addAndMakeVisible(parentEditor.transientLengthSlider);
+    addAndMakeVisible(parentEditor.transientLengthLabel);
 }
 
 void SaturationColorPageComponent::paint(juce::Graphics& g)
@@ -1783,29 +1824,30 @@ void SaturationColorPageComponent::paint(juce::Graphics& g)
     float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
     avgLevel = juce::jmin(1.0f, avgLevel);
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
-    drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff), { &parentEditor.bitCrusherGroup, &parentEditor.softClipperGroup });
+    drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff), { &parentEditor.bitCrusherGroup, &parentEditor.compressorGroup, &parentEditor.softClipperGroup, &parentEditor.lofiGroup, &parentEditor.transientGroup });
 }
 
 void SaturationColorPageComponent::resized()
 {
     auto r = getLocalBounds();
-    const int pad = 16;
+    const int pad = 8;
+    const int colGap = 8;
     const int groupTitleH = 32;
     const int knobSize = 56;
     const int labelH = 14;
     const int labelGap = 2;
     const int gap = 4;
-
-    // Two columns: Bit Crusher (left) | Soft Clipper (right)
-    const int colW = juce::jmin(240, (r.getWidth() - 3 * pad) / 2);
-    const int leftColX = pad;
-    const int rightColX = pad + colW + pad;
-
-    // --- Bit Crusher (left column) ---
-    // On button: upper-left with pad (match Effects tab orientation)
-    int by = pad + groupTitleH;
     const int bOnBtnW = 62;
     const int bOnBtnH = 28;
+
+    // Three columns: Bit Crusher (left) | Compressor (center) | Soft Clipper (right)
+    const int colW = (r.getWidth() - 2 * pad - 2 * colGap) / 3;
+    const int leftColX = pad;
+    const int centerColX = pad + colW + colGap;
+    const int rightColX = pad + 2 * (colW + colGap);
+
+    // --- Bit Crusher (left column) ---
+    int by = pad + groupTitleH;
     int bCx = leftColX + colW / 2;
     parentEditor.bitCrusherEnabledButton.setBounds(leftColX + pad, by, bOnBtnW, bOnBtnH);
     by += bOnBtnH + gap;
@@ -1824,12 +1866,56 @@ void SaturationColorPageComponent::resized()
     by += knobSize + 24 + pad;
     parentEditor.bitCrusherGroup.setBounds(leftColX, pad, colW, by - pad);
 
+    // --- Compressor (center column) ---
+    int cy = pad + groupTitleH;
+    int cCx = centerColX + colW / 2;
+    const int cKg = 6;
+    const int cComboW = 100;
+    parentEditor.compressorEnabledButton.setBounds(centerColX + pad, cy, bOnBtnW, bOnBtnH);
+    cy += bOnBtnH + gap;
+    parentEditor.compressorTypeCombo.setBounds(cCx - cComboW / 2, cy, cComboW, 22);
+    cy += 24 + gap;
+    parentEditor.compressorTypeLabel.setBounds(cCx - cComboW / 2, cy, cComboW, labelH);
+    cy += labelH + labelGap;
+    // Row 1: Threshold | Ratio
+    const int cPairW = 2 * knobSize + cKg;
+    int cPairLeft = centerColX + (colW - cPairW) / 2;
+    parentEditor.compressorThresholdLabel.setBounds(cPairLeft, cy, knobSize, labelH);
+    parentEditor.compressorRatioLabel.setBounds(cPairLeft + knobSize + cKg, cy, knobSize, labelH);
+    cy += labelH + labelGap;
+    parentEditor.compressorThresholdSlider.setBounds(cPairLeft, cy, knobSize, knobSize);
+    parentEditor.compressorRatioSlider.setBounds(cPairLeft + knobSize + cKg, cy, knobSize, knobSize);
+    cy += knobSize + gap;
+    // Row 2: Attack | Release
+    parentEditor.compressorAttackLabel.setBounds(cPairLeft, cy, knobSize, labelH);
+    parentEditor.compressorReleaseLabel.setBounds(cPairLeft + knobSize + cKg, cy, knobSize, labelH);
+    cy += labelH + labelGap;
+    parentEditor.compressorAttackSlider.setBounds(cPairLeft, cy, knobSize, knobSize);
+    parentEditor.compressorReleaseSlider.setBounds(cPairLeft + knobSize + cKg, cy, knobSize, knobSize);
+    cy += knobSize + gap;
+    // Auto Release | Soft Clip toggles
+    const int cToggleW = 80;
+    const int cToggleH = 20;
+    const int cToggleGap = 6;
+    const int cToggleRowW = 2 * cToggleW + cToggleGap;
+    int cToggleLeft = cCx - cToggleRowW / 2;
+    parentEditor.compressorAutoReleaseButton.setBounds(cToggleLeft, cy, cToggleW, cToggleH);
+    parentEditor.compressorSoftClipButton.setBounds(cToggleLeft + cToggleW + cToggleGap, cy, cToggleW, cToggleH);
+    cy += cToggleH + gap;
+    // Row 3: Makeup | Mix
+    parentEditor.compressorMakeupLabel.setBounds(cPairLeft, cy, knobSize, labelH);
+    parentEditor.compressorMixLabel.setBounds(cPairLeft + knobSize + cKg, cy, knobSize, labelH);
+    cy += labelH + labelGap;
+    parentEditor.compressorMakeupSlider.setBounds(cPairLeft, cy, knobSize, knobSize);
+    parentEditor.compressorMixSlider.setBounds(cPairLeft + knobSize + cKg, cy, knobSize, knobSize);
+    cy += knobSize + pad;
+    parentEditor.compressorGroup.setBounds(centerColX, pad, colW, cy - pad);
+
     // --- Soft Clipper (right column) ---
-    // On button: upper-left with pad (match Effects tab orientation)
     int sy = pad + groupTitleH;
     int sCx = rightColX + colW / 2;
-    const int sComboW = 100;   // Mode: Smooth/Crisp/Tube/Tape/Guitar
-    const int sOsComboW = 56;  // Oversample: 2x/4x/8x/16x
+    const int sComboW = 100;
+    const int sOsComboW = 56;
     parentEditor.softClipperEnabledButton.setBounds(rightColX + pad, sy, bOnBtnW, bOnBtnH);
     sy += bOnBtnH + gap;
     parentEditor.softClipperModeCombo.setBounds(sCx - sComboW / 2, sy, sComboW, 22);
@@ -1853,6 +1939,56 @@ void SaturationColorPageComponent::resized()
     parentEditor.softClipperMixLabel.setBounds(sCx - knobSize / 2, sy + knobSize + 2, knobSize, labelH);
     sy += knobSize + labelH + 24 + pad;
     parentEditor.softClipperGroup.setBounds(rightColX, pad, colW, sy - pad);
+
+    // --- Lo-Fi (under Bit Crusher, same width) ---
+    const int lofiY = by + pad;
+    const int lofiKnobW = 72;
+    int lfy = lofiY + groupTitleH;
+    int lCx = leftColX + colW / 2;
+    parentEditor.lofiEnabledButton.setBounds(leftColX + pad, lfy, bOnBtnW, bOnBtnH);
+    lfy += bOnBtnH + gap;
+    parentEditor.lofiAmountLabel.setBounds(lCx - lofiKnobW / 2, lfy, lofiKnobW, labelH);
+    lfy += labelH + labelGap;
+    parentEditor.lofiAmountSlider.setBounds(lCx - lofiKnobW / 2, lfy, lofiKnobW, lofiKnobW);
+    lfy += lofiKnobW + pad + 12;
+    parentEditor.lofiGroup.setBounds(leftColX, lofiY, colW, lfy - lofiY);
+
+    // --- Transient (under Lo-Fi, same column width) ---
+    const int transY = lfy + pad;
+    int tfy = transY + groupTitleH;
+    int tCx = leftColX + colW / 2;
+    const int tComboW = 120;
+    const int tKg = 6;
+
+    // On button
+    parentEditor.transientEnabledButton.setBounds(leftColX + pad, tfy, bOnBtnW, bOnBtnH);
+    tfy += bOnBtnH + gap;
+
+    // Type combo
+    parentEditor.transientTypeCombo.setBounds(tCx - tComboW / 2, tfy, tComboW, 22);
+    tfy += 24 + gap;
+    parentEditor.transientTypeLabel.setBounds(tCx - tComboW / 2, tfy, tComboW, labelH);
+    tfy += labelH + labelGap;
+
+    // Post Effect toggle
+    parentEditor.transientPostEffectButton.setBounds(tCx - 60, tfy, 120, 20);
+    tfy += 20 + gap;
+
+    // Row 1: Mix | Length | Ka-Donk | Coarse
+    const int tQuadW = 4 * knobSize + 3 * tKg;
+    int tQuadLeft = leftColX + (colW - tQuadW) / 2;
+    parentEditor.transientMixLabel.setBounds(tQuadLeft, tfy, knobSize, labelH);
+    parentEditor.transientLengthLabel.setBounds(tQuadLeft + knobSize + tKg, tfy, knobSize, labelH);
+    parentEditor.transientKaDonkLabel.setBounds(tQuadLeft + 2 * (knobSize + tKg), tfy, knobSize, labelH);
+    parentEditor.transientCoarseLabel.setBounds(tQuadLeft + 3 * (knobSize + tKg), tfy, knobSize, labelH);
+    tfy += labelH + labelGap;
+    parentEditor.transientMixSlider.setBounds(tQuadLeft, tfy, knobSize, knobSize);
+    parentEditor.transientLengthSlider.setBounds(tQuadLeft + knobSize + tKg, tfy, knobSize, knobSize);
+    parentEditor.transientKaDonkSlider.setBounds(tQuadLeft + 2 * (knobSize + tKg), tfy, knobSize, knobSize);
+    parentEditor.transientCoarseSlider.setBounds(tQuadLeft + 3 * (knobSize + tKg), tfy, knobSize, knobSize);
+    tfy += knobSize + 24 + pad;
+
+    parentEditor.transientGroup.setBounds(leftColX, transY, colW, tfy - transY);
 }
 
 //==============================================================================
@@ -2034,6 +2170,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
       flangerGroup("Flanger", "Flanger"),
       bitCrusherGroup("Bit Crusher", "Bit Crusher"),
       softClipperGroup("Soft Clipper", "Soft Clipper"),
+      compressorGroup("Compressor", "Compressor"),
+      transientGroup("Transient", "Transient"),
+      lofiGroup("Lo-Fi", "Lo-Fi"),
       tranceGateGroup("Trance Gate", "Trance Gate"),
       delayFilterGroup("Filter", "Filter")
 {
@@ -2129,6 +2268,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     flangerGroup.getProperties().set("viewportGlow", true);
     bitCrusherGroup.getProperties().set("viewportGlow", true);
     softClipperGroup.getProperties().set("viewportGlow", true);
+    compressorGroup.getProperties().set("viewportGlow", true);
+    lofiGroup.getProperties().set("viewportGlow", true);
+    transientGroup.getProperties().set("viewportGlow", true);
     tranceGateGroup.getProperties().set("viewportGlow", true);
     delayFilterGroup.getProperties().set("viewportGlow", true);
 
@@ -3525,6 +3667,175 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     softClipperMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     softClipperMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
 
+    // Compressor (Saturation Color tab)
+    compressorEnabledButton.setButtonText(safeString("On"));
+    compressorEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "compressorEnabled", compressorEnabledButton);
+    compressorEnabledLabel.setText(safeString("Compressor"), juce::dontSendNotification);
+    compressorEnabledLabel.setJustificationType(juce::Justification::centred);
+    compressorEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    compressorEnabledLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorTypeCombo.addItem(safeString("SSL"), 1);
+    compressorTypeCombo.addItem(safeString("1176"), 2);
+    compressorTypeCombo.addItem(safeString("LA-2A"), 3);
+    compressorTypeCombo.setSelectedId(1);
+    compressorTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.getValueTreeState(), "compressorType", compressorTypeCombo);
+    compressorTypeLabel.setText(safeString("Type"), juce::dontSendNotification);
+    compressorTypeLabel.setJustificationType(juce::Justification::centred);
+    compressorTypeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    compressorTypeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorThresholdSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    compressorThresholdSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    compressorThresholdSlider.setTextValueSuffix(safeString(" dB"));
+    compressorThresholdAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "compressorThreshold", compressorThresholdSlider);
+    compressorThresholdLabel.setText(safeString("Thresh"), juce::dontSendNotification);
+    compressorThresholdLabel.setJustificationType(juce::Justification::centred);
+    compressorThresholdLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    compressorThresholdLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorRatioSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    compressorRatioSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    compressorRatioSlider.setTextValueSuffix(safeString(":1"));
+    compressorRatioAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "compressorRatio", compressorRatioSlider);
+    compressorRatioLabel.setText(safeString("Ratio"), juce::dontSendNotification);
+    compressorRatioLabel.setJustificationType(juce::Justification::centred);
+    compressorRatioLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    compressorRatioLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorAttackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    compressorAttackSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    compressorAttackSlider.setTextValueSuffix(safeString(" ms"));
+    compressorAttackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "compressorAttack", compressorAttackSlider);
+    compressorAttackLabel.setText(safeString("Attack"), juce::dontSendNotification);
+    compressorAttackLabel.setJustificationType(juce::Justification::centred);
+    compressorAttackLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    compressorAttackLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorReleaseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    compressorReleaseSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    compressorReleaseSlider.setTextValueSuffix(safeString(" ms"));
+    compressorReleaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "compressorRelease", compressorReleaseSlider);
+    compressorReleaseLabel.setText(safeString("Release"), juce::dontSendNotification);
+    compressorReleaseLabel.setJustificationType(juce::Justification::centred);
+    compressorReleaseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    compressorReleaseLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorMakeupSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    compressorMakeupSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    compressorMakeupSlider.setTextValueSuffix(safeString(" dB"));
+    compressorMakeupAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "compressorMakeup", compressorMakeupSlider);
+    compressorMakeupLabel.setText(safeString("Makeup"), juce::dontSendNotification);
+    compressorMakeupLabel.setJustificationType(juce::Justification::centred);
+    compressorMakeupLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    compressorMakeupLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorMixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    compressorMixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    compressorMixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "compressorMix", compressorMixSlider);
+    compressorMixLabel.setText(safeString("Mix"), juce::dontSendNotification);
+    compressorMixLabel.setJustificationType(juce::Justification::centred);
+    compressorMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    compressorMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorAutoReleaseButton.setButtonText(safeString("Auto Rel"));
+    compressorAutoReleaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "compressorAutoRelease", compressorAutoReleaseButton);
+    compressorAutoReleaseLabel.setText(safeString("Auto"), juce::dontSendNotification);
+    compressorAutoReleaseLabel.setJustificationType(juce::Justification::centred);
+    compressorAutoReleaseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    compressorAutoReleaseLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorSoftClipButton.setButtonText(safeString("Soft Clip"));
+    compressorSoftClipAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "compressorSoftClip", compressorSoftClipButton);
+    compressorSoftClipLabel.setText(safeString("Clip"), juce::dontSendNotification);
+    compressorSoftClipLabel.setJustificationType(juce::Justification::centred);
+    compressorSoftClipLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    compressorSoftClipLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+
+    // Transient (Saturation Color tab)
+    transientEnabledButton.setButtonText(safeString("On"));
+    transientEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "transientEnabled", transientEnabledButton);
+    transientEnabledLabel.setText(safeString("Transient"), juce::dontSendNotification);
+    transientEnabledLabel.setJustificationType(juce::Justification::centred);
+    transientEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    transientEnabledLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    transientTypeCombo.addItem(safeString("808 Kick"), 1);
+    transientTypeCombo.addItem(safeString("808 Snare"), 2);
+    transientTypeCombo.addItem(safeString("808 Hat"), 3);
+    transientTypeCombo.addItem(safeString("808 Open Hat"), 4);
+    transientTypeCombo.addItem(safeString("808 Clap"), 5);
+    transientTypeCombo.addItem(safeString("808 Tom"), 6);
+    transientTypeCombo.addItem(safeString("808 Rim"), 7);
+    transientTypeCombo.addItem(safeString("808 Cowbell"), 8);
+    transientTypeCombo.addItem(safeString("909 Kick"), 9);
+    transientTypeCombo.addItem(safeString("909 Snare"), 10);
+    transientTypeCombo.setSelectedId(1);
+    transientTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.getValueTreeState(), "transientType", transientTypeCombo);
+    transientTypeLabel.setText(safeString("Sound"), juce::dontSendNotification);
+    transientTypeLabel.setJustificationType(juce::Justification::centred);
+    transientTypeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    transientTypeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    transientMixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    transientMixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    transientMixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "transientMix", transientMixSlider);
+    transientMixLabel.setText(safeString("Mix"), juce::dontSendNotification);
+    transientMixLabel.setJustificationType(juce::Justification::centred);
+    transientMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    transientMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    transientPostEffectButton.setButtonText(safeString("Post Effect"));
+    transientPostEffectAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "transientPostEffect", transientPostEffectButton);
+    transientPostEffectLabel.setText(safeString("Pre / Post"), juce::dontSendNotification);
+    transientPostEffectLabel.setJustificationType(juce::Justification::centred);
+    transientPostEffectLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    transientPostEffectLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    transientKaDonkSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    transientKaDonkSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    transientKaDonkAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "transientKaDonk", transientKaDonkSlider);
+    transientKaDonkLabel.setText(safeString("Ka-Donk"), juce::dontSendNotification);
+    transientKaDonkLabel.setJustificationType(juce::Justification::centred);
+    transientKaDonkLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    transientKaDonkLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    transientCoarseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    transientCoarseSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    transientCoarseSlider.setTextValueSuffix(safeString(" st"));
+    transientCoarseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "transientCoarse", transientCoarseSlider);
+    transientCoarseLabel.setText(safeString("Coarse"), juce::dontSendNotification);
+    transientCoarseLabel.setJustificationType(juce::Justification::centred);
+    transientCoarseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    transientCoarseLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    transientLengthSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    transientLengthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    transientLengthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "transientLength", transientLengthSlider);
+    transientLengthLabel.setText(safeString("Length"), juce::dontSendNotification);
+    transientLengthLabel.setJustificationType(juce::Justification::centred);
+    transientLengthLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    transientLengthLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+
+    // Lo-Fi (Saturation Color tab)
+    lofiEnabledButton.setButtonText(safeString("On"));
+    lofiEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "lofiEnabled", lofiEnabledButton);
+    lofiEnabledLabel.setText(safeString("Lo-Fi"), juce::dontSendNotification);
+    lofiEnabledLabel.setJustificationType(juce::Justification::centred);
+    lofiEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    lofiEnabledLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    lofiAmountSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    lofiAmountSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    lofiAmountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "lofiAmount", lofiAmountSlider);
+    lofiAmountLabel.setText(safeString("Lofi"), juce::dontSendNotification);
+    lofiAmountLabel.setJustificationType(juce::Justification::centred);
+    lofiAmountLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    lofiAmountLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+
     // Trance Gate Effect (Effects tab)
     tranceGateEnabledButton.setButtonText(safeString("On"));
     tranceGateEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -3626,6 +3937,12 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     bitCrusherEnabledLabel.setVisible(false);
     bitCrusherPostEffectLabel.setVisible(false);
     softClipperEnabledLabel.setVisible(false);
+    compressorEnabledLabel.setVisible(false);
+    compressorAutoReleaseLabel.setVisible(false);
+    compressorSoftClipLabel.setVisible(false);
+    lofiEnabledLabel.setVisible(false);
+    transientEnabledLabel.setVisible(false);
+    transientPostEffectLabel.setVisible(false);
     tranceGateEnabledLabel.setVisible(false);
     tranceGatePreEffectLabel.setVisible(false);
     tranceGateSyncLabel.setVisible(false);
@@ -3661,6 +3978,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     flangerEnabledButton.addListener(this);
     bitCrusherEnabledButton.addListener(this);
     softClipperEnabledButton.addListener(this);
+    compressorEnabledButton.addListener(this);
+    lofiEnabledButton.addListener(this);
+    transientEnabledButton.addListener(this);
     reverbEnabledButton.addListener(this);
     tranceGateEnabledButton.addListener(this);
     grainDelayEnabledButton.addListener(this);
@@ -3671,6 +3991,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     syncGroupGlow(flangerEnabledButton, flangerGroup);
     syncGroupGlow(bitCrusherEnabledButton, bitCrusherGroup);
     syncGroupGlow(softClipperEnabledButton, softClipperGroup);
+    syncGroupGlow(compressorEnabledButton, compressorGroup);
+    syncGroupGlow(lofiEnabledButton, lofiGroup);
+    syncGroupGlow(transientEnabledButton, transientGroup);
     syncGroupGlow(reverbEnabledButton, reverbGroup);
     syncGroupGlow(tranceGateEnabledButton, tranceGateGroup);
     syncGroupGlow(grainDelayEnabledButton, grainDelayGroup);
@@ -3939,6 +4262,9 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
     flangerEnabledButton.removeListener(this);
     bitCrusherEnabledButton.removeListener(this);
     softClipperEnabledButton.removeListener(this);
+    compressorEnabledButton.removeListener(this);
+    lofiEnabledButton.removeListener(this);
+    transientEnabledButton.removeListener(this);
     reverbEnabledButton.removeListener(this);
     tranceGateEnabledButton.removeListener(this);
     grainDelayEnabledButton.removeListener(this);
@@ -4012,6 +4338,12 @@ void SpaceDustAudioProcessorEditor::buttonStateChanged(juce::Button* button)
         sync(bitCrusherEnabledButton, bitCrusherGroup);
     else if (button == &softClipperEnabledButton)
         sync(softClipperEnabledButton, softClipperGroup);
+    else if (button == &compressorEnabledButton)
+        sync(compressorEnabledButton, compressorGroup);
+    else if (button == &lofiEnabledButton)
+        sync(lofiEnabledButton, lofiGroup);
+    else if (button == &transientEnabledButton)
+        sync(transientEnabledButton, transientGroup);
     else if (button == &reverbEnabledButton)
         sync(reverbEnabledButton, reverbGroup);
     else if (button == &tranceGateEnabledButton)
@@ -4401,8 +4733,8 @@ void SpaceDustAudioProcessorEditor::resized()
     // Right edge of tab is at: tabbedWidth
     // New Master X position: tabbedWidth + actualMasterGap (reduced gap)
     int masterX = tabbedWidth + actualMasterGap;
-    int masterY = titleHeight;
-    int masterHeight = getHeight() - titleHeight;
+    int masterY = titleHeight + 10;  // 10px top margin to match bottom
+    int masterHeight = getHeight() - titleHeight - 20;  // 10px top + 10px bottom margins
     
     masterGroup.setBounds(masterX, masterY, masterWidth, masterHeight);
     
@@ -4424,7 +4756,7 @@ void SpaceDustAudioProcessorEditor::resized()
     const int meterBarWidth = 20;
     const int meterGap = 4;
     const int totalMeterWidth = (meterBarWidth * 2) + meterGap;
-    int meterHeight = 240;  // 75% of 320
+    int meterHeight = 216;  // 90% of 240 (shrunk 10% to fit Legato Glide)
     int meterX = masterContent.getCentreX() - totalMeterWidth / 2;
     if (stereoLevelMeter != nullptr)
     {

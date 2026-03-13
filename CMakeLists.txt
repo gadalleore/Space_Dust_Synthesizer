@@ -75,6 +75,12 @@ target_sources(SpaceDust PRIVATE
     Source/SpaceDustBitCrusher.h
     Source/SpaceDustSoftClipper.cpp
     Source/SpaceDustSoftClipper.h
+    Source/SpaceDustCompressor.cpp
+    Source/SpaceDustCompressor.h
+    Source/SpaceDustLofi.cpp
+    Source/SpaceDustLofi.h
+    Source/SpaceDustTransient.cpp
+    Source/SpaceDustTransient.h
     Source/SpaceDustParametricEQ.cpp
     Source/SpaceDustParametricEQ.h
     Source/SexiconReverb.cpp

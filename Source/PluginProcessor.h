@@ -13,6 +13,9 @@
 #include "SpaceDustBitCrusher.h"
 #include "SpaceDustParametricEQ.h"
 #include "SpaceDustSoftClipper.h"
+#include "SpaceDustCompressor.h"
+#include "SpaceDustLofi.h"
+#include "SpaceDustTransient.h"
 
 //==============================================================================
 /**
@@ -181,6 +184,15 @@ private:
     SpaceDustBitCrusher bitCrusher_;
     SpaceDustParametricEQ parametricEQ_;
     SpaceDustSoftClipper softClipper_;
+    SpaceDustCompressor compressor_;
+    SpaceDustLofi lofi_;
+    SpaceDustTransient transient_;
+
+    // Ka-Donk delay line: delays synth output up to 1 second so transient leads
+    static constexpr int kaDonkMaxSamples = 48000;  // ~1s at 48kHz
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> kaDonkDelayL_{kaDonkMaxSamples};
+    juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> kaDonkDelayR_{kaDonkMaxSamples};
+    juce::SmoothedValue<float> smoothedKaDonkDelay_{0.0f};
 
     //==============================================================================
     // -- Delay Effect State --

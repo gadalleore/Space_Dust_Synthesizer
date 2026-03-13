@@ -613,6 +613,53 @@ private:
     juce::Slider softClipperMixSlider;
     juce::Label softClipperMixLabel;
 
+    // Compressor Effect (Saturation Color tab)
+    juce::GroupComponent compressorGroup;
+    juce::ToggleButton compressorEnabledButton;
+    juce::Label compressorEnabledLabel;
+    juce::ComboBox compressorTypeCombo;
+    juce::Label compressorTypeLabel;
+    juce::Slider compressorThresholdSlider;
+    juce::Label compressorThresholdLabel;
+    juce::Slider compressorRatioSlider;
+    juce::Label compressorRatioLabel;
+    juce::Slider compressorAttackSlider;
+    juce::Label compressorAttackLabel;
+    juce::Slider compressorReleaseSlider;
+    juce::Label compressorReleaseLabel;
+    juce::Slider compressorMakeupSlider;
+    juce::Label compressorMakeupLabel;
+    juce::Slider compressorMixSlider;
+    juce::Label compressorMixLabel;
+    juce::ToggleButton compressorAutoReleaseButton;
+    juce::Label compressorAutoReleaseLabel;
+    juce::ToggleButton compressorSoftClipButton;
+    juce::Label compressorSoftClipLabel;
+
+    // Transient Effect (Saturation Color tab)
+    juce::GroupComponent transientGroup;
+    juce::ToggleButton transientEnabledButton;
+    juce::Label transientEnabledLabel;
+    juce::ComboBox transientTypeCombo;
+    juce::Label transientTypeLabel;
+    juce::Slider transientMixSlider;
+    juce::Label transientMixLabel;
+    juce::ToggleButton transientPostEffectButton;
+    juce::Label transientPostEffectLabel;
+    juce::Slider transientKaDonkSlider;
+    juce::Label transientKaDonkLabel;
+    juce::Slider transientCoarseSlider;
+    juce::Label transientCoarseLabel;
+    juce::Slider transientLengthSlider;
+    juce::Label transientLengthLabel;
+
+    // Lo-Fi Effect (Saturation Color tab)
+    juce::GroupComponent lofiGroup;
+    juce::ToggleButton lofiEnabledButton;
+    juce::Label lofiEnabledLabel;
+    juce::Slider lofiAmountSlider;
+    juce::Label lofiAmountLabel;
+
     // Trance Gate Effect (Effects tab)
     juce::GroupComponent tranceGateGroup;
     juce::ToggleButton tranceGateEnabledButton;
@@ -816,6 +863,31 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> softClipperKneeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> softClipperOversampleAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> softClipperMixAttachment;
+
+    // Compressor Attachments (Saturation Color tab)
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> compressorEnabledAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> compressorTypeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> compressorThresholdAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> compressorRatioAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> compressorAttackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> compressorReleaseAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> compressorMakeupAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> compressorMixAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> compressorAutoReleaseAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> compressorSoftClipAttachment;
+
+    // Transient Attachments (Saturation Color tab)
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> transientEnabledAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> transientTypeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> transientMixAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> transientPostEffectAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> transientKaDonkAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> transientCoarseAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> transientLengthAttachment;
+
+    // Lo-Fi Attachments (Saturation Color tab)
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lofiEnabledAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lofiAmountAttachment;
 
     // Trance Gate attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateEnabledAttachment;

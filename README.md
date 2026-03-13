@@ -6,7 +6,7 @@ A pure CMake-based polyphonic synthesizer VST3 plugin built with JUCE 8. Cosmic 
 
 - **VST3 format** – VST3-only plugin
 - **8-voice polyphony** – Dual oscillators (with sub oscillator), filter, and ADSR per voice
-- **Effects chain** – Reverb, delay (with filter), phaser, flanger, trance gate (post-effect), grain delay, parametric EQ, bitcrusher, soft clipper
+- **Effects chain** – Reverb, delay (with filter), phaser, flanger, trance gate (post-effect), grain delay, parametric EQ, bitcrusher, soft clipper, compressor, transient shaper, lo-fi
 - **Modulation** – Two LFOs with On toggles; LFO1 targets filter, LFO2 targets pitch (25% depth default)
 - **Master volume** – 0–2.0 range for headroom
 - **MIDI input** – Full MIDI note and control support
@@ -61,6 +61,9 @@ Source/
 ├── SpaceDustTranceGate.*    # Trance gate (post-effect)
 ├── SpaceDustBitCrusher.*    # Bitcrusher effect
 ├── SpaceDustSoftClipper.*   # KClip-style soft clipper (Saturation Color tab)
+├── SpaceDustCompressor.*    # SSL/1176/LA-2A style compressor (Saturation Color tab)
+├── SpaceDustTransient.*     # 808/909 transient shaper (Saturation Color tab)
+├── SpaceDustLofi.*          # Lo-fi effect (Saturation Color tab)
 ├── SpaceDustParametricEQ.*   # Parametric EQ
 ├── SexiconReverb.*          # Additional reverb
 └── SpaceDustLookAndFeel.*   # Custom UI styling
