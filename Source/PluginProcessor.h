@@ -39,7 +39,8 @@
     MIDI Input → Synthesiser → Voices (Osc1+Osc2 → Filter → ADSR) → Audio Output
 */
 class SpaceDustAudioProcessor : public juce::AudioProcessor,
-                                 public juce::AudioProcessorValueTreeState::Listener
+                                 public juce::AudioProcessorValueTreeState::Listener,
+                                 private juce::AsyncUpdater
 {
 public:
     //==============================================================================
@@ -123,6 +124,7 @@ public:
 
     // Goniometer (Lissajous) buffer getter - thread-safe double-buffered copy of output
     const juce::AudioBuffer<float>& getGoniometerBuffer() const;
+    int getGoniometerValidSamples() const { return goniometerValidSamples.load(std::memory_order_acquire); }
 
 private:
     //==============================================================================
@@ -227,6 +229,7 @@ private:
     static constexpr int goniometerMaxSamples = 4096;
     juce::AudioBuffer<float> goniometerBuffer[2];
     std::atomic<int> goniometerReadIndex{0};
+    std::atomic<int> goniometerValidSamples{0};
     
     // -- Helper Methods --
     
@@ -251,6 +254,16 @@ private:
         in atomic variables for real-time safe access from audio thread.
     */
     void parameterChanged(const juce::String& parameterID, float newValue) override;
+
+    void handleAsyncUpdate() override;
+
+    // Deferred filter sync flags (set in parameterChanged, handled in handleAsyncUpdate).
+    // AsyncUpdater coalesces rapid automation into a single callback and auto-cancels
+    // on destruction, eliminating the use-after-free from Timer::callAfterDelay.
+    std::atomic<bool> pendingSyncMasterToMod1{false};
+    std::atomic<bool> pendingSyncMasterToMod2{false};
+    std::atomic<bool> pendingSyncMod1ToMaster{false};
+    std::atomic<bool> pendingSyncMod2ToMaster{false};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpaceDustAudioProcessor)
 };

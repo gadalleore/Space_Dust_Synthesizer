@@ -8,7 +8,8 @@
 /**
     SpaceDust Bit Crusher - Aggressive lo-fi bit reduction + rate crushing.
 
-    - Bit depth: 1-8 bits (harsh range), floor quantization with DC bias for asymmetry
+    - Bit depth: Continuous from clean (4096 levels) to 1-bit (2 levels)
+    - Exponential Amount curve: most knob travel in the crunchy sweet spot
     - Rate: Sample-and-hold downsampling (1-8 kHz effective), no anti-aliasing
     - Optional phase jitter for less robotic, more "broken" character
     - Mix: dry/wet balance
@@ -19,7 +20,7 @@ public:
     struct Parameters
     {
         bool enabled = false;
-        float amount = 0.5f;   // 0 = 8 bits, 1 = 1 bit (aggressive range)
+        float amount = 0.5f;   // 0 = clean (4096 levels), 1 = 1-bit crush (2 levels)
         float rate = 0.0f;     // 0 = full rate, 1 = ~1 kHz (heavy downsample)
         float mix = 0.5f;      // Dry/wet 0-1
     };

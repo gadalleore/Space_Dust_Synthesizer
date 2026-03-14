@@ -15,8 +15,9 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
 
-    /** Update with new stereo audio (copies into internal buffer) */
-    void update(const juce::AudioBuffer<float>& buffer);
+    /** Update with new stereo audio (copies into internal buffer).
+        validSamples: actual number of audio samples (may be less than buffer size). */
+    void update(const juce::AudioBuffer<float>& buffer, int validSamples = -1);
 
 private:
     void drawBackground(juce::Graphics& g);

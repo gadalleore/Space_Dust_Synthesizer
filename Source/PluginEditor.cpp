@@ -209,8 +209,6 @@ MainPageComponent::MainPageComponent(SpaceDustAudioProcessorEditor& editor)
     addAndMakeVisible(parentEditor.filterEnvAttackLabel);
     addAndMakeVisible(parentEditor.filterEnvDecaySlider);
     addAndMakeVisible(parentEditor.filterEnvDecayLabel);
-    addAndMakeVisible(parentEditor.filterEnvSustainSlider);
-    addAndMakeVisible(parentEditor.filterEnvSustainLabel);
     addAndMakeVisible(parentEditor.filterEnvReleaseSlider);
     addAndMakeVisible(parentEditor.filterEnvReleaseLabel);
     addAndMakeVisible(parentEditor.filterEnvAmountSlider);
@@ -613,10 +611,10 @@ void MainPageComponent::resized()
     const int filterLabelSpacing = oscillatorTextBoxHeight + (labelGap / 2); // Label spacing below text box
     int filterKnobsBottom = filterCutoffKnobY + knobDiameter + filterLabelSpacing + labelHeight;
     int filterEnvY = filterKnobsBottom + filterRowGap;
-    int filterEnvStartX = filterContent.getX();
-    int filterEnvKnobSpacing = (filterContent.getWidth() - (5 * knobDiameter)) / 4; // 5 knobs with gaps between
+    const int numFilterEnvKnobs = 4;
+    int filterEnvKnobSpacing = (filterContent.getWidth() - (numFilterEnvKnobs * knobDiameter)) / (numFilterEnvKnobs + 1);
+    int filterEnvStartX = filterContent.getX() + filterEnvKnobSpacing;
     
-    // Filter Envelope knobs: Labels below (consistent with rest of UI)
     int filterEnvKnobX = filterEnvStartX;
     int filterEnvKnobY = filterEnvY;
     
@@ -626,10 +624,6 @@ void MainPageComponent::resized()
     
     parentEditor.filterEnvDecaySlider.setBounds(filterEnvKnobX, filterEnvKnobY, knobDiameter, knobDiameter);
     parentEditor.filterEnvDecayLabel.setBounds(filterEnvKnobX, filterEnvKnobY + knobDiameter + filterLabelSpacing, knobDiameter, labelHeight);
-    filterEnvKnobX += knobDiameter + filterEnvKnobSpacing;
-    
-    parentEditor.filterEnvSustainSlider.setBounds(filterEnvKnobX, filterEnvKnobY, knobDiameter, knobDiameter);
-    parentEditor.filterEnvSustainLabel.setBounds(filterEnvKnobX, filterEnvKnobY + knobDiameter + filterLabelSpacing, knobDiameter, labelHeight);
     filterEnvKnobX += knobDiameter + filterEnvKnobSpacing;
     
     parentEditor.filterEnvReleaseSlider.setBounds(filterEnvKnobX, filterEnvKnobY, knobDiameter, knobDiameter);
@@ -655,8 +649,8 @@ void MainPageComponent::resized()
     parentEditor.filterEnvAttackLabel.setVisible(true);
     parentEditor.filterEnvDecaySlider.setVisible(true);
     parentEditor.filterEnvDecayLabel.setVisible(true);
-    parentEditor.filterEnvSustainSlider.setVisible(true);
-    parentEditor.filterEnvSustainLabel.setVisible(true);
+    parentEditor.filterEnvSustainSlider.setVisible(false);
+    parentEditor.filterEnvSustainLabel.setVisible(false);
     parentEditor.filterEnvReleaseSlider.setVisible(true);
     parentEditor.filterEnvReleaseLabel.setVisible(true);
     parentEditor.filterEnvAmountSlider.setVisible(true);
@@ -2036,7 +2030,8 @@ void SpectralPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
     if (!lissajousDrawArea.isEmpty())
-        drawLissajous(g, lissajousDrawArea, parentEditor.audioProcessor.getGoniometerBuffer());
+        drawLissajous(g, lissajousDrawArea, parentEditor.audioProcessor.getGoniometerBuffer(),
+                      parentEditor.audioProcessor.getGoniometerValidSamples());
     // Glow drawn by GlowOverlayComponent (on top of Oscilloscope/Spectrum) for cleaner look
 }
 
@@ -2092,7 +2087,7 @@ void SpectralPageComponent::resized()
         glowOverlay->setBounds(bounds);
 }
 
-void SpectralPageComponent::drawLissajous(juce::Graphics& g, juce::Rectangle<int> area, const juce::AudioBuffer<float>& buffer)
+void SpectralPageComponent::drawLissajous(juce::Graphics& g, juce::Rectangle<int> area, const juce::AudioBuffer<float>& buffer, int validSamples)
 {
     const int cw = area.getWidth();
     const int ch = area.getHeight();
@@ -2103,7 +2098,7 @@ void SpectralPageComponent::drawLissajous(juce::Graphics& g, juce::Rectangle<int
     const juce::Colour pathColour(0xff48bde8);
 
     int dim = juce::jmin(cw, ch);
-    int margin = juce::jmin(4, dim / 12);  // Minimal margin - curve uses nearly full area
+    int margin = juce::jmin(4, dim / 12);
     float halfDim = juce::jmax(8.0f, (dim - 2 * margin) * 0.5f);
     float cx = area.getX() + cw * 0.5f;
     float cy = area.getY() + ch * 0.5f;
@@ -2115,8 +2110,8 @@ void SpectralPageComponent::drawLissajous(juce::Graphics& g, juce::Rectangle<int
     g.saveState();
     g.reduceClipRegion(area);
 
-    // Lissajous path only - no grid or reference circle
-    const int numS = buffer.getNumSamples();
+    const int numS = (validSamples > 0) ? juce::jmin(validSamples, buffer.getNumSamples())
+                                        : buffer.getNumSamples();
     if (buffer.getNumChannels() >= 2 && numS > 0)
     {
         juce::Path p;
@@ -4576,10 +4571,11 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     if (spectralPage != nullptr && tabbedComponent.getCurrentTabIndex() == spectralTabIndex && !isBeingDestroyed.load())
     {
         const auto& buf = audioProcessor.getGoniometerBuffer();
+        const int validSamples = audioProcessor.getGoniometerValidSamples();
         spectralPage->repaint();
         if (auto* osc = spectralPage->getOscilloscope())
         {
-            osc->update(buf);
+            osc->update(buf, validSamples);
             osc->repaint();
         }
         if (auto* spec = spectralPage->getSpectrumAnalyser())

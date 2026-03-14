@@ -1,7 +1,9 @@
 //==============================================================================
-// SpaceDust Bit Crusher - Aggressive lo-fi (1-8 bits, rate crush, asymmetric)
+// SpaceDust Bit Crusher - Aggressive lo-fi (continuous bit crush + rate crush)
 //
-// Bit depth: 1-8 bits. Floor quantization + DC bias (0.03) for harsh asymmetry.
+// Bit depth: Continuous quantization from clean (4096 levels) to 1-bit (2 levels).
+//            Exponential mapping so the crunchy zone gets more knob travel.
+//            Floor quantization + DC bias (0.03) for harsh asymmetry.
 // Rate: Zero-order hold downsampling, effective 1-8 kHz when maxed.
 // Jitter: Tiny phase noise for less robotic character.
 //==============================================================================
@@ -11,21 +13,20 @@
 
 namespace
 {
-    constexpr float kDenormThreshold = 1e-6f;   // Flush tiny values (fixes meter creep)
-    constexpr float kDcBias = 0.03f;            // Asymmetric quantization crunch
-    constexpr float kSilenceThreshold = 1e-5f;  // Below this: pass through to avoid DC from biasing silence
+    constexpr float kDenormThreshold = 1e-6f;
+    constexpr float kDcBias = 0.03f;
+    constexpr float kSilenceThreshold = 1e-5f;
 
-    // Harsh asymmetric quantization: floor + bias, quant_levels = 2^bits - 1
-    inline float quantizeHarsh(float x, int bits, float bias)
+    constexpr float kMaxLevels = 4096.0f;
+    constexpr float kMinLevels = 2.0f;
+
+    inline float quantizeHarsh(float x, float quantLevels, float bias)
     {
-        if (std::abs(x) < kSilenceThreshold) return 0.0f;  // Silence stays silent (bias would create DC)
-        if (bits <= 0) return (x >= 0.0f) ? 1.0f : -1.0f;
-        const int quantLevels = (1 << bits) - 1;
-        if (quantLevels <= 0) return (x >= 0.0f) ? 1.0f : -1.0f;
-        // Map [-1,1] to [0,1], quantize with floor+bias, map back
+        if (std::abs(x) < kSilenceThreshold) return 0.0f;
+        if (quantLevels <= 2.5f) return (x >= 0.0f) ? 1.0f : -1.0f;
         const float norm = x * 0.5f + 0.5f;
-        const float q = std::floor(norm * static_cast<float>(quantLevels) + bias);
-        const float crushed = (juce::jlimit(0.0f, static_cast<float>(quantLevels), q) / static_cast<float>(quantLevels)) * 2.0f - 1.0f;
+        const float q = std::floor(norm * quantLevels + bias);
+        const float crushed = (juce::jlimit(0.0f, quantLevels, q) / quantLevels) * 2.0f - 1.0f;
         return juce::jlimit(-1.5f, 1.5f, crushed);
     }
 }
@@ -78,10 +79,9 @@ void SpaceDustBitCrusher::process(juce::AudioBuffer<float>& buffer)
         const float amount = juce::jlimit(0.0f, 1.0f, smoothedAmount_.getNextValue());
         const float rateParam = juce::jlimit(0.0f, 1.0f, smoothedRate_.getNextValue());
 
-        // Bit depth: 1-8 bits. Power curve (0.35) so Amount responds immediately: 0.15≈5bits, 0.35≈4bits, 0.6≈3bits
-        const float effectiveAmount = std::pow(juce::jmax(0.001f, amount), 0.35f);
-        const float bitsFloat = 1.0f + (1.0f - effectiveAmount) * 7.0f;
-        const int bits = juce::jlimit(1, 8, static_cast<int>(bitsFloat + 0.5f));
+        // Continuous quantization: amount 0 = 4096 levels (clean), amount 1 = 2 levels (1-bit crush)
+        // Exponential curve so most of the knob travel is in the crunchy sweet spot
+        const float quantLevels = kMaxLevels * std::pow(kMinLevels / kMaxLevels, amount);
 
         // Rate: 0 = full rate (quantize every sample), 1 = ~1 kHz hold (heavy crush)
         // normfreq 0.023 = 1kHz at 44.1k, 0.18 = 8kHz
@@ -96,8 +96,7 @@ void SpaceDustBitCrusher::process(juce::AudioBuffer<float>& buffer)
             float crushed;
             if (rateParam < rateThreshold)
             {
-                // Full rate: quantize every sample (no hold)
-                crushed = quantizeHarsh(dry, bits, kDcBias);
+                crushed = quantizeHarsh(dry, quantLevels, kDcBias);
             }
             else
             {
@@ -113,7 +112,7 @@ void SpaceDustBitCrusher::process(juce::AudioBuffer<float>& buffer)
                 {
                     phase -= 1.0f;
                     if (phase < 0.0f) phase = 0.0f;
-                    held = quantizeHarsh(dry, bits, kDcBias);
+                    held = quantizeHarsh(dry, quantLevels, kDcBias);
                 }
 
                 if (ch == 0) holdSampleL_ = held;

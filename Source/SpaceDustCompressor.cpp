@@ -116,11 +116,11 @@ void SpaceDustCompressor::process(juce::AudioBuffer<float>& buffer)
     const float attackCoeff = msToCoeff(effectiveAttackMs);
     const float releaseCoeff = msToCoeff(effectiveReleaseMs);
 
-    // Auto-release coefficients (LA-2A always uses program-dependent release)
-    const float autoReleaseFast = msToCoeff(type == 1 ? 30.0f : (type == 2 ? 40.0f : 50.0f));
-    const float autoReleaseSlow = msToCoeff(type == 1 ? 400.0f : (type == 2 ? 500.0f : 600.0f));
-    const float autoReleaseAttack = msToCoeff(10.0f);
-    // LA-2A always uses auto-release (it's inherent to the opto circuit)
+    // Auto-release: wide fast/slow range for audible program-dependent behavior
+    const float autoReleaseFast = msToCoeff(type == 1 ? 15.0f : (type == 2 ? 25.0f : 20.0f));
+    const float autoReleaseSlow = msToCoeff(type == 1 ? 800.0f : (type == 2 ? 1000.0f : 1200.0f));
+    const float autoReleaseAttack = msToCoeff(5.0f);
+    const float autoEnvDecay = msToCoeff(type == 1 ? 80.0f : (type == 2 ? 120.0f : 100.0f));
     const bool useAutoRelease = params_.autoRelease || (type == 2);
 
     // Make a dry copy for parallel mix
@@ -160,9 +160,9 @@ void SpaceDustCompressor::process(juce::AudioBuffer<float>& buffer)
                 if (grAmount > autoEnv)
                     autoEnv = autoReleaseAttack * autoEnv + (1.0f - autoReleaseAttack) * grAmount;
                 else
-                    autoEnv = autoReleaseSlow * autoEnv;
+                    autoEnv = autoEnvDecay * autoEnv;
 
-                float blend = juce::jlimit(0.0f, 1.0f, autoEnv * 5.0f);
+                float blend = juce::jlimit(0.0f, 1.0f, autoEnv * 10.0f);
                 float adaptiveRelease = autoReleaseFast * (1.0f - blend) + autoReleaseSlow * blend;
                 envelope = adaptiveRelease * envelope + (1.0f - adaptiveRelease) * inputPeakLin;
             }

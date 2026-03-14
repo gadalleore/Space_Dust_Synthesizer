@@ -143,7 +143,7 @@ public:
     SpectrumAnalyserComponent* getSpectrumAnalyser() { return spectrumAnalyser.get(); }
 
 private:
-    void drawLissajous(juce::Graphics& g, juce::Rectangle<int> area, const juce::AudioBuffer<float>& buffer);
+    void drawLissajous(juce::Graphics& g, juce::Rectangle<int> area, const juce::AudioBuffer<float>& buffer, int validSamples = -1);
 
     // Glow overlay - draws on top of Oscilloscope/Spectrum for cleaner look
     class GlowOverlayComponent : public juce::Component

@@ -791,16 +791,19 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         float envelope = adsr.getNextSample();
         float filterEnvOutput = filterAdsr.getNextSample();
         
-        // Modulate filter cutoff with filter envelope and LFO
-        // Envelope: baseCutoff * (1 + envMod), envMod from filter ADSR
-        // LFO: multiplicative with 0.5 scale so lfoFactor ranges 0..2 (not 0..3)
-        // Prevents hitting 20 kHz ceiling too soon so knob stays effective when turned up
-        const float scalingFactor = 1.4f;
+        // Modulate filter cutoff with filter envelope and LFO.
+        // Logarithmic sweep: at 100% amount the envelope opens from baseCutoff to 20 kHz.
+        // Working in log-frequency gives a perceptually even sweep across octaves.
+        const float logMin = std::log(20.0f);
+        const float logMax = std::log(20000.0f);
+        float logBase = std::log(juce::jmax(20.0f, baseFilterCutoff));
+        float envRange = (logMax - logBase) * (filterEnvAmount / 100.0f);
+        float logModulated = logBase + filterEnvOutput * envRange;
+
         const float lfoFilterScale = 0.5f;
-        float envModulation = (filterEnvOutput - 0.5f) * 2.0f * (filterEnvAmount / 100.0f) * scalingFactor;
         float lfoFactor = juce::jmax(0.0f, 1.0f + filterMod * lfoFilterScale);
-        float modulatedCutoff = baseFilterCutoff * (1.0f + envModulation) * lfoFactor;
-        modulatedCutoff = juce::jlimit(20.0f, 20000.0f, modulatedCutoff);  // Clamp to valid range
+        float modulatedCutoff = std::exp(juce::jlimit(logMin, logMax, logModulated)) * lfoFactor;
+        modulatedCutoff = juce::jlimit(20.0f, 20000.0f, modulatedCutoff);
         filter.setCutoffFrequency(modulatedCutoff);
         
         // Check if envelope has completed (release phase finished)
@@ -1174,7 +1177,7 @@ void SynthVoice::setSubOscLevel(float level)
 
 void SynthVoice::setSubOscCoarse(float semitones)
 {
-    subOscCoarse = juce::jlimit(-24.0f, 24.0f, semitones);
+    subOscCoarse = juce::jlimit(-36.0f, 36.0f, semitones);
 }
 
 void SynthVoice::setLowShelfAmount(float amount)

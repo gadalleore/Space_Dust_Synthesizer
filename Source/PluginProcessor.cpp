@@ -151,8 +151,9 @@ namespace
         return result;
     }
     
-    // Append to debug log (for filter sync crash isolation)
-    void appendFilterSyncLog(const juce::String& msg)
+    // Release-safe file logger. Works in both Debug and Release builds.
+    // Rate-limited variant available via logToFileThrottled().
+    void logToFile(const juce::String& msg)
     {
         try
         {
@@ -164,6 +165,23 @@ namespace
         }
         catch (...) {}
     }
+
+    // Throttled version: logs at most once per minIntervalMs globally.
+    // Uses a single atomic timestamp -- thread-safe for calls from any thread
+    // (audio, message, or host background threads during automation).
+    void logToFileThrottled(const juce::String& /*tag*/, const juce::String& msg, int minIntervalMs = 500)
+    {
+        static std::atomic<juce::uint32> lastLogTime{0};
+        auto now = juce::Time::getMillisecondCounter();
+        auto last = lastLogTime.load(std::memory_order_relaxed);
+        if ((now - last) < static_cast<juce::uint32>(minIntervalMs))
+            return;
+        lastLogTime.store(now, std::memory_order_relaxed);
+        logToFile(msg);
+    }
+
+    // Legacy alias
+    void appendFilterSyncLog(const juce::String& msg) { logToFile(msg); }
 }
 
 //==============================================================================
@@ -296,24 +314,9 @@ SpaceDustAudioProcessor::SpaceDustAudioProcessor()
         apvts.addParameterListener(juce::ParameterID{"envRelease", 1}.getParamID(), this);
         DBG("Space Dust: Added listener for envRelease");
         
-        // Add listeners for LFO retrigger parameters
         apvts.addParameterListener(juce::ParameterID{"lfo1Retrigger", 1}.getParamID(), this);
         apvts.addParameterListener(juce::ParameterID{"lfo2Retrigger", 1}.getParamID(), this);
-        apvts.addParameterListener(juce::ParameterID{"modFilter1LinkToMaster", 1}.getParamID(), this);
-        apvts.addParameterListener(juce::ParameterID{"modFilter2LinkToMaster", 1}.getParamID(), this);
-        apvts.addParameterListener(juce::ParameterID{"modFilter1Mode", 1}.getParamID(), this);
-        apvts.addParameterListener(juce::ParameterID{"modFilter1Cutoff", 1}.getParamID(), this);
-        apvts.addParameterListener(juce::ParameterID{"modFilter1Resonance", 1}.getParamID(), this);
-        apvts.addParameterListener(juce::ParameterID{"warmSaturationMod1", 1}.getParamID(), this);
-        apvts.addParameterListener(juce::ParameterID{"modFilter2Mode", 1}.getParamID(), this);
-        apvts.addParameterListener(juce::ParameterID{"modFilter2Cutoff", 1}.getParamID(), this);
-        apvts.addParameterListener(juce::ParameterID{"modFilter2Resonance", 1}.getParamID(), this);
-        apvts.addParameterListener(juce::ParameterID{"warmSaturationMod2", 1}.getParamID(), this);
-        apvts.addParameterListener(juce::ParameterID{"filterMode", 1}.getParamID(), this);
-        apvts.addParameterListener(juce::ParameterID{"filterCutoff", 1}.getParamID(), this);
-        apvts.addParameterListener(juce::ParameterID{"filterResonance", 1}.getParamID(), this);
-        apvts.addParameterListener(juce::ParameterID{"warmSaturationMaster", 1}.getParamID(), this);
-        DBG("Space Dust: Added listeners for LFO retrigger and mod filter");
+        DBG("Space Dust: Added listeners for LFO retrigger");
     }
     catch (const std::exception& e)
     {
@@ -378,40 +381,27 @@ SpaceDustAudioProcessor::SpaceDustAudioProcessor()
     }
     
     //==============================================================================
-    // -- DEBUG: Processor Constructor End --
     DBG("Space Dust: Processor ctor END");
+    logToFile("Processor constructed");
 }
 
 SpaceDustAudioProcessor::~SpaceDustAudioProcessor()
 {
-    //==============================================================================
-    // -- DEBUG: Leak Detection - Cleanup Start --
+    logToFile("Destructor START");
     DBG("Space Dust: Destructor started - cleaning up resources");
+
+    // Cancel any pending async filter sync before removing listeners.
+    // This prevents handleAsyncUpdate() from firing during/after destruction.
+    cancelPendingUpdate();
+    logToFile("Destructor: cancelled pending async updates");
     
-    //==============================================================================
-    // -- Cleanup: Remove Parameter Listeners FIRST --
-    // CRITICAL: Remove listeners before destruction to prevent crashes in Ableton Live
-    // when plugin is unloaded. This ensures no callbacks fire during destruction.
-    // Order is critical: listeners must be removed before clearing voices/sounds
     DBG("Space Dust: Removing parameter listeners");
     apvts.removeParameterListener(juce::ParameterID{"envAttack", 1}.getParamID(), this);
     apvts.removeParameterListener(juce::ParameterID{"envDecay", 1}.getParamID(), this);
     apvts.removeParameterListener(juce::ParameterID{"envSustain", 1}.getParamID(), this);
     apvts.removeParameterListener(juce::ParameterID{"envRelease", 1}.getParamID(), this);
-    apvts.removeParameterListener(juce::ParameterID{"modFilter1LinkToMaster", 1}.getParamID(), this);
-    apvts.removeParameterListener(juce::ParameterID{"modFilter2LinkToMaster", 1}.getParamID(), this);
-    apvts.removeParameterListener(juce::ParameterID{"modFilter1Mode", 1}.getParamID(), this);
-    apvts.removeParameterListener(juce::ParameterID{"modFilter1Cutoff", 1}.getParamID(), this);
-    apvts.removeParameterListener(juce::ParameterID{"modFilter1Resonance", 1}.getParamID(), this);
-    apvts.removeParameterListener(juce::ParameterID{"warmSaturationMod1", 1}.getParamID(), this);
-    apvts.removeParameterListener(juce::ParameterID{"modFilter2Mode", 1}.getParamID(), this);
-    apvts.removeParameterListener(juce::ParameterID{"modFilter2Cutoff", 1}.getParamID(), this);
-    apvts.removeParameterListener(juce::ParameterID{"modFilter2Resonance", 1}.getParamID(), this);
-    apvts.removeParameterListener(juce::ParameterID{"warmSaturationMod2", 1}.getParamID(), this);
-    apvts.removeParameterListener(juce::ParameterID{"filterMode", 1}.getParamID(), this);
-    apvts.removeParameterListener(juce::ParameterID{"filterCutoff", 1}.getParamID(), this);
-    apvts.removeParameterListener(juce::ParameterID{"filterResonance", 1}.getParamID(), this);
-    apvts.removeParameterListener(juce::ParameterID{"warmSaturationMaster", 1}.getParamID(), this);
+    apvts.removeParameterListener(juce::ParameterID{"lfo1Retrigger", 1}.getParamID(), this);
+    apvts.removeParameterListener(juce::ParameterID{"lfo2Retrigger", 1}.getParamID(), this);
     DBG("Space Dust: Parameter listeners removed");
     
     //==============================================================================
@@ -470,9 +460,8 @@ SpaceDustAudioProcessor::~SpaceDustAudioProcessor()
         });
     }
     
-    //==============================================================================
-    // -- DEBUG: Leak Detection - Cleanup Complete --
     DBG("Space Dust: Destructor cleanup complete - all resources released");
+    logToFile("Destructor END - all resources released");
 }
 
 //==============================================================================
@@ -545,9 +534,7 @@ void SpaceDustAudioProcessor::changeProgramName(int index, const juce::String& n
 
 void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    //==============================================================================
-    // -- DEBUG: prepareToPlay START --
-    // CRITICAL: Initialize log file here (moved from constructor to avoid early crashes)
+    logToFile("prepareToPlay START - sr=" + juce::String(sampleRate) + ", block=" + juce::String(samplesPerBlock));
     try
     {
         juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -887,20 +874,24 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     int lfo1Target = static_cast<int>(*apvts.getRawParameterValue("lfo1Target"));
     int lfo2Target = static_cast<int>(*apvts.getRawParameterValue("lfo2Target"));
     
-    // Mod tab filters (when unlinked, use independent params; when linked, use master)
     bool modFilter1Show = *apvts.getRawParameterValue("modFilter1Show") > 0.5f;
     bool modFilter2Show = *apvts.getRawParameterValue("modFilter2Show") > 0.5f;
     bool modFilter1Link = *apvts.getRawParameterValue("modFilter1LinkToMaster") > 0.5f;
     bool modFilter2Link = *apvts.getRawParameterValue("modFilter2LinkToMaster") > 0.5f;
-    int modFilter1Mode = (int)*apvts.getRawParameterValue("modFilter1Mode");
-    float modFilter1Cutoff = *apvts.getRawParameterValue("modFilter1Cutoff");
-    float modFilter1Resonance = *apvts.getRawParameterValue("modFilter1Resonance");
-    int modFilter2Mode = (int)*apvts.getRawParameterValue("modFilter2Mode");
-    float modFilter2Cutoff = *apvts.getRawParameterValue("modFilter2Cutoff");
-    float modFilter2Resonance = *apvts.getRawParameterValue("modFilter2Resonance");
     bool warmSaturationMaster = *apvts.getRawParameterValue("warmSaturationMaster") > 0.5f;
-    bool warmSaturationMod1 = *apvts.getRawParameterValue("warmSaturationMod1") > 0.5f;
-    bool warmSaturationMod2 = *apvts.getRawParameterValue("warmSaturationMod2") > 0.5f;
+
+    // When linked, use master filter values directly instead of mod filter values.
+    // This avoids calling setValueNotifyingHost for sync, which triggers performEdit
+    // in the VST3 wrapper and causes Ableton to grey out automation lanes.
+    int modFilter1Mode = modFilter1Link ? filterMode : (int)*apvts.getRawParameterValue("modFilter1Mode");
+    float modFilter1Cutoff = modFilter1Link ? filterCutoff : *apvts.getRawParameterValue("modFilter1Cutoff");
+    float modFilter1Resonance = modFilter1Link ? filterResonance : *apvts.getRawParameterValue("modFilter1Resonance");
+    bool warmSaturationMod1 = modFilter1Link ? warmSaturationMaster : *apvts.getRawParameterValue("warmSaturationMod1") > 0.5f;
+
+    int modFilter2Mode = modFilter2Link ? filterMode : (int)*apvts.getRawParameterValue("modFilter2Mode");
+    float modFilter2Cutoff = modFilter2Link ? filterCutoff : *apvts.getRawParameterValue("modFilter2Cutoff");
+    float modFilter2Resonance = modFilter2Link ? filterResonance : *apvts.getRawParameterValue("modFilter2Resonance");
+    bool warmSaturationMod2 = modFilter2Link ? warmSaturationMaster : *apvts.getRawParameterValue("warmSaturationMod2") > 0.5f;
     
     // Filter envelope parameters (convert normalized 0-1 to actual seconds)
     float filterEnvAttack = 0.01f, filterEnvDecay = 0.8f, filterEnvRelease = 3.0f;
@@ -910,7 +901,6 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
         filterEnvDecay = p->convertFrom0to1(*apvts.getRawParameterValue("filterEnvDecay"));
     if (auto* p = apvts.getParameter("filterEnvRelease"))
         filterEnvRelease = p->convertFrom0to1(*apvts.getRawParameterValue("filterEnvRelease"));
-    float filterEnvSustain = *apvts.getRawParameterValue("filterEnvSustain");
     float filterEnvAmount = *apvts.getRawParameterValue("filterEnvAmount");
     
     // ADSR parameters: Use atomic values (already converted from normalized to seconds/level)
@@ -984,7 +974,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setWarmSaturationMod2(warmSaturationMod2);
             voice->setFilterEnvAttack(filterEnvAttack);
             voice->setFilterEnvDecay(filterEnvDecay);
-            voice->setFilterEnvSustain(filterEnvSustain);
+            voice->setFilterEnvSustain(0.0f);
             voice->setFilterEnvRelease(filterEnvRelease);
             voice->setFilterEnvAmount(filterEnvAmount);
             voice->setEnvAttack(envAttack);
@@ -1025,30 +1015,25 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
 */
 void SpaceDustAudioProcessor::parameterChanged(const juce::String& parameterID, float newValue)
 {
-    //==============================================================================
-    // -- Parameter Change Handler --
-    // CRITICAL: Use ParameterID::getParamID() for getParameter() calls to prevent string assertions
-    // Based on JUCE forums 2023-2025: Using ParameterID consistently prevents juce_String.cpp:327 assertions
-    
     if (parameterID == juce::ParameterID{"envAttack", 1}.getParamID())
     {
-        // JUCE parameterChanged passes DENORMALISED value (already in seconds)
         currentAttackTime.store(juce::jlimit(0.01f, 20.0f, newValue));
+        logToFileThrottled("envAttack", "ADSR attack=" + juce::String(newValue, 4) + "s");
     }
     else if (parameterID == juce::ParameterID{"envDecay", 1}.getParamID())
     {
-        // JUCE parameterChanged passes DENORMALISED value (already in seconds)
         currentDecayTime.store(juce::jlimit(0.01f, 20.0f, newValue));
+        logToFileThrottled("envDecay", "ADSR decay=" + juce::String(newValue, 4) + "s");
     }
     else if (parameterID == juce::ParameterID{"envSustain", 1}.getParamID())
     {
-        // Sustain is already 0.0-1.0 (linear), just store directly
         currentSustainLevel.store(newValue);
+        logToFileThrottled("envSustain", "ADSR sustain=" + juce::String(newValue, 4));
     }
     else if (parameterID == juce::ParameterID{"envRelease", 1}.getParamID())
     {
-        // JUCE parameterChanged passes DENORMALISED value (already in seconds)
         currentReleaseTime.store(juce::jlimit(0.01f, 20.0f, newValue));
+        logToFileThrottled("envRelease", "ADSR release=" + juce::String(newValue, 4) + "s");
     }
     else if (parameterID == juce::ParameterID{"lfo1Retrigger", 1}.getParamID())
     {
@@ -1058,204 +1043,26 @@ void SpaceDustAudioProcessor::parameterChanged(const juce::String& parameterID, 
     {
         lfo2Retrigger.store(newValue > 0.5f);
     }
-    else if (parameterID == juce::ParameterID{"modFilter1LinkToMaster", 1}.getParamID())
-    {
-        if (newValue > 0.5f)  // Switching to linked - defer sync to next message loop (avoids reentrancy crash)
-        {
-            appendFilterSyncLog("parameterChanged: modFilter1 Link ON - deferring sync");
-            juce::Timer::callAfterDelay(0, [this]() {
-                try
-                {
-                    appendFilterSyncLog("parameterChanged: modFilter1 Link sync START");
-                    if (filterSyncInProgress) { appendFilterSyncLog("parameterChanged: modFilter1 Link sync SKIP"); return; }
-                    filterSyncInProgress = true;
-                    if (auto* p = apvts.getParameter(juce::ParameterID{"filterMode", 1}.getParamID()))
-                        if (auto* q = apvts.getParameter(juce::ParameterID{"modFilter1Mode", 1}.getParamID()))
-                            q->setValueNotifyingHost(p->getValue());
-                    if (auto* p = apvts.getParameter(juce::ParameterID{"filterCutoff", 1}.getParamID()))
-                        if (auto* q = apvts.getParameter(juce::ParameterID{"modFilter1Cutoff", 1}.getParamID()))
-                            q->setValueNotifyingHost(p->getValue());
-                    if (auto* p = apvts.getParameter(juce::ParameterID{"filterResonance", 1}.getParamID()))
-                        if (auto* q = apvts.getParameter(juce::ParameterID{"modFilter1Resonance", 1}.getParamID()))
-                            q->setValueNotifyingHost(p->getValue());
-                    if (auto* p = apvts.getParameter(juce::ParameterID{"warmSaturationMaster", 1}.getParamID()))
-                        if (auto* q = apvts.getParameter(juce::ParameterID{"warmSaturationMod1", 1}.getParamID()))
-                            q->setValueNotifyingHost(p->getValue());
-                    filterSyncInProgress = false;
-                    appendFilterSyncLog("parameterChanged: modFilter1 Link sync DONE");
-                }
-                catch (const std::exception& e)
-                {
-                    filterSyncInProgress = false;
-                    appendFilterSyncLog("parameterChanged: modFilter1 Link sync EXCEPTION: " + juce::String(e.what()));
-                }
-                catch (...) { filterSyncInProgress = false; appendFilterSyncLog("parameterChanged: modFilter1 Link sync EXCEPTION"); }
-            });
-        }
-    }
-    else if (parameterID == juce::ParameterID{"filterMode", 1}.getParamID() ||
-             parameterID == juce::ParameterID{"filterCutoff", 1}.getParamID() ||
-             parameterID == juce::ParameterID{"filterResonance", 1}.getParamID() ||
-             parameterID == juce::ParameterID{"warmSaturationMaster", 1}.getParamID())
-    {
-        // Defer main filter -> mod filter sync to next message loop (avoids crash when moving main filter)
-        appendFilterSyncLog("parameterChanged: main filter (" + parameterID + ") - deferring sync");
-        juce::Timer::callAfterDelay(0, [this]() {
-            try
-            {
-                appendFilterSyncLog("parameterChanged: main filter deferred sync START");
-                if (filterSyncInProgress) { appendFilterSyncLog("parameterChanged: main filter sync SKIP (guard)"); return; }
-                filterSyncInProgress = true;
-                if (*apvts.getRawParameterValue("modFilter1LinkToMaster") > 0.5f)
-                {
-                    if (auto* p = apvts.getParameter(juce::ParameterID{"filterMode", 1}.getParamID()))
-                        if (auto* q = apvts.getParameter(juce::ParameterID{"modFilter1Mode", 1}.getParamID()))
-                            q->setValueNotifyingHost(p->getValue());
-                    if (auto* p = apvts.getParameter(juce::ParameterID{"filterCutoff", 1}.getParamID()))
-                        if (auto* q = apvts.getParameter(juce::ParameterID{"modFilter1Cutoff", 1}.getParamID()))
-                            q->setValueNotifyingHost(p->getValue());
-                    if (auto* p = apvts.getParameter(juce::ParameterID{"filterResonance", 1}.getParamID()))
-                        if (auto* q = apvts.getParameter(juce::ParameterID{"modFilter1Resonance", 1}.getParamID()))
-                            q->setValueNotifyingHost(p->getValue());
-                    if (auto* p = apvts.getParameter(juce::ParameterID{"warmSaturationMaster", 1}.getParamID()))
-                        if (auto* q = apvts.getParameter(juce::ParameterID{"warmSaturationMod1", 1}.getParamID()))
-                            q->setValueNotifyingHost(p->getValue());
-                }
-                if (*apvts.getRawParameterValue("modFilter2LinkToMaster") > 0.5f)
-                {
-                    if (auto* p = apvts.getParameter(juce::ParameterID{"filterMode", 1}.getParamID()))
-                        if (auto* q = apvts.getParameter(juce::ParameterID{"modFilter2Mode", 1}.getParamID()))
-                            q->setValueNotifyingHost(p->getValue());
-                    if (auto* p = apvts.getParameter(juce::ParameterID{"filterCutoff", 1}.getParamID()))
-                        if (auto* q = apvts.getParameter(juce::ParameterID{"modFilter2Cutoff", 1}.getParamID()))
-                            q->setValueNotifyingHost(p->getValue());
-                    if (auto* p = apvts.getParameter(juce::ParameterID{"filterResonance", 1}.getParamID()))
-                        if (auto* q = apvts.getParameter(juce::ParameterID{"modFilter2Resonance", 1}.getParamID()))
-                            q->setValueNotifyingHost(p->getValue());
-                    if (auto* p = apvts.getParameter(juce::ParameterID{"warmSaturationMaster", 1}.getParamID()))
-                        if (auto* q = apvts.getParameter(juce::ParameterID{"warmSaturationMod2", 1}.getParamID()))
-                            q->setValueNotifyingHost(p->getValue());
-                }
-                filterSyncInProgress = false;
-                appendFilterSyncLog("parameterChanged: main filter deferred sync DONE");
-            }
-            catch (const std::exception& e)
-            {
-                filterSyncInProgress = false;
-                appendFilterSyncLog("parameterChanged: main filter sync EXCEPTION: " + juce::String(e.what()));
-            }
-            catch (...)
-            {
-                filterSyncInProgress = false;
-                appendFilterSyncLog("parameterChanged: main filter sync EXCEPTION: unknown");
-            }
-        });
-    }
-    else if (parameterID == juce::ParameterID{"modFilter2LinkToMaster", 1}.getParamID())
-    {
-        if (newValue > 0.5f)  // Switching to linked - defer sync to next message loop (avoids reentrancy crash)
-        {
-            appendFilterSyncLog("parameterChanged: modFilter2 Link ON - deferring sync");
-            juce::Timer::callAfterDelay(0, [this]() {
-                try
-                {
-                    appendFilterSyncLog("parameterChanged: modFilter2 Link sync START");
-                    if (filterSyncInProgress) { appendFilterSyncLog("parameterChanged: modFilter2 Link sync SKIP"); return; }
-                    filterSyncInProgress = true;
-                    if (auto* p = apvts.getParameter(juce::ParameterID{"filterMode", 1}.getParamID()))
-                        if (auto* q = apvts.getParameter(juce::ParameterID{"modFilter2Mode", 1}.getParamID()))
-                            q->setValueNotifyingHost(p->getValue());
-                    if (auto* p = apvts.getParameter(juce::ParameterID{"filterCutoff", 1}.getParamID()))
-                        if (auto* q = apvts.getParameter(juce::ParameterID{"modFilter2Cutoff", 1}.getParamID()))
-                            q->setValueNotifyingHost(p->getValue());
-                    if (auto* p = apvts.getParameter(juce::ParameterID{"filterResonance", 1}.getParamID()))
-                        if (auto* q = apvts.getParameter(juce::ParameterID{"modFilter2Resonance", 1}.getParamID()))
-                            q->setValueNotifyingHost(p->getValue());
-                    if (auto* p = apvts.getParameter(juce::ParameterID{"warmSaturationMaster", 1}.getParamID()))
-                        if (auto* q = apvts.getParameter(juce::ParameterID{"warmSaturationMod2", 1}.getParamID()))
-                            q->setValueNotifyingHost(p->getValue());
-                    filterSyncInProgress = false;
-                    appendFilterSyncLog("parameterChanged: modFilter2 Link sync DONE");
-                }
-                catch (const std::exception& e)
-                {
-                    filterSyncInProgress = false;
-                    appendFilterSyncLog("parameterChanged: modFilter2 Link sync EXCEPTION: " + juce::String(e.what()));
-                }
-                catch (...) { filterSyncInProgress = false; appendFilterSyncLog("parameterChanged: modFilter2 Link sync EXCEPTION"); }
-            });
-        }
-    }
-    // When Link to Master is ON: copy mod filter changes to master (so user can edit master from mod tab)
-    // Skip if filterSyncInProgress (we're being re-entered from master->modFilter sync - prevents crash)
-    else if (!filterSyncInProgress &&
-             (parameterID == juce::ParameterID{"modFilter1Mode", 1}.getParamID() ||
-              parameterID == juce::ParameterID{"modFilter1Cutoff", 1}.getParamID() ||
-              parameterID == juce::ParameterID{"modFilter1Resonance", 1}.getParamID() ||
-              parameterID == juce::ParameterID{"warmSaturationMod1", 1}.getParamID()))
-    {
-        if (*apvts.getRawParameterValue("modFilter1LinkToMaster") > 0.5f)
-        {
-            try
-            {
-                appendFilterSyncLog("parameterChanged: modFilter1 -> master (" + parameterID + ")");
-                if (auto* p = apvts.getParameter(juce::ParameterID{"modFilter1Mode", 1}.getParamID()))
-                    if (auto* q = apvts.getParameter(juce::ParameterID{"filterMode", 1}.getParamID()))
-                        q->setValueNotifyingHost(p->getValue());
-                if (auto* p = apvts.getParameter(juce::ParameterID{"modFilter1Cutoff", 1}.getParamID()))
-                    if (auto* q = apvts.getParameter(juce::ParameterID{"filterCutoff", 1}.getParamID()))
-                        q->setValueNotifyingHost(p->getValue());
-                if (auto* p = apvts.getParameter(juce::ParameterID{"modFilter1Resonance", 1}.getParamID()))
-                    if (auto* q = apvts.getParameter(juce::ParameterID{"filterResonance", 1}.getParamID()))
-                        q->setValueNotifyingHost(p->getValue());
-                if (auto* p = apvts.getParameter(juce::ParameterID{"warmSaturationMod1", 1}.getParamID()))
-                    if (auto* q = apvts.getParameter(juce::ParameterID{"warmSaturationMaster", 1}.getParamID()))
-                        q->setValueNotifyingHost(p->getValue());
-            }
-            catch (const std::exception& e)
-            {
-                appendFilterSyncLog("parameterChanged: modFilter1->master EXCEPTION: " + juce::String(e.what()));
-            }
-            catch (...) { appendFilterSyncLog("parameterChanged: modFilter1->master EXCEPTION"); }
-        }
-    }
-    else if (!filterSyncInProgress &&
-             (parameterID == juce::ParameterID{"modFilter2Mode", 1}.getParamID() ||
-              parameterID == juce::ParameterID{"modFilter2Cutoff", 1}.getParamID() ||
-              parameterID == juce::ParameterID{"modFilter2Resonance", 1}.getParamID() ||
-              parameterID == juce::ParameterID{"warmSaturationMod2", 1}.getParamID()))
-    {
-        if (*apvts.getRawParameterValue("modFilter2LinkToMaster") > 0.5f)
-        {
-            try
-            {
-                appendFilterSyncLog("parameterChanged: modFilter2 -> master (" + parameterID + ")");
-                if (auto* p = apvts.getParameter(juce::ParameterID{"modFilter2Mode", 1}.getParamID()))
-                    if (auto* q = apvts.getParameter(juce::ParameterID{"filterMode", 1}.getParamID()))
-                        q->setValueNotifyingHost(p->getValue());
-                if (auto* p = apvts.getParameter(juce::ParameterID{"modFilter2Cutoff", 1}.getParamID()))
-                    if (auto* q = apvts.getParameter(juce::ParameterID{"filterCutoff", 1}.getParamID()))
-                        q->setValueNotifyingHost(p->getValue());
-                if (auto* p = apvts.getParameter(juce::ParameterID{"modFilter2Resonance", 1}.getParamID()))
-                    if (auto* q = apvts.getParameter(juce::ParameterID{"filterResonance", 1}.getParamID()))
-                        q->setValueNotifyingHost(p->getValue());
-                if (auto* p = apvts.getParameter(juce::ParameterID{"warmSaturationMod2", 1}.getParamID()))
-                    if (auto* q = apvts.getParameter(juce::ParameterID{"warmSaturationMaster", 1}.getParamID()))
-                        q->setValueNotifyingHost(p->getValue());
-            }
-            catch (const std::exception& e)
-            {
-                appendFilterSyncLog("parameterChanged: modFilter2->master EXCEPTION: " + juce::String(e.what()));
-            }
-            catch (...) { appendFilterSyncLog("parameterChanged: modFilter2->master EXCEPTION"); }
-        }
-    }
+    // Filter link params: no sync needed. updateVoicesWithParameters() reads master
+    // values directly when linked, bypassing the mod filter parameters entirely.
+    // This avoids setValueNotifyingHost which triggers performEdit in the VST3 wrapper,
+    // causing Ableton to grey out automation lanes.
+}
+
+//==============================================================================
+// -- AsyncUpdater (kept for future use, currently no-op) --
+
+void SpaceDustAudioProcessor::handleAsyncUpdate()
+{
+    // Filter sync is now handled at the voice level in updateVoicesWithParameters():
+    // when a mod filter is linked to master, the voice uses master filter values directly.
+    // No parameter-level sync is needed, which avoids setValueNotifyingHost calls
+    // that were causing automation to grey out in Ableton (VST3 performEdit issue).
 }
 
 void SpaceDustAudioProcessor::releaseResources()
 {
-    //==============================================================================
-    // -- DEBUG: Leak Detection - releaseResources() Start --
+    logToFile("releaseResources START");
     DBG("Space Dust: releaseResources() called - starting cleanup");
     
     //==============================================================================
@@ -1364,9 +1171,8 @@ void SpaceDustAudioProcessor::releaseResources()
     // Note: DSP objects (ADSR, filters) in voices are automatically reset
     // when voices are cleared and recreated in prepareToPlay()
     
-    //==============================================================================
-    // -- DEBUG: Leak Detection - releaseResources() Complete --
     DBG("Space Dust: releaseResources() cleanup complete");
+    logToFile("releaseResources END");
 }
 
 #ifndef JucePlugin_PreferredChannelConfigurations
@@ -2489,6 +2295,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             dest.copyFrom(1, 0, buffer, 1, 0, numSamples);
             if (numSamples < dest.getNumSamples())
                 dest.clear(numSamples, dest.getNumSamples() - numSamples);
+            goniometerValidSamples.store(numSamples, std::memory_order_release);
             goniometerReadIndex.store(writeIdx, std::memory_order_release);
         }
     }
@@ -2923,7 +2730,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"subOscCoarse", 1}, "Sub Osc Coarse",
-            juce::NormalisableRange<float>(-24.0f, 24.0f, 1.0f), 0.0f),
+            juce::NormalisableRange<float>(-36.0f, 36.0f, 1.0f), 0.0f),
         "subOscCoarse");
     
     //==============================================================================

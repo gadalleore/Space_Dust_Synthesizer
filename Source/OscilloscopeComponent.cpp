@@ -54,14 +54,15 @@ void OscilloscopeComponent::drawBackground(juce::Graphics& g)
 }
 
 //==============================================================================
-void OscilloscopeComponent::update(const juce::AudioBuffer<float>& buffer)
+void OscilloscopeComponent::update(const juce::AudioBuffer<float>& buffer, int validSamples)
 {
     const int numCh = juce::jmin(2, buffer.getNumChannels());
-    const int numS = buffer.getNumSamples();
+    const int numS = (validSamples > 0) ? juce::jmin(validSamples, buffer.getNumSamples())
+                                        : buffer.getNumSamples();
     if (numCh < 1 || numS <= 0)
         return;
 
-    if (internalBuffer.getNumChannels() != numCh || internalBuffer.getNumSamples() < numS)
+    if (internalBuffer.getNumChannels() != numCh || internalBuffer.getNumSamples() != numS)
         internalBuffer.setSize(numCh, numS, false, true, true);
     internalBuffer.clear();
     for (int ch = 0; ch < numCh; ++ch)
