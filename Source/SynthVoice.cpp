@@ -1051,9 +1051,9 @@ void SynthVoice::setCurrentPlaybackSampleRate(double newRate)
         // Re-initialize DSP with new sample rate (in case sample rate changed)
         // This ensures filter and ADSR use the correct rate
         const juce::uint32 maxBlockSize = 512; // Safe maximum
-        filter.prepare({ newRate, maxBlockSize, 1 });
-        modFilter1.prepare({ newRate, maxBlockSize, 1 });
-        modFilter2.prepare({ newRate, maxBlockSize, 1 });
+        filter.prepare({ newRate, maxBlockSize, 2 });
+        modFilter1.prepare({ newRate, maxBlockSize, 2 });
+        modFilter2.prepare({ newRate, maxBlockSize, 2 });
         updateFilter();
         updateModFilter1();
         updateModFilter2();

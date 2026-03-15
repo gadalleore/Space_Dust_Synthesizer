@@ -1,4 +1,5 @@
 #include "SpaceDustLookAndFeel.h"
+#include "BinaryData.h"
 #include <juce_graphics/juce_graphics.h>
 
 //==============================================================================
@@ -6,14 +7,34 @@
 
 SpaceDustLookAndFeel::SpaceDustLookAndFeel()
 {
-    // Set refined cosmic color scheme - unified palette
     setColour(juce::TextButton::textColourOffId, labelCyan);
     setColour(juce::ComboBox::textColourId, labelCyan);
     setColour(juce::ComboBox::backgroundColourId, juce::Colour(0xff1a1a2f));
     setColour(juce::ComboBox::outlineColourId, juce::Colour(0xff3a3a5f));
     setColour(juce::Slider::textBoxTextColourId, valueCyan);
-    setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0x33000000));  // Subtle dark background
+    setColour(juce::Slider::textBoxBackgroundColourId, juce::Colour(0x33000000));
     setColour(juce::Slider::textBoxOutlineColourId, juce::Colour(0x22000000));
+
+    glitchGoblinTypeface = juce::Typeface::createSystemTypefaceFor(
+        BinaryData::GlitchGoblin_ttf, BinaryData::GlitchGoblin_ttfSize);
+
+    // Force a single consistent sans-serif for all body UI (avoids pixelated/monospace fallbacks)
+#if JUCE_WINDOWS
+    setDefaultSansSerifTypefaceName("Segoe UI");
+#elif JUCE_MAC
+    setDefaultSansSerifTypefaceName("Lucida Grande");
+#else
+    setDefaultSansSerifTypefaceName("Sans");
+#endif
+}
+
+//==============================================================================
+// -- Tab Bar: Semi-transparent background so edge glow shows through --
+
+void SpaceDustLookAndFeel::drawTabbedButtonBarBackground(juce::TabbedButtonBar&, juce::Graphics& g)
+{
+    // Mildly translucent (0x50 = ~31% opacity) so the parabolic glow shows at bottom of tabs
+    g.fillAll(juce::Colour(0x500a0a1f));
 }
 
 //==============================================================================
@@ -26,28 +47,13 @@ void SpaceDustLookAndFeel::drawLabel(juce::Graphics& g, juce::Label& label)
     if (!label.isBeingEdited())
     {
         auto alpha = label.isEnabled() ? 1.0f : 0.5f;
-        const juce::Font font(getLabelFont(label));
         
         // Cache label text once to avoid multiple getText() calls
-        // This prevents potential issues with string access during drawing
         const juce::String labelText = label.getText();
         
-        // Use consistent color for all text (except title)
-        juce::Colour textColour = labelCyan;  // Same color for all labels
-        bool isValueBox = (labelText.contains("st") || labelText.contains("Hz") ||
-                          labelText.contains("s") || labelText.contains("ct") ||
-                          labelText.contains("."));  // Numeric values
-        
-        if (isValueBox)
-        {
-            // Value readouts: same color, monospace font
-            g.setFont(juce::Font(juce::FontOptions("Consolas", 12.0f, juce::Font::plain)));
-        }
-        else
-        {
-            // Parameter labels: same color, bold font
-            g.setFont(juce::Font(juce::FontOptions(14.0f, juce::Font::bold)));
-        }
+        // Use consistent color and font for all labels (no content-based heuristics)
+        juce::Colour textColour = labelCyan;
+        juce::Font font = getBodyFont(12.0f, true);
         
         textColour = textColour.withAlpha(alpha);
         
@@ -78,13 +84,13 @@ void SpaceDustLookAndFeel::drawGroupComponentOutline(juce::Graphics& g, int widt
                                                      const juce::Justification& position,
                                                      juce::GroupComponent& group)
 {
-    const float textH = 17.0f;  // 16-18pt for group titles
+    const float textH = 12.0f;  // Standardized body font size
     const float indent = 3.0f;
     const float textEdgeGap = 4.0f;
     const float titleInset = 6.0f;  // Title padding from box edge
     auto cs = 5.0f;
 
-    juce::Font f(juce::FontOptions(textH, juce::Font::bold));
+    juce::Font f = getBodyFont(textH, true);
 
     juce::Path p;
     auto x = indent;
@@ -146,6 +152,7 @@ void SpaceDustLookAndFeel::drawGroupComponentOutline(juce::Graphics& g, int widt
     // Title inside box, upper-left corner
     if (text.isNotEmpty())
     {
+        g.setFont(f);
         auto textArea = juce::Rectangle<int>(static_cast<int>(textX),
                                             static_cast<int>(textY),
                                             static_cast<int>(textW + textEdgeGap * 2),
@@ -227,6 +234,7 @@ void SpaceDustLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButto
     auto textColour = isToggled ? labelCyan : labelCyan.withAlpha(0.8f);
     
     // Draw text with shadow
+    g.setFont(getBodyFont(12.0f, true));
     drawTextWithShadow(g, button.getButtonText(),
                       static_cast<int>(textArea.getX()),
                       static_cast<int>(textArea.getY()),
@@ -245,8 +253,90 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
                                             float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
                                             juce::Slider& slider)
 {
-    // Use default rotary slider drawing
-    LookAndFeel_V4::drawRotarySlider(g, x, y, width, height, sliderPos, rotaryStartAngle, rotaryEndAngle, slider);
+    const float radius   = (float)juce::jmin(width, height) * 0.5f - 4.0f;
+    const float centreX  = (float)x + (float)width  * 0.5f;
+    const float centreY  = (float)y + (float)height * 0.5f;
+    const float angle    = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
+
+    if (radius < 6.0f) return;
+
+    // --- Outer glow (soft bloom behind the knob) ---
+    {
+        const float glowRadius = radius + 6.0f;
+        juce::ColourGradient glow(knobGlowCyan.withAlpha((juce::uint8)30), centreX, centreY,
+                                  knobGlowCyan.withAlpha((juce::uint8)0),  centreX, centreY - glowRadius, true);
+        g.setGradientFill(glow);
+        g.fillEllipse(centreX - glowRadius, centreY - glowRadius, glowRadius * 2.0f, glowRadius * 2.0f);
+    }
+
+    // --- Knob body (radial gradient for 3-D look) ---
+    {
+        juce::ColourGradient body(knobBodyLight, centreX, centreY - radius * 0.35f,
+                                  knobBodyDark,  centreX, centreY + radius * 0.8f, false);
+        g.setGradientFill(body);
+        g.fillEllipse(centreX - radius, centreY - radius, radius * 2.0f, radius * 2.0f);
+    }
+
+    // --- Rim / bevel ring ---
+    {
+        const float rimThickness = juce::jmax(1.5f, radius * 0.06f);
+        juce::ColourGradient rim(knobRimLight, centreX, centreY - radius,
+                                 knobRimDark,  centreX, centreY + radius, false);
+        g.setGradientFill(rim);
+        g.drawEllipse(centreX - radius, centreY - radius, radius * 2.0f, radius * 2.0f, rimThickness);
+    }
+
+    // --- Value arc (glowing cyan sweep from start to current position) ---
+    {
+        const float arcRadius = radius + 2.0f;
+        const float arcThickness = juce::jmax(2.5f, radius * 0.09f);
+
+        // Glow layer behind the arc
+        juce::Path glowArc;
+        glowArc.addCentredArc(centreX, centreY, arcRadius, arcRadius, 0.0f,
+                              rotaryStartAngle, angle, true);
+        g.setColour(knobGlowCyan.withAlpha((juce::uint8)50));
+        g.strokePath(glowArc, juce::PathStrokeType(arcThickness + 4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+        // Crisp arc on top
+        juce::Path valueArc;
+        valueArc.addCentredArc(centreX, centreY, arcRadius, arcRadius, 0.0f,
+                               rotaryStartAngle, angle, true);
+        g.setColour(knobArcCyan);
+        g.strokePath(valueArc, juce::PathStrokeType(arcThickness, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+
+    // --- Background track (faint arc for the unset portion) ---
+    {
+        const float trackRadius = radius + 2.0f;
+        const float trackThickness = juce::jmax(1.5f, radius * 0.05f);
+        juce::Path track;
+        track.addCentredArc(centreX, centreY, trackRadius, trackRadius, 0.0f,
+                            angle, rotaryEndAngle, true);
+        g.setColour(knobRimDark.withAlpha(0.4f));
+        g.strokePath(track, juce::PathStrokeType(trackThickness, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+
+    // --- Pointer / indicator line ---
+    {
+        const float pointerLength  = radius * 0.55f;
+        const float pointerThickness = juce::jmax(2.0f, radius * 0.07f);
+        juce::Path pointer;
+        pointer.addRoundedRectangle(-pointerThickness * 0.5f, -radius + 4.0f,
+                                     pointerThickness, pointerLength, pointerThickness * 0.5f);
+        pointer.applyTransform(juce::AffineTransform::rotation(angle).translated(centreX, centreY));
+        g.setColour(juce::Colour(0xffe8f4ff));
+        g.fillPath(pointer);
+    }
+
+    // --- Centre dot highlight ---
+    {
+        const float dotRadius = juce::jmax(2.0f, radius * 0.1f);
+        juce::ColourGradient dot(juce::Colour(0xff4a4a6a), centreX, centreY - dotRadius * 0.5f,
+                                 juce::Colour(0xff1a1a30), centreX, centreY + dotRadius, false);
+        g.setGradientFill(dot);
+        g.fillEllipse(centreX - dotRadius, centreY - dotRadius, dotRadius * 2.0f, dotRadius * 2.0f);
+    }
 }
 
 //==============================================================================
@@ -277,7 +367,38 @@ void SpaceDustLookAndFeel::drawTextWithGlow(juce::Graphics& g, const juce::Strin
                                             juce::Colour glowColour,
                                             float glowIntensity)
 {
-    // Simplified: just use subtle shadow instead of heavy glow
     drawTextWithShadow(g, text, x, y, width, height, justification, textColour, 0.25f, 1);
+}
+
+//==============================================================================
+// -- Title Font (Glitch Goblin) / Body Font (standardized 12pt) --
+
+juce::Font SpaceDustLookAndFeel::getTitleFont(float height) const
+{
+    if (glitchGoblinTypeface != nullptr)
+        return juce::Font(glitchGoblinTypeface).withHeight(height);
+    return juce::Font(juce::FontOptions(height, juce::Font::bold));
+}
+
+juce::Font SpaceDustLookAndFeel::getBodyFont(float height, bool bold) const
+{
+    // Arial/Arial Bold are universally available and render a clear bold weight
+    const char* typeface = "Arial";
+    return juce::Font(juce::FontOptions(typeface, height, bold ? juce::Font::bold : juce::Font::plain));
+}
+
+juce::Font SpaceDustLookAndFeel::getLabelFont(juce::Label&)
+{
+    return getBodyFont(12.0f, true);
+}
+
+juce::Font SpaceDustLookAndFeel::getComboBoxFont(juce::ComboBox&)
+{
+    return getBodyFont(12.0f, true);
+}
+
+juce::Font SpaceDustLookAndFeel::getTabButtonFont(juce::TabBarButton&, float height)
+{
+    return getBodyFont(height, true);
 }
 

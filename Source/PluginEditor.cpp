@@ -42,6 +42,125 @@ namespace
 }
 
 //==============================================================================
+// -- TabGlowOverlayComponent: Draws parabolic glow ON TOP of tab bar so it shines through --
+class TabGlowOverlayComponent : public juce::Component
+{
+public:
+    TabGlowOverlayComponent(SpaceDustAudioProcessorEditor& ed) : editor(ed)
+    {
+        setInterceptsMouseClicks(false, false);  // Clicks pass through to tabs
+    }
+    void paint(juce::Graphics& g) override
+    {
+        const int w = getWidth();
+        const int oh = getHeight();
+        if (w <= 0 || oh <= 0) return;
+
+        float avgLevel = 0.5f * (editor.audioProcessor.getLeftPeakLevel() + editor.audioProcessor.getRightPeakLevel());
+        avgLevel = juce::jmin(1.0f, avgLevel);
+        const bool isRed = (editor.clippingHoldTicks > 0);
+        // 50% more subtle on tabs: scale down alpha
+        juce::uint8 peakAlpha = static_cast<juce::uint8>(juce::jlimit(0, 255, static_cast<int>((6 + 60 * avgLevel) * 0.5f)));
+
+        const juce::Colour edgeCol = isRed ? juce::Colour(0xffdd3333) : juce::Colour(0xff00d4ff);
+        const juce::Colour midCol  = isRed ? juce::Colour(0xff991818) : juce::Colour(0xff0066aa);
+        const juce::Colour fadeCol = juce::Colours::transparentBlack;
+
+        // Parabolic depth for top glow (same as main editor)
+        auto parabolicDepth = [](float xNorm, float layerHeight) -> float {
+            float t = 1.0f - 4.0f * (xNorm - 0.5f) * (xNorm - 0.5f);
+            t = juce::jmax(0.0f, t);
+            return layerHeight * (0.25f + 0.75f * t);
+        };
+
+        const float maxGlowDepth = static_cast<float>(oh) * 2.5f;
+        for (float alphaScale : { 0.35f, 0.55f, 0.85f })
+        {
+            juce::Path path;
+            path.startNewSubPath(0.0f, 0.0f);
+            path.lineTo(static_cast<float>(w), 0.0f);
+            for (int x = w; x >= 0; x -= 2)
+            {
+                float xNorm = static_cast<float>(x) / static_cast<float>(w);
+                float depth = juce::jmin(static_cast<float>(oh), parabolicDepth(xNorm, maxGlowDepth));
+                path.lineTo(static_cast<float>(x), depth);
+            }
+            path.closeSubPath();
+
+            juce::ColourGradient grad(edgeCol.withAlpha(static_cast<juce::uint8>(peakAlpha * alphaScale)), (float)w * 0.5f, 0.0f,
+                                      fadeCol, (float)w * 0.5f, static_cast<float>(oh), false);
+            grad.addColour(0.15f, edgeCol.withAlpha(static_cast<juce::uint8>(peakAlpha * alphaScale * 0.85f)));
+            grad.addColour(0.35f, midCol.withAlpha(static_cast<juce::uint8>(peakAlpha * alphaScale * 0.5f)));
+            grad.addColour(0.55f, midCol.withAlpha(static_cast<juce::uint8>(peakAlpha * alphaScale * 0.22f)));
+            grad.addColour(0.78f, fadeCol);
+            g.setGradientFill(grad);
+            g.fillPath(path);
+        }
+    }
+private:
+    SpaceDustAudioProcessorEditor& editor;
+};
+
+//==============================================================================
+// -- BottomTabGlowOverlayComponent: Draws bottom parabolic glow over tab content --
+class BottomTabGlowOverlayComponent : public juce::Component
+{
+public:
+    BottomTabGlowOverlayComponent(SpaceDustAudioProcessorEditor& ed) : editor(ed)
+    {
+        setInterceptsMouseClicks(false, false);  // Clicks pass through
+    }
+    void paint(juce::Graphics& g) override
+    {
+        const int w = getWidth();
+        const int oh = getHeight();
+        if (w <= 0 || oh <= 0) return;
+
+        float avgLevel = 0.5f * (editor.audioProcessor.getLeftPeakLevel() + editor.audioProcessor.getRightPeakLevel());
+        avgLevel = juce::jmin(1.0f, avgLevel);
+        const bool isRed = (editor.clippingHoldTicks > 0);
+        // 50% more subtle on tabs: scale down alpha
+        juce::uint8 peakAlpha = static_cast<juce::uint8>(juce::jlimit(0, 255, static_cast<int>((6 + 60 * avgLevel) * 0.5f)));
+
+        const juce::Colour edgeCol = isRed ? juce::Colour(0xffdd3333) : juce::Colour(0xff00d4ff);
+        const juce::Colour midCol  = isRed ? juce::Colour(0xff991818) : juce::Colour(0xff0066aa);
+        const juce::Colour fadeCol = juce::Colours::transparentBlack;
+
+        auto parabolicDepth = [](float xNorm, float layerHeight) -> float {
+            float t = 1.0f - 4.0f * (xNorm - 0.5f) * (xNorm - 0.5f);
+            t = juce::jmax(0.0f, t);
+            return layerHeight * (0.25f + 0.75f * t);
+        };
+
+        const float maxGlowDepth = static_cast<float>(oh) * 2.5f;
+        for (float alphaScale : { 0.35f, 0.55f, 0.85f })
+        {
+            juce::Path path;
+            path.startNewSubPath(0.0f, static_cast<float>(oh));
+            path.lineTo(static_cast<float>(w), static_cast<float>(oh));
+            for (int x = w; x >= 0; x -= 2)
+            {
+                float xNorm = static_cast<float>(x) / static_cast<float>(w);
+                float depth = juce::jmin(static_cast<float>(oh), parabolicDepth(xNorm, maxGlowDepth));
+                path.lineTo(static_cast<float>(x), static_cast<float>(oh) - depth);
+            }
+            path.closeSubPath();
+
+            juce::ColourGradient grad(fadeCol, (float)w * 0.5f, 0.0f,
+                                      edgeCol.withAlpha(static_cast<juce::uint8>(peakAlpha * alphaScale)), (float)w * 0.5f, static_cast<float>(oh), false);
+            grad.addColour(0.22f, fadeCol);
+            grad.addColour(0.45f, midCol.withAlpha(static_cast<juce::uint8>(peakAlpha * alphaScale * 0.22f)));
+            grad.addColour(0.65f, midCol.withAlpha(static_cast<juce::uint8>(peakAlpha * alphaScale * 0.5f)));
+            grad.addColour(0.85f, edgeCol.withAlpha(static_cast<juce::uint8>(peakAlpha * alphaScale * 0.85f)));
+            g.setGradientFill(grad);
+            g.fillPath(path);
+        }
+    }
+private:
+    SpaceDustAudioProcessorEditor& editor;
+};
+
+//==============================================================================
 // -- StereoLevelMeterComponent Implementation --
 StereoLevelMeterComponent::StereoLevelMeterComponent(SpaceDustAudioProcessor& processor)
     : audioProcessor(processor)
@@ -117,7 +236,7 @@ void StereoLevelMeterComponent::paint(juce::Graphics& g)
     if (bounds.getHeight() > 30)
     {
         g.setColour(juce::Colour(0xffa0d8ff));  // Light blue/cosmic color
-        g.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::plain)));
+        g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::plain)));  // Standard body font
         g.drawText("L", leftMeter.withY(leftMeter.getBottom() - 15).withHeight(12), juce::Justification::centred, true);
         g.drawText("R", rightMeter.withY(rightMeter.getBottom() - 15).withHeight(12), juce::Justification::centred, true);
     }
@@ -308,10 +427,7 @@ void MainPageComponent::resized()
     const int topBottomGap = 8;          // Vertical gap between Oscillators and Filter
     const int groupPadding = 10;         // Padding inside group boxes
     const int groupTitleHeight = 32;     // Compact height for group title area
-    // CRITICAL: Main tab knob size must exactly match Modulation tab knob visual size
-    // Modulation tab knobs appear ~75px in screenshots (correct, larger, compact-but-visible size)
-    // Set Main tab knobs to 75px to match Modulation tab's visual appearance
-    const int knobDiameter = 75;          // Match Modulation tab knob visual size (~75px diameter)
+    const int knobDiameter = 56;
     const int labelHeight = 18;           // Label height (slightly larger to prevent clipping)
     const int labelGap = 4;                // Gap between label and control (compact)
     const int comboHeight = 26;           // Combo box height
@@ -504,7 +620,7 @@ void MainPageComponent::resized()
     ampEnvKnobY += ampEnvSpacing;
     
     // Pitch envelope: 3 knobs in a row (Amount, Time, Pitch) - below Amp Envelope
-    const int pitchEnvKnobSize = 60;  // Slightly smaller to fit 3 in narrow strip
+    const int pitchEnvKnobSize = 56;
     int pitchEnvTotalWidth = 3 * pitchEnvKnobSize + 2 * 10;  // 3 knobs + 2 gaps
     int pitchEnvStartX = ampEnvContent.getCentreX() - pitchEnvTotalWidth / 2;
     int pitchEnvKnobY = ampEnvKnobY;
@@ -592,8 +708,10 @@ void MainPageComponent::resized()
     parentEditor.filterCutoffSlider.setBounds(filterKnobX, filterCutoffKnobY, knobDiameter, knobDiameter);
     
     filterKnobX += knobDiameter + horizontalSpacing;
-    // Resonance knob: Label above
-    parentEditor.filterResonanceLabel.setBounds(filterKnobX, filterKnobStartY, knobDiameter, labelHeight);
+    // Resonance knob: Label above (wider than knob to fit "Resonance" text, centered over knob)
+    const int resonanceLabelWidth = 100;  // "Resonance" needs more space than "Cutoff" (was clipping final "e")
+    int resonanceLabelX = filterKnobX + (knobDiameter - resonanceLabelWidth) / 2;  // Center label over knob
+    parentEditor.filterResonanceLabel.setBounds(resonanceLabelX, filterKnobStartY, resonanceLabelWidth, labelHeight);
     int filterResonanceKnobY = filterKnobStartY + labelHeight + filterLabelGap;
     parentEditor.filterResonanceSlider.setBounds(filterKnobX, filterResonanceKnobY, knobDiameter, knobDiameter);
     
@@ -743,7 +861,16 @@ void ModulationPageComponent::parameterChanged(const juce::String& parameterID, 
 {
     if (parameterID == juce::ParameterID{"modFilter1Show", 1}.getParamID() ||
         parameterID == juce::ParameterID{"modFilter2Show", 1}.getParamID())
-        resized();
+    {
+        juce::MessageManager::callAsync([safeThis = juce::Component::SafePointer<ModulationPageComponent>(this)]
+        {
+            if (safeThis != nullptr)
+            {
+                safeThis->resized();
+                safeThis->repaint();
+            }
+        });
+    }
 }
 
 void ModulationPageComponent::paint(juce::Graphics& g)
@@ -771,9 +898,7 @@ void ModulationPageComponent::resized()
     // Larger gap between LFO columns so boxes do not intersect
     const int columnGap = 22;  // Increased by 10% from reduced value
     
-    // Step 1: Reduce Modulation tab knobs by ~10% (70 * 0.9 = 63)
-    // CRITICAL: This is the reference knob size - Main tab knobs must match this exactly
-    const int modKnobDiameter = 63;  // Reference size: Main tab knobDiameter must equal this value
+    const int modKnobDiameter = 56;
     const int modLabelHeight = 14;
     const int modComboHeight = 22;
     const int modComboWidth = 100;
@@ -794,14 +919,9 @@ void ModulationPageComponent::resized()
         && *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("modFilter1Show") > 0.5f;
     bool modFilter2Show = parentEditor.audioProcessor.getValueTreeState().getParameter("modFilter2Show") != nullptr
         && *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("modFilter2Show") > 0.5f;
-    // Filter controls (Cutoff, Resonance, Mode, Link) add ~200px when shown
-    const int filterControlsHeight = 200;
-    const int lfoContentMinHeight = 540;  // Base content + smidge below filter toggle
-    // Each LFO box expands when its filter is toggled on
-    int lfo1AreaHeight = lfoContentMinHeight + (modFilter1Show ? filterControlsHeight : 0);
-    int lfo2AreaHeight = lfoContentMinHeight + (modFilter2Show ? filterControlsHeight : 0);
-    lfo1AreaHeight = juce::jmin(lfo1AreaHeight, modulationContent.getHeight());
-    lfo2AreaHeight = juce::jmin(lfo2AreaHeight, modulationContent.getHeight());
+    // LFO box heights will be set after layout to shrink-to-fit
+    int lfo1AreaHeight = modulationContent.getHeight();
+    int lfo2AreaHeight = modulationContent.getHeight();
     
     // Calculate LFO boxes to match Amp Envelope gap exactly
     // Tab width has been expanded by 10%, so modulationContent is now 10% larger
@@ -935,8 +1055,8 @@ void ModulationPageComponent::resized()
         lfo1CurrentY += 14;
         parentEditor.modFilter1ModeCombo.setBounds(lfo1CentreX - filterComboW / 2, lfo1CurrentY, filterComboW, filterComboH);
         lfo1CurrentY += filterComboH + modRowSpacing;
-        parentEditor.modFilter1LinkButton.setBounds(lfo1CentreX - 55, lfo1CurrentY, 110, 18);
-        lfo1CurrentY += 20;
+        parentEditor.modFilter1LinkButton.setBounds(lfo1CentreX - 55, lfo1CurrentY, 110, modButtonHeight);
+        lfo1CurrentY += modButtonHeight + modRowSpacing;
         parentEditor.modFilter1CutoffSlider.setVisible(true);
         parentEditor.modFilter1CutoffLabel.setVisible(true);
         parentEditor.modFilter1ResonanceSlider.setVisible(true);
@@ -956,8 +1076,14 @@ void ModulationPageComponent::resized()
         parentEditor.modFilter1LinkButton.setVisible(false);
     }
     
-    // LFO2 Column (Right) - Same width as LFO1, height based on its own Filter toggle
-    int lfo2X = lfo1X + lfo1Width + columnGap;  // Position after LFO1 with gap between them
+    // Shrink LFO1 box to fit its actual content
+    {
+        int lfo1FinalH = lfo1CurrentY - modulationContent.getY() + lfoBoxPadV;
+        parentEditor.lfo1Group.setBounds(lfo1X, modulationContent.getY(), lfo1Width, lfo1FinalH);
+    }
+
+    // LFO2 Column (Right)
+    int lfo2X = lfo1X + lfo1Width + columnGap;
     auto lfo2Area = juce::Rectangle<int>(
         lfo2X,
         modulationContent.getY(),
@@ -1055,8 +1181,8 @@ void ModulationPageComponent::resized()
         lfo2CurrentY += 14;
         parentEditor.modFilter2ModeCombo.setBounds(lfo2CentreX - filterComboW / 2, lfo2CurrentY, filterComboW, filterComboH);
         lfo2CurrentY += filterComboH + modRowSpacing;
-        parentEditor.modFilter2LinkButton.setBounds(lfo2CentreX - 55, lfo2CurrentY, 110, 18);
-        lfo2CurrentY += 20;
+        parentEditor.modFilter2LinkButton.setBounds(lfo2CentreX - 55, lfo2CurrentY, 110, modButtonHeight);
+        lfo2CurrentY += modButtonHeight + modRowSpacing;
         parentEditor.modFilter2CutoffSlider.setVisible(true);
         parentEditor.modFilter2CutoffLabel.setVisible(true);
         parentEditor.modFilter2ResonanceSlider.setVisible(true);
@@ -1076,7 +1202,12 @@ void ModulationPageComponent::resized()
         parentEditor.modFilter2LinkButton.setVisible(false);
     }
     
-    // Hide filter group boxes (controls are now inside LFO boxes)
+    // Shrink LFO2 box to fit its actual content
+    {
+        int lfo2FinalH = lfo2CurrentY - modulationContent.getY() + lfoBoxPadV;
+        parentEditor.lfo2Group.setBounds(lfo2X, modulationContent.getY(), lfo2Width, lfo2FinalH);
+    }
+
     parentEditor.modFilter1Group.setVisible(false);
     parentEditor.modFilter2Group.setVisible(false);
     parentEditor.modFilterShowLabel.setVisible(false);
@@ -1311,7 +1442,7 @@ void EffectsPageComponent::resized()
     const int gap = 4;        // Compact spacing between elements
     const int labelGap = 2;
     const int knobSize = 56;  // Uniform knob size for Reverb, Grain Delay, Phaser, Trance Gate
-    const int delayKnobSize = 44;  // Smaller knobs for Delay (Time, Decay, Mix in one row)
+    const int delayKnobSize = 56;  // Same as all other knobs
     const int filterLabelW = 62;  // Matches knob+fGap slot so "HP Cutoff" / "LP Cutoff" fit
     const int btnW = 52;
     const int btnH = 22;
@@ -2095,7 +2226,9 @@ void SpectralPageComponent::drawLissajous(juce::Graphics& g, juce::Rectangle<int
         return;
 
     const float maxGain = 3.981f;     // +12 dB
-    const juce::Colour pathColour(0xff48bde8);
+
+    bool showClipping = parentEditor.clippingHoldTicks > 0;
+    const juce::Colour pathColour = showClipping ? juce::Colour(0xffdd2222) : juce::Colour(0xff48bde8);
 
     int dim = juce::jmin(cw, ch);
     int margin = juce::jmin(4, dim / 12);
@@ -2362,36 +2495,36 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     osc1WaveformLabel.setText(safeString("Waveform 1"), juce::dontSendNotification);
     osc1WaveformLabel.setJustificationType(juce::Justification::centred);
     osc1WaveformLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    osc1WaveformLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    osc1WaveformLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     osc1CoarseTuneSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    osc1CoarseTuneSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 25);
+    osc1CoarseTuneSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     osc1CoarseTuneSlider.setTextValueSuffix(" st");
     osc1CoarseTuneAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "osc1CoarseTune", osc1CoarseTuneSlider);
     osc1CoarseTuneLabel.setText(safeString("Coarse"), juce::dontSendNotification);
     osc1CoarseTuneLabel.setJustificationType(juce::Justification::centred);
     osc1CoarseTuneLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    osc1CoarseTuneLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    osc1CoarseTuneLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     osc1DetuneSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    osc1DetuneSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 25);
+    osc1DetuneSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     osc1DetuneSlider.setTextValueSuffix(" ct");
     osc1DetuneAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "osc1Detune", osc1DetuneSlider);
     osc1DetuneLabel.setText(safeString("Detune"), juce::dontSendNotification);
     osc1DetuneLabel.setJustificationType(juce::Justification::centred);
     osc1DetuneLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    osc1DetuneLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    osc1DetuneLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     osc1LevelSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    osc1LevelSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 25);
+    osc1LevelSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     osc1LevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "osc1Level", osc1LevelSlider);
     osc1LevelLabel.setText(safeString("Level"), juce::dontSendNotification);
     osc1LevelLabel.setJustificationType(juce::Justification::centred);
     osc1LevelLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    osc1LevelLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    osc1LevelLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     osc1PanSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     osc1PanSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
@@ -2400,7 +2533,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     osc1PanLabel.setText(safeString("Pan"), juce::dontSendNotification);
     osc1PanLabel.setJustificationType(juce::Justification::centred);
     osc1PanLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    osc1PanLabel.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+    osc1PanLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     osc1PanLabel.setInterceptsMouseClicks(true, true);  // Clickable to reset pan to center
     
     // Oscillator 2
@@ -2414,36 +2547,36 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     osc2WaveformLabel.setText(safeString("Waveform 2"), juce::dontSendNotification);
     osc2WaveformLabel.setJustificationType(juce::Justification::centred);
     osc2WaveformLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    osc2WaveformLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    osc2WaveformLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     osc2CoarseTuneSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    osc2CoarseTuneSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 25);
+    osc2CoarseTuneSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     osc2CoarseTuneSlider.setTextValueSuffix(" st");
     osc2CoarseTuneAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "osc2CoarseTune", osc2CoarseTuneSlider);
     osc2CoarseTuneLabel.setText(safeString("Coarse"), juce::dontSendNotification);
     osc2CoarseTuneLabel.setJustificationType(juce::Justification::centred);
     osc2CoarseTuneLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    osc2CoarseTuneLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    osc2CoarseTuneLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     osc2DetuneSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    osc2DetuneSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 25);
+    osc2DetuneSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     osc2DetuneSlider.setTextValueSuffix(" ct");
     osc2DetuneAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "osc2Detune", osc2DetuneSlider);
     osc2DetuneLabel.setText(safeString("Detune"), juce::dontSendNotification);
     osc2DetuneLabel.setJustificationType(juce::Justification::centred);
     osc2DetuneLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    osc2DetuneLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    osc2DetuneLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     osc2LevelSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    osc2LevelSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 25);
+    osc2LevelSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     osc2LevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "osc2Level", osc2LevelSlider);
     osc2LevelLabel.setText(safeString("Level"), juce::dontSendNotification);
     osc2LevelLabel.setJustificationType(juce::Justification::centred);
     osc2LevelLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    osc2LevelLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    osc2LevelLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     osc2PanSlider.setSliderStyle(juce::Slider::LinearHorizontal);
     osc2PanSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
@@ -2452,7 +2585,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     osc2PanLabel.setText(safeString("Pan"), juce::dontSendNotification);
     osc2PanLabel.setJustificationType(juce::Justification::centred);
     osc2PanLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    osc2PanLabel.setFont(juce::Font(juce::FontOptions(10.0f, juce::Font::bold)));
+    osc2PanLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     osc2PanLabel.setInterceptsMouseClicks(true, true);  // Clickable to reset pan to center
     
     // Noise
@@ -2472,38 +2605,38 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     noiseColorLabel.setText(safeString("Color"), juce::dontSendNotification);
     noiseColorLabel.setJustificationType(juce::Justification::centred);
     noiseColorLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    noiseColorLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    noiseColorLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     noiseLevelSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    noiseLevelSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 25);
+    noiseLevelSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     noiseLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "noiseLevel", noiseLevelSlider);
     noiseLevelLabel.setText(safeString("Level"), juce::dontSendNotification);
     noiseLevelLabel.setJustificationType(juce::Justification::centred);
     noiseLevelLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    noiseLevelLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    noiseLevelLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // Noise EQ: Low Shelf/Cut
     lowShelfAmountSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    lowShelfAmountSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 25);  // Match other knobs text box height
+    lowShelfAmountSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     lowShelfAmountSlider.setTextValueSuffix(" %");
     lowShelfAmountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "lowShelfAmount", lowShelfAmountSlider);
     lowShelfAmountLabel.setText(safeString("Low Shelf/Cut"), juce::dontSendNotification);
     lowShelfAmountLabel.setJustificationType(juce::Justification::centred);
     lowShelfAmountLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    lowShelfAmountLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    lowShelfAmountLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // Noise EQ: High Shelf/Cut
     highShelfAmountSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    highShelfAmountSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 25);  // Match other knobs text box height
+    highShelfAmountSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     highShelfAmountSlider.setTextValueSuffix(" %");
     highShelfAmountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "highShelfAmount", highShelfAmountSlider);
     highShelfAmountLabel.setText(safeString("High Shelf/Cut"), juce::dontSendNotification);
     highShelfAmountLabel.setJustificationType(juce::Justification::centred);
     highShelfAmountLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    highShelfAmountLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    highShelfAmountLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     //==============================================================================
     // -- Filter Section Setup --
@@ -2517,7 +2650,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     filterModeLabel.setText(safeString("Mode"), juce::dontSendNotification);
     filterModeLabel.setJustificationType(juce::Justification::centred);
     filterModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    filterModeLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    filterModeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     filterCutoffSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     filterCutoffSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -2527,7 +2660,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     filterCutoffLabel.setText(safeString("Cutoff"), juce::dontSendNotification);
     filterCutoffLabel.setJustificationType(juce::Justification::centred);
     filterCutoffLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    filterCutoffLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    filterCutoffLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     filterResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     filterResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -2536,7 +2669,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     filterResonanceLabel.setText(safeString("Resonance"), juce::dontSendNotification);
     filterResonanceLabel.setJustificationType(juce::Justification::centred);
     filterResonanceLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    filterResonanceLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    filterResonanceLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     warmSaturationMasterButton.setButtonText(safeString("Warm Saturation"));
     warmSaturationMasterAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -2544,95 +2677,95 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     
     // Filter Envelope
     filterEnvAttackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    filterEnvAttackSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+    filterEnvAttackSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     filterEnvAttackSlider.setTextValueSuffix(" s");
     filterEnvAttackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "filterEnvAttack", filterEnvAttackSlider);
     filterEnvAttackLabel.setText(safeString("Attack"), juce::dontSendNotification);
     filterEnvAttackLabel.setJustificationType(juce::Justification::centred);
     filterEnvAttackLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    filterEnvAttackLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    filterEnvAttackLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     filterEnvDecaySlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    filterEnvDecaySlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+    filterEnvDecaySlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     filterEnvDecaySlider.setTextValueSuffix(" s");
     filterEnvDecayAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "filterEnvDecay", filterEnvDecaySlider);
     filterEnvDecayLabel.setText(safeString("Decay"), juce::dontSendNotification);
     filterEnvDecayLabel.setJustificationType(juce::Justification::centred);
     filterEnvDecayLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    filterEnvDecayLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    filterEnvDecayLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     filterEnvSustainSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    filterEnvSustainSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+    filterEnvSustainSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     filterEnvSustainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "filterEnvSustain", filterEnvSustainSlider);
     filterEnvSustainLabel.setText(safeString("Sustain"), juce::dontSendNotification);
     filterEnvSustainLabel.setJustificationType(juce::Justification::centred);
     filterEnvSustainLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    filterEnvSustainLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    filterEnvSustainLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     filterEnvReleaseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    filterEnvReleaseSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+    filterEnvReleaseSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     filterEnvReleaseSlider.setTextValueSuffix(" s");
     filterEnvReleaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "filterEnvRelease", filterEnvReleaseSlider);
     filterEnvReleaseLabel.setText(safeString("Release"), juce::dontSendNotification);
     filterEnvReleaseLabel.setJustificationType(juce::Justification::centred);
     filterEnvReleaseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    filterEnvReleaseLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    filterEnvReleaseLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     filterEnvAmountSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    filterEnvAmountSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+    filterEnvAmountSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     filterEnvAmountSlider.setTextValueSuffix(" %");
     filterEnvAmountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "filterEnvAmount", filterEnvAmountSlider);
     filterEnvAmountLabel.setText(safeString("Amount"), juce::dontSendNotification);
     filterEnvAmountLabel.setJustificationType(juce::Justification::centred);
     filterEnvAmountLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    filterEnvAmountLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    filterEnvAmountLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     //==============================================================================
     // -- Envelope Section Setup --
     
     envAttackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    envAttackSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+    envAttackSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     envAttackSlider.setTextValueSuffix(" s");
     envAttackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "envAttack", envAttackSlider);
     envAttackLabel.setText(safeString("Attack"), juce::dontSendNotification);
     envAttackLabel.setJustificationType(juce::Justification::centred);
     envAttackLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    envAttackLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    envAttackLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     envDecaySlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    envDecaySlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+    envDecaySlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     envDecaySlider.setTextValueSuffix(" s");
     envDecayAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "envDecay", envDecaySlider);
     envDecayLabel.setText(safeString("Decay"), juce::dontSendNotification);
     envDecayLabel.setJustificationType(juce::Justification::centred);
     envDecayLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    envDecayLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    envDecayLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     envSustainSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    envSustainSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+    envSustainSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     envSustainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "envSustain", envSustainSlider);
     envSustainLabel.setText(safeString("Sustain"), juce::dontSendNotification);
     envSustainLabel.setJustificationType(juce::Justification::centred);
     envSustainLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    envSustainLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    envSustainLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     envReleaseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    envReleaseSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
+    envReleaseSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     envReleaseSlider.setTextValueSuffix(" s");
     envReleaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "envRelease", envReleaseSlider);
     envReleaseLabel.setText(safeString("Release"), juce::dontSendNotification);
     envReleaseLabel.setJustificationType(juce::Justification::centred);
     envReleaseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    envReleaseLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    envReleaseLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // Pitch envelope (Amount: -100% to 100%, 12 o'clock = 0)
     pitchEnvAmountSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
@@ -2644,7 +2777,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     pitchEnvAmountLabel.setText(safeString("Amount"), juce::dontSendNotification);
     pitchEnvAmountLabel.setJustificationType(juce::Justification::centred);
     pitchEnvAmountLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    pitchEnvAmountLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    pitchEnvAmountLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // Pitch envelope (Time: 0-5 s)
     pitchEnvTimeSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
@@ -2655,7 +2788,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     pitchEnvTimeLabel.setText(safeString("Time"), juce::dontSendNotification);
     pitchEnvTimeLabel.setJustificationType(juce::Justification::centred);
     pitchEnvTimeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    pitchEnvTimeLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    pitchEnvTimeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // Pitch envelope (Pitch: 0-24 st)
     pitchEnvPitchSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
@@ -2667,7 +2800,18 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     pitchEnvPitchLabel.setText(safeString("Pitch"), juce::dontSendNotification);
     pitchEnvPitchLabel.setJustificationType(juce::Justification::centred);
     pitchEnvPitchLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    pitchEnvPitchLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    pitchEnvPitchLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+
+    // Explicit LookAndFeel for labels that don't inherit correctly (fixes font inconsistency)
+    osc1CoarseTuneLabel.setLookAndFeel(&customLookAndFeel);
+    osc2CoarseTuneLabel.setLookAndFeel(&customLookAndFeel);
+    filterCutoffLabel.setLookAndFeel(&customLookAndFeel);
+    filterResonanceLabel.setLookAndFeel(&customLookAndFeel);
+    envSustainLabel.setLookAndFeel(&customLookAndFeel);
+    envReleaseLabel.setLookAndFeel(&customLookAndFeel);
+    filterEnvReleaseLabel.setLookAndFeel(&customLookAndFeel);
+    pitchEnvPitchLabel.setLookAndFeel(&customLookAndFeel);
+    pitchBendLabel.setLookAndFeel(&customLookAndFeel);
 
     // Sub oscillator (expandable when toggle is on)
     subOscToggleButton.setButtonText(safeString("Sub Oscillator"));
@@ -2699,6 +2843,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     subOscCoarseLabel.setText(safeString("Coarse"), juce::dontSendNotification);
     subOscCoarseLabel.setJustificationType(juce::Justification::centred);
     subOscCoarseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    subOscCoarseLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     //==============================================================================
     // -- Master Section Setup --
@@ -2710,7 +2855,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     masterVolumeLabel.setText(safeString("Volume"), juce::dontSendNotification);
     masterVolumeLabel.setJustificationType(juce::Justification::centred);
     masterVolumeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    masterVolumeLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    masterVolumeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // Pitch bend amount (1-24 semitones)
     pitchBendAmountSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
@@ -2722,7 +2867,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     pitchBendAmountLabel.setText(safeString("Bend Range"), juce::dontSendNotification);
     pitchBendAmountLabel.setJustificationType(juce::Justification::centred);
     pitchBendAmountLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    pitchBendAmountLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    pitchBendAmountLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // Pitch bend vertical fader (bipolar -1 to 1)
     pitchBendSlider.setSliderStyle(juce::Slider::LinearVertical);
@@ -2733,7 +2878,29 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     pitchBendLabel.setText(safeString("Pitch"), juce::dontSendNotification);
     pitchBendLabel.setJustificationType(juce::Justification::centred);
     pitchBendLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    pitchBendLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    pitchBendLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+    
+    // Force LookAndFeel on labels that may not inherit (ensures consistent font rendering)
+    osc1CoarseTuneLabel.setLookAndFeel(&customLookAndFeel);
+    osc2CoarseTuneLabel.setLookAndFeel(&customLookAndFeel);
+    filterCutoffLabel.setLookAndFeel(&customLookAndFeel);
+    filterResonanceLabel.setLookAndFeel(&customLookAndFeel);
+    envSustainLabel.setLookAndFeel(&customLookAndFeel);
+    envReleaseLabel.setLookAndFeel(&customLookAndFeel);
+    filterEnvReleaseLabel.setLookAndFeel(&customLookAndFeel);
+    pitchEnvPitchLabel.setLookAndFeel(&customLookAndFeel);
+    pitchBendLabel.setLookAndFeel(&customLookAndFeel);
+    subOscCoarseLabel.setLookAndFeel(&customLookAndFeel);
+    lfo1PhaseLabel.setLookAndFeel(&customLookAndFeel);
+    lfo2PhaseLabel.setLookAndFeel(&customLookAndFeel);
+    lfo1TargetLabel.setLookAndFeel(&customLookAndFeel);
+    lfo2TargetLabel.setLookAndFeel(&customLookAndFeel);
+    grainDelayDensityLabel.setLookAndFeel(&customLookAndFeel);
+    phaserStagesLabel.setLookAndFeel(&customLookAndFeel);
+    compressorThresholdLabel.setLookAndFeel(&customLookAndFeel);
+    modFilter1ResonanceLabel.setLookAndFeel(&customLookAndFeel);
+    modFilter2ResonanceLabel.setLookAndFeel(&customLookAndFeel);
+    compressorReleaseLabel.setLookAndFeel(&customLookAndFeel);
     
     // Voice Mode (moved to Master section)
     voiceModeCombo.addItem(safeString("Poly"), 1);
@@ -2745,7 +2912,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     voiceModeLabel.setText(safeString("Mode"), juce::dontSendNotification);
     voiceModeLabel.setJustificationType(juce::Justification::centred);
     voiceModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    voiceModeLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    voiceModeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     glideTimeSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     glideTimeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
@@ -2755,7 +2922,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     glideTimeLabel.setText(safeString("Glide"), juce::dontSendNotification);
     glideTimeLabel.setJustificationType(juce::Justification::centred);
     glideTimeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    glideTimeLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    glideTimeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // Legato Glide toggle (Fingered Glide)
     legatoGlideButton.setButtonText(safeString("Legato Glide"));
@@ -2765,7 +2932,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     legatoGlideLabel.setText(safeString(""), juce::dontSendNotification);
     legatoGlideLabel.setJustificationType(juce::Justification::centred);
     legatoGlideLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    legatoGlideLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    legatoGlideLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // Stereo Level Meters: Create at bottom of Master box
     stereoLevelMeter = std::make_unique<StereoLevelMeterComponent>(audioProcessor);
@@ -2778,7 +2945,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modulationTitleLabel.setText(safeString("Modulation"), juce::dontSendNotification);
     modulationTitleLabel.setJustificationType(juce::Justification::centred);
     modulationTitleLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light cyan
-    modulationTitleLabel.setFont(juce::Font(juce::FontOptions(24.0f, juce::Font::bold)));
+    modulationTitleLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // LFO1 Sub-group
     // LFO1 Waveform
@@ -2794,7 +2961,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo1WaveformLabel.setText(safeString("Waveform"), juce::dontSendNotification);
     lfo1WaveformLabel.setJustificationType(juce::Justification::centred);
     lfo1WaveformLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lfo1WaveformLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lfo1WaveformLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // LFO1 On toggle
     lfo1EnabledButton.setButtonText(safeString("On"));
@@ -2814,7 +2981,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo1TargetLabel.setText(safeString("Destination"), juce::dontSendNotification);
     lfo1TargetLabel.setJustificationType(juce::Justification::centred);
     lfo1TargetLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lfo1TargetLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lfo1TargetLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // LFO1 Sync button (glows when checked)
     lfo1SyncButton.setButtonText(safeString("Sync"));
@@ -2823,7 +2990,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo1SyncLabel.setText(safeString("Sync"), juce::dontSendNotification);
     lfo1SyncLabel.setJustificationType(juce::Justification::centred);
     lfo1SyncLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lfo1SyncLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lfo1SyncLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // LFO1 Triplet button
     lfo1TripletButton.setButtonText(safeString("Triplet"));
@@ -2839,18 +3006,21 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     
     // LFO1 Rate: Free rate slider (shown when sync off)
     lfo1FreeRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    lfo1FreeRateSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);  // Hide default text box
+    lfo1FreeRateSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    lfo1FreeRateSlider.setColour(juce::Slider::textBoxTextColourId, juce::Colours::transparentBlack);
+    lfo1FreeRateSlider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
+    lfo1FreeRateSlider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     lfo1FreeRateSlider.setRange(0.0, 12.0, 0.01);  // Maps to 0.01-200 Hz logarithmically (free mode)
     lfo1FreeRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "lfo1Rate", lfo1FreeRateSlider);
     lfo1RateLabel.setText(safeString("Rate"), juce::dontSendNotification);
     lfo1RateLabel.setJustificationType(juce::Justification::centred);
     lfo1RateLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lfo1RateLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lfo1RateLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     lfo1RateValueLabel.setText(safeString("1.00 Hz"), juce::dontSendNotification);
     lfo1RateValueLabel.setJustificationType(juce::Justification::centred);
     lfo1RateValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lfo1RateValueLabel.setFont(juce::Font(juce::FontOptions("Consolas", 12.0f, juce::Font::plain)));
+    lfo1RateValueLabel.setFont(customLookAndFeel.getBodyFont(12.0f, false));
     
     // LFO1 Rate: Sync rate combo (shown when sync on)
     lfo1SyncRateCombo.addItem(safeString("1/32"), 1);
@@ -2876,22 +3046,22 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo1RateValueLabel.setVisible(true);
     
     lfo1DepthSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    lfo1DepthSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    lfo1DepthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     lfo1DepthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "lfo1Depth", lfo1DepthSlider);
     lfo1DepthLabel.setText(safeString("Depth"), juce::dontSendNotification);
     lfo1DepthLabel.setJustificationType(juce::Justification::centred);
     lfo1DepthLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lfo1DepthLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lfo1DepthLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     lfo1PhaseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    lfo1PhaseSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    lfo1PhaseSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     lfo1PhaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "lfo1Phase", lfo1PhaseSlider);
     lfo1PhaseLabel.setText(safeString("Phase"), juce::dontSendNotification);
     lfo1PhaseLabel.setJustificationType(juce::Justification::centred);
     lfo1PhaseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lfo1PhaseLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lfo1PhaseLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // LFO1 Retrigger button
     lfo1RetriggerButton.setButtonText(safeString("Retrigger"));
@@ -2912,7 +3082,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo2WaveformLabel.setText(safeString("Waveform"), juce::dontSendNotification);
     lfo2WaveformLabel.setJustificationType(juce::Justification::centred);
     lfo2WaveformLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lfo2WaveformLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lfo2WaveformLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // LFO2 On toggle
     lfo2EnabledButton.setButtonText(safeString("On"));
@@ -2932,7 +3102,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo2TargetLabel.setText(safeString("Destination"), juce::dontSendNotification);
     lfo2TargetLabel.setJustificationType(juce::Justification::centred);
     lfo2TargetLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lfo2TargetLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lfo2TargetLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     lfo2SyncButton.setButtonText(safeString("Sync"));
     lfo2SyncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -2940,7 +3110,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo2SyncLabel.setText(safeString("Sync"), juce::dontSendNotification);
     lfo2SyncLabel.setJustificationType(juce::Justification::centred);
     lfo2SyncLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lfo2SyncLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lfo2SyncLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // LFO2 Triplet button
     lfo2TripletButton.setButtonText(safeString("Triplet"));
@@ -2955,18 +3125,21 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo2TripletStraightButton.setVisible(false);
     
     lfo2FreeRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    lfo2FreeRateSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    lfo2FreeRateSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    lfo2FreeRateSlider.setColour(juce::Slider::textBoxTextColourId, juce::Colours::transparentBlack);
+    lfo2FreeRateSlider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
+    lfo2FreeRateSlider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     lfo2FreeRateSlider.setRange(0.0, 12.0, 0.01);
     lfo2FreeRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "lfo2Rate", lfo2FreeRateSlider);
     lfo2RateLabel.setText(safeString("Rate"), juce::dontSendNotification);
     lfo2RateLabel.setJustificationType(juce::Justification::centred);
     lfo2RateLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lfo2RateLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lfo2RateLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     lfo2RateValueLabel.setText(safeString("1.00 Hz"), juce::dontSendNotification);
     lfo2RateValueLabel.setJustificationType(juce::Justification::centred);
     lfo2RateValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lfo2RateValueLabel.setFont(juce::Font(juce::FontOptions("Consolas", 12.0f, juce::Font::plain)));
+    lfo2RateValueLabel.setFont(customLookAndFeel.getBodyFont(12.0f, false));
     
     lfo2SyncRateCombo.addItem(safeString("1/32"), 1);
     lfo2SyncRateCombo.addItem(safeString("1/16"), 2);
@@ -2991,22 +3164,22 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo2RateValueLabel.setVisible(true);
     
     lfo2DepthSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    lfo2DepthSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    lfo2DepthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     lfo2DepthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "lfo2Depth", lfo2DepthSlider);
     lfo2DepthLabel.setText(safeString("Depth"), juce::dontSendNotification);
     lfo2DepthLabel.setJustificationType(juce::Justification::centred);
     lfo2DepthLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lfo2DepthLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lfo2DepthLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     lfo2PhaseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    lfo2PhaseSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    lfo2PhaseSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     lfo2PhaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "lfo2Phase", lfo2PhaseSlider);
     lfo2PhaseLabel.setText(safeString("Phase"), juce::dontSendNotification);
     lfo2PhaseLabel.setJustificationType(juce::Justification::centred);
     lfo2PhaseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lfo2PhaseLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    lfo2PhaseLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // Mod Filter toggles (each LFO has its own - filter controls only appear when Filter is toggled)
     modFilterShowButton.setButtonText(safeString("Filter"));
@@ -3017,7 +3190,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         audioProcessor.getValueTreeState(), "modFilter2Show", modFilterShowButton2);
     modFilterShowLabel.setText(safeString("Show Filters"), juce::dontSendNotification);
     modFilterShowLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    modFilterShowLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    modFilterShowLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     modFilter1LinkButton.setButtonText(safeString("Link to Master"));
     modFilter1LinkAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -3045,13 +3218,13 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter1ResonanceLabel.setText(safeString("Res"), juce::dontSendNotification);
     modFilter1ModeLabel.setJustificationType(juce::Justification::centred);
     modFilter1ModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    modFilter1ModeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    modFilter1ModeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     modFilter1CutoffLabel.setJustificationType(juce::Justification::centred);
     modFilter1CutoffLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    modFilter1CutoffLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    modFilter1CutoffLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     modFilter1ResonanceLabel.setJustificationType(juce::Justification::centred);
     modFilter1ResonanceLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    modFilter1ResonanceLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    modFilter1ResonanceLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     modFilter2LinkButton.setButtonText(safeString("Link to Master"));
     modFilter2LinkAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -3079,13 +3252,13 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter2ResonanceLabel.setText(safeString("Res"), juce::dontSendNotification);
     modFilter2ModeLabel.setJustificationType(juce::Justification::centred);
     modFilter2ModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    modFilter2ModeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    modFilter2ModeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     modFilter2CutoffLabel.setJustificationType(juce::Justification::centred);
     modFilter2CutoffLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    modFilter2CutoffLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    modFilter2CutoffLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     modFilter2ResonanceLabel.setJustificationType(juce::Justification::centred);
     modFilter2ResonanceLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    modFilter2ResonanceLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    modFilter2ResonanceLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     // LFO2 Retrigger button
     lfo2RetriggerButton.setButtonText(safeString("Retrigger"));
@@ -3101,7 +3274,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     delayEnabledLabel.setText(safeString("On"), juce::dontSendNotification);
     delayEnabledLabel.setJustificationType(juce::Justification::centred);
     delayEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    delayEnabledLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    delayEnabledLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     delaySyncButton.setButtonText(safeString("Sync"));
     delaySyncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -3109,7 +3282,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     delaySyncLabel.setText(safeString("Sync"), juce::dontSendNotification);
     delaySyncLabel.setJustificationType(juce::Justification::centred);
     delaySyncLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    delaySyncLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    delaySyncLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     delayTripletButton.setButtonText(safeString("Triplet"));
     delayTripletAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -3122,18 +3295,21 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     delayTripletStraightButton.setVisible(false);
     
     delayFreeRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    delayFreeRateSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    delayFreeRateSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    delayFreeRateSlider.setColour(juce::Slider::textBoxTextColourId, juce::Colours::transparentBlack);
+    delayFreeRateSlider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
+    delayFreeRateSlider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     delayFreeRateSlider.setRange(0.0, 12.0, 0.01);
     delayFreeRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "delayRate", delayFreeRateSlider);
     delayRateLabel.setText(safeString("Time"), juce::dontSendNotification);
     delayRateLabel.setJustificationType(juce::Justification::centred);
     delayRateLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    delayRateLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    delayRateLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     delayRateValueLabel.setText(safeString("1/4"), juce::dontSendNotification);
     delayRateValueLabel.setJustificationType(juce::Justification::centred);
     delayRateValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    delayRateValueLabel.setFont(juce::Font(juce::FontOptions("Consolas", 12.0f, juce::Font::plain)));
+    delayRateValueLabel.setFont(customLookAndFeel.getBodyFont(12.0f, false));
     
     delaySyncRateCombo.addItem(safeString("1/32"), 1);
     delaySyncRateCombo.addItem(safeString("1/16"), 2);
@@ -3156,22 +3332,22 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     delayRateValueLabel.setVisible(true);
     
     delayDecaySlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    delayDecaySlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    delayDecaySlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     delayDecayAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "delayDecay", delayDecaySlider);
     delayDecayLabel.setText(safeString("Decay"), juce::dontSendNotification);
     delayDecayLabel.setJustificationType(juce::Justification::centred);
     delayDecayLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    delayDecayLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    delayDecayLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     delayDryWetSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    delayDryWetSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    delayDryWetSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     delayDryWetAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "delayDryWet", delayDryWetSlider);
     delayDryWetLabel.setText(safeString("Mix"), juce::dontSendNotification);
     delayDryWetLabel.setJustificationType(juce::Justification::centred);
     delayDryWetLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    delayDryWetLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    delayDryWetLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     delayPingPongButton.setButtonText(safeString("Ping-Pong"));
     delayPingPongAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -3179,7 +3355,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     delayPingPongLabel.setText(safeString("Ping-Pong"), juce::dontSendNotification);
     delayPingPongLabel.setJustificationType(juce::Justification::centred);
     delayPingPongLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    delayPingPongLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    delayPingPongLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     delayFilterShowButton.setButtonText(safeString("Filter"));
     delayFilterShowAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -3192,7 +3368,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     delayFilterHPCutoffLabel.setText(safeString("HP Cutoff"), juce::dontSendNotification);
     delayFilterHPCutoffLabel.setJustificationType(juce::Justification::centred);
     delayFilterHPCutoffLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    delayFilterHPCutoffLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    delayFilterHPCutoffLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     delayFilterHPResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     delayFilterHPResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
@@ -3201,7 +3377,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     delayFilterHPResonanceLabel.setText(safeString("HP Res"), juce::dontSendNotification);
     delayFilterHPResonanceLabel.setJustificationType(juce::Justification::centred);
     delayFilterHPResonanceLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    delayFilterHPResonanceLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    delayFilterHPResonanceLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     delayFilterLPCutoffSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     delayFilterLPCutoffSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
@@ -3210,7 +3386,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     delayFilterLPCutoffLabel.setText(safeString("LP Cutoff"), juce::dontSendNotification);
     delayFilterLPCutoffLabel.setJustificationType(juce::Justification::centred);
     delayFilterLPCutoffLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    delayFilterLPCutoffLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    delayFilterLPCutoffLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     delayFilterLPResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     delayFilterLPResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
@@ -3219,7 +3395,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     delayFilterLPResonanceLabel.setText(safeString("LP Res"), juce::dontSendNotification);
     delayFilterLPResonanceLabel.setJustificationType(juce::Justification::centred);
     delayFilterLPResonanceLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    delayFilterLPResonanceLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    delayFilterLPResonanceLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     delayFilterWarmSaturationButton.setButtonText(safeString("Warm Saturation"));
     delayFilterWarmSaturationAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -3233,7 +3409,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     reverbEnabledLabel.setText(safeString("On"), juce::dontSendNotification);
     reverbEnabledLabel.setJustificationType(juce::Justification::centred);
     reverbEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    reverbEnabledLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    reverbEnabledLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     reverbTypeCombo.addItem("Schroeder", 1);
     reverbTypeCombo.addItem("Sexicon take an L", 2);
@@ -3242,25 +3418,25 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     reverbTypeLabel.setText("Type", juce::dontSendNotification);
     reverbTypeLabel.setJustificationType(juce::Justification::centred);
     reverbTypeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    reverbTypeLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    reverbTypeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     reverbWetMixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    reverbWetMixSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    reverbWetMixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     reverbWetMixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "reverbWetMix", reverbWetMixSlider);
     reverbWetMixLabel.setText("Mix", juce::dontSendNotification);
     reverbWetMixLabel.setJustificationType(juce::Justification::centred);
     reverbWetMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    reverbWetMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    reverbWetMixLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     reverbDecayTimeSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    reverbDecayTimeSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    reverbDecayTimeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     reverbDecayTimeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "reverbDecayTime", reverbDecayTimeSlider);
     reverbDecayTimeLabel.setText("Decay", juce::dontSendNotification);
     reverbDecayTimeLabel.setJustificationType(juce::Justification::centred);
     reverbDecayTimeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    reverbDecayTimeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    reverbDecayTimeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     reverbFilterShowButton.setButtonText(safeString("Filter"));
     reverbFilterShowAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -3277,7 +3453,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     reverbFilterHPCutoffLabel.setText("HP Cutoff", juce::dontSendNotification);
     reverbFilterHPCutoffLabel.setJustificationType(juce::Justification::centred);
     reverbFilterHPCutoffLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    reverbFilterHPCutoffLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    reverbFilterHPCutoffLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     reverbFilterHPResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     reverbFilterHPResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
@@ -3286,7 +3462,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     reverbFilterHPResonanceLabel.setText("HP Res", juce::dontSendNotification);
     reverbFilterHPResonanceLabel.setJustificationType(juce::Justification::centred);
     reverbFilterHPResonanceLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    reverbFilterHPResonanceLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    reverbFilterHPResonanceLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     reverbFilterLPCutoffSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     reverbFilterLPCutoffSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
@@ -3295,7 +3471,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     reverbFilterLPCutoffLabel.setText("LP Cutoff", juce::dontSendNotification);
     reverbFilterLPCutoffLabel.setJustificationType(juce::Justification::centred);
     reverbFilterLPCutoffLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    reverbFilterLPCutoffLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    reverbFilterLPCutoffLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     reverbFilterLPResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     reverbFilterLPResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
@@ -3304,7 +3480,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     reverbFilterLPResonanceLabel.setText("LP Res", juce::dontSendNotification);
     reverbFilterLPResonanceLabel.setJustificationType(juce::Justification::centred);
     reverbFilterLPResonanceLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    reverbFilterLPResonanceLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    reverbFilterLPResonanceLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     //==============================================================================
     // -- Grain Delay Effect Setup (Effects tab) --
@@ -3314,7 +3490,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     grainDelayEnabledLabel.setText(safeString("On"), juce::dontSendNotification);
     grainDelayEnabledLabel.setJustificationType(juce::Justification::centred);
     grainDelayEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    grainDelayEnabledLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    grainDelayEnabledLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     grainDelayTimeSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     grainDelayTimeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
@@ -3324,7 +3500,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     grainDelayTimeLabel.setText(safeString("Time"), juce::dontSendNotification);
     grainDelayTimeLabel.setJustificationType(juce::Justification::centred);
     grainDelayTimeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    grainDelayTimeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    grainDelayTimeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     grainDelaySizeSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     grainDelaySizeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
@@ -3334,7 +3510,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     grainDelaySizeLabel.setText(safeString("Size"), juce::dontSendNotification);
     grainDelaySizeLabel.setJustificationType(juce::Justification::centred);
     grainDelaySizeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    grainDelaySizeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    grainDelaySizeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     grainDelayPitchSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     grainDelayPitchSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
@@ -3345,7 +3521,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     grainDelayPitchLabel.setText(safeString("Pitch"), juce::dontSendNotification);
     grainDelayPitchLabel.setJustificationType(juce::Justification::centred);
     grainDelayPitchLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    grainDelayPitchLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    grainDelayPitchLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     grainDelayMixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     grainDelayMixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
@@ -3355,7 +3531,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     grainDelayMixLabel.setText(safeString("Mix"), juce::dontSendNotification);
     grainDelayMixLabel.setJustificationType(juce::Justification::centred);
     grainDelayMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    grainDelayMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    grainDelayMixLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     grainDelayDecaySlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     grainDelayDecaySlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
@@ -3365,7 +3541,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     grainDelayDecayLabel.setText(safeString("Decay"), juce::dontSendNotification);
     grainDelayDecayLabel.setJustificationType(juce::Justification::centred);
     grainDelayDecayLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    grainDelayDecayLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    grainDelayDecayLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     grainDelayDensitySlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     grainDelayDensitySlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
@@ -3375,7 +3551,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     grainDelayDensityLabel.setText(safeString("Density"), juce::dontSendNotification);
     grainDelayDensityLabel.setJustificationType(juce::Justification::centred);
     grainDelayDensityLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    grainDelayDensityLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    grainDelayDensityLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     grainDelayJitterSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     grainDelayJitterSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
@@ -3385,7 +3561,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     grainDelayJitterLabel.setText(safeString("Jitter"), juce::dontSendNotification);
     grainDelayJitterLabel.setJustificationType(juce::Justification::centred);
     grainDelayJitterLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    grainDelayJitterLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    grainDelayJitterLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     grainDelayPingPongButton.setButtonText(safeString("Ping-Pong"));
     grainDelayPingPongAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -3393,7 +3569,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     grainDelayPingPongLabel.setText(safeString("Ping-Pong"), juce::dontSendNotification);
     grainDelayPingPongLabel.setJustificationType(juce::Justification::centred);
     grainDelayPingPongLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    grainDelayPingPongLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    grainDelayPingPongLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     grainDelayFilterShowButton.setButtonText(safeString("Filter"));
     grainDelayFilterShowAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -3405,7 +3581,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     grainDelayFilterHPCutoffLabel.setText(safeString("HP Cutoff"), juce::dontSendNotification);
     grainDelayFilterHPCutoffLabel.setJustificationType(juce::Justification::centred);
     grainDelayFilterHPCutoffLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    grainDelayFilterHPCutoffLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    grainDelayFilterHPCutoffLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     grainDelayFilterHPResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     grainDelayFilterHPResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     grainDelayFilterHPResonanceAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3413,7 +3589,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     grainDelayFilterHPResonanceLabel.setText(safeString("HP Res"), juce::dontSendNotification);
     grainDelayFilterHPResonanceLabel.setJustificationType(juce::Justification::centred);
     grainDelayFilterHPResonanceLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    grainDelayFilterHPResonanceLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    grainDelayFilterHPResonanceLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     grainDelayFilterLPCutoffSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     grainDelayFilterLPCutoffSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     grainDelayFilterLPCutoffAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3421,7 +3597,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     grainDelayFilterLPCutoffLabel.setText(safeString("LP Cutoff"), juce::dontSendNotification);
     grainDelayFilterLPCutoffLabel.setJustificationType(juce::Justification::centred);
     grainDelayFilterLPCutoffLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    grainDelayFilterLPCutoffLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    grainDelayFilterLPCutoffLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     grainDelayFilterLPResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     grainDelayFilterLPResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     grainDelayFilterLPResonanceAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3429,7 +3605,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     grainDelayFilterLPResonanceLabel.setText(safeString("LP Res"), juce::dontSendNotification);
     grainDelayFilterLPResonanceLabel.setJustificationType(juce::Justification::centred);
     grainDelayFilterLPResonanceLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    grainDelayFilterLPResonanceLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    grainDelayFilterLPResonanceLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     grainDelayFilterWarmSaturationButton.setButtonText(safeString("Warm Saturation"));
     grainDelayFilterWarmSaturationAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "grainDelayFilterWarmSaturation", grainDelayFilterWarmSaturationButton);
@@ -3441,7 +3617,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     phaserEnabledLabel.setText(safeString("Phaser"), juce::dontSendNotification);
     phaserEnabledLabel.setJustificationType(juce::Justification::centred);
     phaserEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    phaserEnabledLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    phaserEnabledLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     phaserRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     phaserRateSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     phaserRateSlider.setTextValueSuffix(" Hz");
@@ -3450,7 +3626,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     phaserRateLabel.setText(safeString("Rate"), juce::dontSendNotification);
     phaserRateLabel.setJustificationType(juce::Justification::centred);
     phaserRateLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    phaserRateLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    phaserRateLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     phaserDepthSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     phaserDepthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     phaserDepthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3458,7 +3634,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     phaserDepthLabel.setText(safeString("Depth"), juce::dontSendNotification);
     phaserDepthLabel.setJustificationType(juce::Justification::centred);
     phaserDepthLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    phaserDepthLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    phaserDepthLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     phaserFeedbackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     phaserFeedbackSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     phaserFeedbackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3466,14 +3642,14 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     phaserFeedbackLabel.setText(safeString("Feedback"), juce::dontSendNotification);
     phaserFeedbackLabel.setJustificationType(juce::Justification::centred);
     phaserFeedbackLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    phaserFeedbackLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    phaserFeedbackLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     phaserScriptModeButton.setButtonText(safeString("Script"));
     phaserScriptModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "phaserScriptMode", phaserScriptModeButton);
     phaserScriptModeLabel.setText(safeString("Mode"), juce::dontSendNotification);
     phaserScriptModeLabel.setJustificationType(juce::Justification::centred);
     phaserScriptModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    phaserScriptModeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    phaserScriptModeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     phaserMixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     phaserMixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     phaserMixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3481,7 +3657,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     phaserMixLabel.setText(safeString("Mix"), juce::dontSendNotification);
     phaserMixLabel.setJustificationType(juce::Justification::centred);
     phaserMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    phaserMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    phaserMixLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     phaserCentreSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     phaserCentreSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     phaserCentreSlider.setTextValueSuffix(" Hz");
@@ -3490,7 +3666,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     phaserCentreLabel.setText(safeString("Center"), juce::dontSendNotification);
     phaserCentreLabel.setJustificationType(juce::Justification::centred);
     phaserCentreLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    phaserCentreLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    phaserCentreLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     phaserStagesCombo.addItem(safeString("4 (Phase 90)"), 1);
     phaserStagesCombo.addItem(safeString("6 (Deeper)"), 2);
     phaserStagesCombo.setSelectedId(1);
@@ -3499,7 +3675,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     phaserStagesLabel.setText(safeString("Stages"), juce::dontSendNotification);
     phaserStagesLabel.setJustificationType(juce::Justification::centred);
     phaserStagesLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    phaserStagesLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    phaserStagesLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     phaserStereoOffsetSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     phaserStereoOffsetSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     phaserStereoOffsetAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3507,14 +3683,14 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     phaserStereoOffsetLabel.setText(safeString("Width"), juce::dontSendNotification);
     phaserStereoOffsetLabel.setJustificationType(juce::Justification::centred);
     phaserStereoOffsetLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    phaserStereoOffsetLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    phaserStereoOffsetLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     phaserVintageModeButton.setButtonText(safeString("Vintage"));
     phaserVintageModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "phaserVintageMode", phaserVintageModeButton);
     phaserVintageModeLabel.setText(safeString("LFO"), juce::dontSendNotification);
     phaserVintageModeLabel.setJustificationType(juce::Justification::centred);
     phaserVintageModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    phaserVintageModeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    phaserVintageModeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     // Flanger Effect (Effects tab)
     flangerEnabledButton.setButtonText(safeString("On"));
@@ -3523,7 +3699,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     flangerEnabledLabel.setText(safeString("Flanger"), juce::dontSendNotification);
     flangerEnabledLabel.setJustificationType(juce::Justification::centred);
     flangerEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    flangerEnabledLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    flangerEnabledLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     flangerRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     flangerRateSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     flangerRateSlider.setTextValueSuffix(" Hz");
@@ -3532,7 +3708,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     flangerRateLabel.setText(safeString("Rate"), juce::dontSendNotification);
     flangerRateLabel.setJustificationType(juce::Justification::centred);
     flangerRateLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    flangerRateLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    flangerRateLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     flangerDepthSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     flangerDepthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     flangerDepthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3540,7 +3716,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     flangerDepthLabel.setText(safeString("Depth"), juce::dontSendNotification);
     flangerDepthLabel.setJustificationType(juce::Justification::centred);
     flangerDepthLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    flangerDepthLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    flangerDepthLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     flangerFeedbackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     flangerFeedbackSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     flangerFeedbackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3548,7 +3724,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     flangerFeedbackLabel.setText(safeString("Feedback"), juce::dontSendNotification);
     flangerFeedbackLabel.setJustificationType(juce::Justification::centred);
     flangerFeedbackLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    flangerFeedbackLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    flangerFeedbackLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     flangerWidthSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     flangerWidthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     flangerWidthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3556,7 +3732,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     flangerWidthLabel.setText(safeString("Width"), juce::dontSendNotification);
     flangerWidthLabel.setJustificationType(juce::Justification::centred);
     flangerWidthLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    flangerWidthLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    flangerWidthLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     flangerMixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     flangerMixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     flangerMixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3564,7 +3740,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     flangerMixLabel.setText(safeString("Mix"), juce::dontSendNotification);
     flangerMixLabel.setJustificationType(juce::Justification::centred);
     flangerMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    flangerMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    flangerMixLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     // Bit Crusher Effect (Effects tab)
     bitCrusherEnabledButton.setButtonText(safeString("On"));
@@ -3573,14 +3749,14 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     bitCrusherEnabledLabel.setText(safeString("Bit Crusher"), juce::dontSendNotification);
     bitCrusherEnabledLabel.setJustificationType(juce::Justification::centred);
     bitCrusherEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    bitCrusherEnabledLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    bitCrusherEnabledLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     bitCrusherPostEffectButton.setButtonText(safeString("Post Effect"));
     bitCrusherPostEffectAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "bitCrusherPostEffect", bitCrusherPostEffectButton);
     bitCrusherPostEffectLabel.setText(safeString("Before / After"), juce::dontSendNotification);
     bitCrusherPostEffectLabel.setJustificationType(juce::Justification::centred);
     bitCrusherPostEffectLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    bitCrusherPostEffectLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    bitCrusherPostEffectLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     bitCrusherAmountSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     bitCrusherAmountSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     bitCrusherAmountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3588,7 +3764,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     bitCrusherAmountLabel.setText(safeString("Amount"), juce::dontSendNotification);
     bitCrusherAmountLabel.setJustificationType(juce::Justification::centred);
     bitCrusherAmountLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    bitCrusherAmountLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    bitCrusherAmountLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     bitCrusherRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     bitCrusherRateSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     bitCrusherRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3596,7 +3772,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     bitCrusherRateLabel.setText(safeString("Rate"), juce::dontSendNotification);
     bitCrusherRateLabel.setJustificationType(juce::Justification::centred);
     bitCrusherRateLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    bitCrusherRateLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    bitCrusherRateLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     bitCrusherMixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     bitCrusherMixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     bitCrusherMixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3604,7 +3780,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     bitCrusherMixLabel.setText(safeString("Mix"), juce::dontSendNotification);
     bitCrusherMixLabel.setJustificationType(juce::Justification::centred);
     bitCrusherMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    bitCrusherMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    bitCrusherMixLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     // Soft Clipper (Saturation Color tab)
     softClipperEnabledButton.setButtonText(safeString("On"));
@@ -3613,7 +3789,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     softClipperEnabledLabel.setText(safeString("Soft Clipper"), juce::dontSendNotification);
     softClipperEnabledLabel.setJustificationType(juce::Justification::centred);
     softClipperEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    softClipperEnabledLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    softClipperEnabledLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     softClipperModeCombo.addItem(safeString("Smooth"), 1);
     softClipperModeCombo.addItem(safeString("Crisp"), 2);
     softClipperModeCombo.addItem(safeString("Tube"), 3);
@@ -3625,7 +3801,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     softClipperModeLabel.setText(safeString("Mode"), juce::dontSendNotification);
     softClipperModeLabel.setJustificationType(juce::Justification::centred);
     softClipperModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    softClipperModeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    softClipperModeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     softClipperDriveSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     softClipperDriveSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     softClipperDriveAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3633,7 +3809,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     softClipperDriveLabel.setText(safeString("Drive"), juce::dontSendNotification);
     softClipperDriveLabel.setJustificationType(juce::Justification::centred);
     softClipperDriveLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    softClipperDriveLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    softClipperDriveLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     softClipperKneeSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     softClipperKneeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     softClipperKneeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3641,7 +3817,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     softClipperKneeLabel.setText(safeString("Knee"), juce::dontSendNotification);
     softClipperKneeLabel.setJustificationType(juce::Justification::centred);
     softClipperKneeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    softClipperKneeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    softClipperKneeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     softClipperOversampleCombo.addItem(safeString("2x"), 1);
     softClipperOversampleCombo.addItem(safeString("4x"), 2);
     softClipperOversampleCombo.addItem(safeString("8x"), 3);
@@ -3652,7 +3828,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     softClipperOversampleLabel.setText(safeString("OS"), juce::dontSendNotification);
     softClipperOversampleLabel.setJustificationType(juce::Justification::centred);
     softClipperOversampleLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    softClipperOversampleLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    softClipperOversampleLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     softClipperMixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     softClipperMixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     softClipperMixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3660,7 +3836,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     softClipperMixLabel.setText(safeString("Mix"), juce::dontSendNotification);
     softClipperMixLabel.setJustificationType(juce::Justification::centred);
     softClipperMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    softClipperMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    softClipperMixLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     // Compressor (Saturation Color tab)
     compressorEnabledButton.setButtonText(safeString("On"));
@@ -3669,7 +3845,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     compressorEnabledLabel.setText(safeString("Compressor"), juce::dontSendNotification);
     compressorEnabledLabel.setJustificationType(juce::Justification::centred);
     compressorEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    compressorEnabledLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorEnabledLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     compressorTypeCombo.addItem(safeString("SSL"), 1);
     compressorTypeCombo.addItem(safeString("1176"), 2);
     compressorTypeCombo.addItem(safeString("LA-2A"), 3);
@@ -3679,16 +3855,16 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     compressorTypeLabel.setText(safeString("Type"), juce::dontSendNotification);
     compressorTypeLabel.setJustificationType(juce::Justification::centred);
     compressorTypeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    compressorTypeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorTypeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     compressorThresholdSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     compressorThresholdSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     compressorThresholdSlider.setTextValueSuffix(safeString(" dB"));
     compressorThresholdAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "compressorThreshold", compressorThresholdSlider);
-    compressorThresholdLabel.setText(safeString("Thresh"), juce::dontSendNotification);
+    compressorThresholdLabel.setText(safeString("Threshold"), juce::dontSendNotification);
     compressorThresholdLabel.setJustificationType(juce::Justification::centred);
     compressorThresholdLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    compressorThresholdLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorThresholdLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     compressorRatioSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     compressorRatioSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     compressorRatioSlider.setTextValueSuffix(safeString(":1"));
@@ -3697,7 +3873,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     compressorRatioLabel.setText(safeString("Ratio"), juce::dontSendNotification);
     compressorRatioLabel.setJustificationType(juce::Justification::centred);
     compressorRatioLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    compressorRatioLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorRatioLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     compressorAttackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     compressorAttackSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     compressorAttackSlider.setTextValueSuffix(safeString(" ms"));
@@ -3706,7 +3882,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     compressorAttackLabel.setText(safeString("Attack"), juce::dontSendNotification);
     compressorAttackLabel.setJustificationType(juce::Justification::centred);
     compressorAttackLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    compressorAttackLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorAttackLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     compressorReleaseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     compressorReleaseSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     compressorReleaseSlider.setTextValueSuffix(safeString(" ms"));
@@ -3715,7 +3891,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     compressorReleaseLabel.setText(safeString("Release"), juce::dontSendNotification);
     compressorReleaseLabel.setJustificationType(juce::Justification::centred);
     compressorReleaseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    compressorReleaseLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorReleaseLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     compressorMakeupSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     compressorMakeupSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     compressorMakeupSlider.setTextValueSuffix(safeString(" dB"));
@@ -3724,7 +3900,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     compressorMakeupLabel.setText(safeString("Makeup"), juce::dontSendNotification);
     compressorMakeupLabel.setJustificationType(juce::Justification::centred);
     compressorMakeupLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    compressorMakeupLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorMakeupLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     compressorMixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     compressorMixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     compressorMixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3732,21 +3908,21 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     compressorMixLabel.setText(safeString("Mix"), juce::dontSendNotification);
     compressorMixLabel.setJustificationType(juce::Justification::centred);
     compressorMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    compressorMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorMixLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     compressorAutoReleaseButton.setButtonText(safeString("Auto Rel"));
     compressorAutoReleaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "compressorAutoRelease", compressorAutoReleaseButton);
     compressorAutoReleaseLabel.setText(safeString("Auto"), juce::dontSendNotification);
     compressorAutoReleaseLabel.setJustificationType(juce::Justification::centred);
     compressorAutoReleaseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    compressorAutoReleaseLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorAutoReleaseLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     compressorSoftClipButton.setButtonText(safeString("Soft Clip"));
     compressorSoftClipAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "compressorSoftClip", compressorSoftClipButton);
     compressorSoftClipLabel.setText(safeString("Clip"), juce::dontSendNotification);
     compressorSoftClipLabel.setJustificationType(juce::Justification::centred);
     compressorSoftClipLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    compressorSoftClipLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    compressorSoftClipLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     // Transient (Saturation Color tab)
     transientEnabledButton.setButtonText(safeString("On"));
@@ -3755,7 +3931,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     transientEnabledLabel.setText(safeString("Transient"), juce::dontSendNotification);
     transientEnabledLabel.setJustificationType(juce::Justification::centred);
     transientEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    transientEnabledLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    transientEnabledLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     transientTypeCombo.addItem(safeString("808 Kick"), 1);
     transientTypeCombo.addItem(safeString("808 Snare"), 2);
     transientTypeCombo.addItem(safeString("808 Hat"), 3);
@@ -3772,7 +3948,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     transientTypeLabel.setText(safeString("Sound"), juce::dontSendNotification);
     transientTypeLabel.setJustificationType(juce::Justification::centred);
     transientTypeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    transientTypeLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    transientTypeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     transientMixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     transientMixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     transientMixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3780,14 +3956,14 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     transientMixLabel.setText(safeString("Mix"), juce::dontSendNotification);
     transientMixLabel.setJustificationType(juce::Justification::centred);
     transientMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    transientMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    transientMixLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     transientPostEffectButton.setButtonText(safeString("Post Effect"));
     transientPostEffectAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "transientPostEffect", transientPostEffectButton);
     transientPostEffectLabel.setText(safeString("Pre / Post"), juce::dontSendNotification);
     transientPostEffectLabel.setJustificationType(juce::Justification::centred);
     transientPostEffectLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    transientPostEffectLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    transientPostEffectLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     transientKaDonkSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     transientKaDonkSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     transientKaDonkAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3795,7 +3971,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     transientKaDonkLabel.setText(safeString("Ka-Donk"), juce::dontSendNotification);
     transientKaDonkLabel.setJustificationType(juce::Justification::centred);
     transientKaDonkLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    transientKaDonkLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    transientKaDonkLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     transientCoarseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     transientCoarseSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     transientCoarseSlider.setTextValueSuffix(safeString(" st"));
@@ -3804,7 +3980,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     transientCoarseLabel.setText(safeString("Coarse"), juce::dontSendNotification);
     transientCoarseLabel.setJustificationType(juce::Justification::centred);
     transientCoarseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    transientCoarseLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    transientCoarseLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     transientLengthSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     transientLengthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     transientLengthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3812,7 +3988,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     transientLengthLabel.setText(safeString("Length"), juce::dontSendNotification);
     transientLengthLabel.setJustificationType(juce::Justification::centred);
     transientLengthLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    transientLengthLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    transientLengthLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     // Lo-Fi (Saturation Color tab)
     lofiEnabledButton.setButtonText(safeString("On"));
@@ -3821,7 +3997,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lofiEnabledLabel.setText(safeString("Lo-Fi"), juce::dontSendNotification);
     lofiEnabledLabel.setJustificationType(juce::Justification::centred);
     lofiEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lofiEnabledLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    lofiEnabledLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     lofiAmountSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     lofiAmountSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     lofiAmountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3829,7 +4005,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lofiAmountLabel.setText(safeString("Lofi"), juce::dontSendNotification);
     lofiAmountLabel.setJustificationType(juce::Justification::centred);
     lofiAmountLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lofiAmountLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    lofiAmountLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     // Trance Gate Effect (Effects tab)
     tranceGateEnabledButton.setButtonText(safeString("On"));
@@ -3838,14 +4014,14 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     tranceGateEnabledLabel.setText(safeString("On"), juce::dontSendNotification);
     tranceGateEnabledLabel.setJustificationType(juce::Justification::centred);
     tranceGateEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    tranceGateEnabledLabel.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::bold)));
+    tranceGateEnabledLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     tranceGatePreEffectButton.setButtonText(safeString("Post Effect"));
     tranceGatePreEffectAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "tranceGatePostEffect", tranceGatePreEffectButton);
     tranceGatePreEffectLabel.setText(safeString("Before / After"), juce::dontSendNotification);
     tranceGatePreEffectLabel.setJustificationType(juce::Justification::centred);
     tranceGatePreEffectLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    tranceGatePreEffectLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    tranceGatePreEffectLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     tranceGateStepsCombo.addItem(safeString("4"), 1);
     tranceGateStepsCombo.addItem(safeString("8"), 2);
     tranceGateStepsCombo.addItem(safeString("16"), 3);
@@ -3855,14 +4031,14 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     tranceGateStepsLabel.setText(safeString("Steps"), juce::dontSendNotification);
     tranceGateStepsLabel.setJustificationType(juce::Justification::centred);
     tranceGateStepsLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    tranceGateStepsLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    tranceGateStepsLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     tranceGateSyncButton.setButtonText(safeString("Sync"));
     tranceGateSyncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "tranceGateSync", tranceGateSyncButton);
     tranceGateSyncLabel.setText(safeString("Sync"), juce::dontSendNotification);
     tranceGateSyncLabel.setJustificationType(juce::Justification::centred);
     tranceGateSyncLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    tranceGateSyncLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    tranceGateSyncLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     tranceGateRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     tranceGateRateSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     tranceGateRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3870,7 +4046,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     tranceGateRateLabel.setText(safeString("Rate"), juce::dontSendNotification);
     tranceGateRateLabel.setJustificationType(juce::Justification::centred);
     tranceGateRateLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    tranceGateRateLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    tranceGateRateLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     tranceGateAttackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     tranceGateAttackSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     tranceGateAttackSlider.setTextValueSuffix(" ms");
@@ -3879,7 +4055,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     tranceGateAttackLabel.setText(safeString("Attack"), juce::dontSendNotification);
     tranceGateAttackLabel.setJustificationType(juce::Justification::centred);
     tranceGateAttackLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    tranceGateAttackLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    tranceGateAttackLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     tranceGateReleaseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     tranceGateReleaseSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     tranceGateReleaseSlider.setTextValueSuffix(" ms");
@@ -3888,7 +4064,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     tranceGateReleaseLabel.setText(safeString("Release"), juce::dontSendNotification);
     tranceGateReleaseLabel.setJustificationType(juce::Justification::centred);
     tranceGateReleaseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    tranceGateReleaseLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    tranceGateReleaseLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     tranceGateMixSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     tranceGateMixSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     tranceGateMixAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -3896,7 +4072,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     tranceGateMixLabel.setText(safeString("Mix"), juce::dontSendNotification);
     tranceGateMixLabel.setJustificationType(juce::Justification::centred);
     tranceGateMixLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    tranceGateMixLabel.setFont(juce::Font(juce::FontOptions(11.0f, juce::Font::bold)));
+    tranceGateMixLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     tranceGateStep1Button.setButtonText(safeString("1"));
     tranceGateStep1Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "tranceGateStep1", tranceGateStep1Button);
@@ -4022,8 +4198,21 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         tabbedComponent.addTab(safeString("Effects"), juce::Colour(0xff0a0a1f), effectsPage.get(), false);
         tabbedComponent.addTab(safeString("Saturation Color"), juce::Colour(0xff0a0a1f), saturationColorPage.get(), false);
         tabbedComponent.addTab(safeString("Spectral"), juce::Colour(0xff0a0a1f), spectralPage.get(), false);
-        
+
+        // Ensure ALL labels in all tabs use our LookAndFeel (fixes random font inconsistencies)
+        mainPage->setLookAndFeel(&customLookAndFeel);
+        modulationPage->setLookAndFeel(&customLookAndFeel);
+        effectsPage->setLookAndFeel(&customLookAndFeel);
+        saturationColorPage->setLookAndFeel(&customLookAndFeel);
+        spectralPage->setLookAndFeel(&customLookAndFeel);
+
         addAndMakeVisible(tabbedComponent);
+        tabbedComponent.setOpaque(false);
+        tabbedComponent.getTabbedButtonBar().setOpaque(false);
+        tabGlowOverlay = std::make_unique<TabGlowOverlayComponent>(*this);
+        addAndMakeVisible(tabGlowOverlay.get());
+        bottomTabGlowOverlay = std::make_unique<BottomTabGlowOverlayComponent>(*this);
+        addAndMakeVisible(bottomTabGlowOverlay.get());
         DBG("Space Dust: Tabbed pages created and added");
     }
     catch (const std::exception& e)
@@ -4220,6 +4409,26 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     });
     
     //==============================================================================
+    // -- Register APVTS Listeners for Bidirectional Filter Sync --
+    {
+        auto& vts = audioProcessor.getValueTreeState();
+        vts.addParameterListener("filterMode", this);
+        vts.addParameterListener("filterCutoff", this);
+        vts.addParameterListener("filterResonance", this);
+        vts.addParameterListener("warmSaturationMaster", this);
+        vts.addParameterListener("modFilter1LinkToMaster", this);
+        vts.addParameterListener("modFilter1Mode", this);
+        vts.addParameterListener("modFilter1Cutoff", this);
+        vts.addParameterListener("modFilter1Resonance", this);
+        vts.addParameterListener("warmSaturationMod1", this);
+        vts.addParameterListener("modFilter2LinkToMaster", this);
+        vts.addParameterListener("modFilter2Mode", this);
+        vts.addParameterListener("modFilter2Cutoff", this);
+        vts.addParameterListener("modFilter2Resonance", this);
+        vts.addParameterListener("warmSaturationMod2", this);
+    }
+
+    //==============================================================================
     // -- Start Timer for LFO Rate Display Updates --
     startTimer(50);  // Update every 50ms for smooth rate display
     
@@ -4247,10 +4456,29 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
 SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
 {
     DBG("Space Dust: Processor destructor START");
-    
+
     isBeingDestroyed.store(true);
     stopTimer();
-    
+
+    // Remove APVTS filter sync listeners
+    {
+        auto& vts = audioProcessor.getValueTreeState();
+        vts.removeParameterListener("filterMode", this);
+        vts.removeParameterListener("filterCutoff", this);
+        vts.removeParameterListener("filterResonance", this);
+        vts.removeParameterListener("warmSaturationMaster", this);
+        vts.removeParameterListener("modFilter1LinkToMaster", this);
+        vts.removeParameterListener("modFilter1Mode", this);
+        vts.removeParameterListener("modFilter1Cutoff", this);
+        vts.removeParameterListener("modFilter1Resonance", this);
+        vts.removeParameterListener("warmSaturationMod1", this);
+        vts.removeParameterListener("modFilter2LinkToMaster", this);
+        vts.removeParameterListener("modFilter2Mode", this);
+        vts.removeParameterListener("modFilter2Cutoff", this);
+        vts.removeParameterListener("modFilter2Resonance", this);
+        vts.removeParameterListener("warmSaturationMod2", this);
+    }
+
     // Remove all listeners first
     delayEnabledButton.removeListener(this);
     phaserEnabledButton.removeListener(this);
@@ -4273,7 +4501,34 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
     if (delaySyncRateListener)
         delaySyncRateCombo.removeListener(delaySyncRateListener.get());
     
-    // Clear LookAndFeel on all components before destruction
+    // Clear LookAndFeel from labels we explicitly assigned (before customLookAndFeel is invalidated)
+    osc1CoarseTuneLabel.setLookAndFeel(nullptr);
+    osc2CoarseTuneLabel.setLookAndFeel(nullptr);
+    filterCutoffLabel.setLookAndFeel(nullptr);
+    filterResonanceLabel.setLookAndFeel(nullptr);
+    envSustainLabel.setLookAndFeel(nullptr);
+    envReleaseLabel.setLookAndFeel(nullptr);
+    filterEnvReleaseLabel.setLookAndFeel(nullptr);
+    pitchEnvPitchLabel.setLookAndFeel(nullptr);
+    pitchBendLabel.setLookAndFeel(nullptr);
+    subOscCoarseLabel.setLookAndFeel(nullptr);
+    lfo1PhaseLabel.setLookAndFeel(nullptr);
+    lfo2PhaseLabel.setLookAndFeel(nullptr);
+    lfo1TargetLabel.setLookAndFeel(nullptr);
+    lfo2TargetLabel.setLookAndFeel(nullptr);
+    grainDelayDensityLabel.setLookAndFeel(nullptr);
+    phaserStagesLabel.setLookAndFeel(nullptr);
+    compressorThresholdLabel.setLookAndFeel(nullptr);
+    modFilter1ResonanceLabel.setLookAndFeel(nullptr);
+    modFilter2ResonanceLabel.setLookAndFeel(nullptr);
+    compressorReleaseLabel.setLookAndFeel(nullptr);
+
+    // Clear LookAndFeel on page components and editor before destruction
+    if (mainPage) mainPage->setLookAndFeel(nullptr);
+    if (modulationPage) modulationPage->setLookAndFeel(nullptr);
+    if (effectsPage) effectsPage->setLookAndFeel(nullptr);
+    if (saturationColorPage) saturationColorPage->setLookAndFeel(nullptr);
+    if (spectralPage) spectralPage->setLookAndFeel(nullptr);
     setLookAndFeel(nullptr);
     
     // Clear page components before tabbed component
@@ -4281,8 +4536,93 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
     mainPage.reset();
     effectsPage.reset();
     saturationColorPage.reset();
+    spectralPage.reset();
     
     DBG("Space Dust: Processor destructor END");
+}
+
+//==============================================================================
+// -- APVTS Listener: Bidirectional Filter Parameter Sync --
+
+void SpaceDustAudioProcessorEditor::parameterChanged(const juce::String& parameterID, float newValue)
+{
+    auto safeThis = juce::Component::SafePointer<SpaceDustAudioProcessorEditor>(this);
+    juce::MessageManager::callAsync([safeThis, parameterID, newValue]()
+    {
+        if (safeThis == nullptr || safeThis->isBeingDestroyed.load()) return;
+        safeThis->syncLinkedFilterParams(parameterID, newValue);
+    });
+}
+
+void SpaceDustAudioProcessorEditor::syncLinkedFilterParams(const juce::String& parameterID, float newValue)
+{
+    if (isSyncingFilterParams) return;
+    isSyncingFilterParams = true;
+
+    auto& apvts = audioProcessor.getValueTreeState();
+    bool link1 = *apvts.getRawParameterValue("modFilter1LinkToMaster") > 0.5f;
+    bool link2 = *apvts.getRawParameterValue("modFilter2LinkToMaster") > 0.5f;
+
+    auto syncParam = [&](const juce::String& sourceParam, const juce::String& targetParam)
+    {
+        auto* target = apvts.getParameter(targetParam);
+        if (!target) return;
+        float srcRaw = *apvts.getRawParameterValue(sourceParam);
+        float targetNorm = target->convertTo0to1(srcRaw);
+        if (std::abs(target->getValue() - targetNorm) > 0.0001f)
+            target->setValueNotifyingHost(targetNorm);
+    };
+
+    struct ParamMapping { const char* master; const char* mod1; const char* mod2; };
+    static const ParamMapping mappings[] = {
+        { "filterMode",             "modFilter1Mode",      "modFilter2Mode" },
+        { "filterCutoff",           "modFilter1Cutoff",    "modFilter2Cutoff" },
+        { "filterResonance",        "modFilter1Resonance", "modFilter2Resonance" },
+        { "warmSaturationMaster",   "warmSaturationMod1",  "warmSaturationMod2" },
+    };
+
+    auto findMapping = [&](const juce::String& pid) -> const ParamMapping*
+    {
+        for (auto& m : mappings)
+            if (pid == m.master || pid == m.mod1 || pid == m.mod2)
+                return &m;
+        return nullptr;
+    };
+
+    if (parameterID == "modFilter1LinkToMaster" && newValue > 0.5f)
+    {
+        for (auto& m : mappings)
+            syncParam(m.master, m.mod1);
+    }
+    else if (parameterID == "modFilter2LinkToMaster" && newValue > 0.5f)
+    {
+        for (auto& m : mappings)
+            syncParam(m.master, m.mod2);
+    }
+    else if (auto* m = findMapping(parameterID))
+    {
+        bool isMaster = (parameterID == m->master);
+        bool isMod1   = (parameterID == m->mod1);
+        bool isMod2   = (parameterID == m->mod2);
+
+        if (isMaster)
+        {
+            if (link1) syncParam(m->master, m->mod1);
+            if (link2) syncParam(m->master, m->mod2);
+        }
+        else if (isMod1 && link1)
+        {
+            syncParam(m->mod1, m->master);
+            if (link2) syncParam(m->mod1, m->mod2);
+        }
+        else if (isMod2 && link2)
+        {
+            syncParam(m->mod2, m->master);
+            if (link1) syncParam(m->mod2, m->mod1);
+        }
+    }
+
+    isSyncingFilterParams = false;
 }
 
 //==============================================================================
@@ -4564,6 +4904,17 @@ void SpaceDustAudioProcessorEditor::timerCallback()
         float rightPeak = audioProcessor.getRightPeakLevel();
         stereoLevelMeter->updateLevels(leftPeak, rightPeak);
     }
+    // Update clipping hold state (runs every tick regardless of active tab)
+    {
+        const float clipThreshold = 0.891f;  // -1 dB, matches meter red zone
+        bool peakInRed = audioProcessor.getLeftPeakLevel() >= clipThreshold
+                      || audioProcessor.getRightPeakLevel() >= clipThreshold;
+        if (peakInRed)
+            clippingHoldTicks = clippingHoldDuration;
+        else if (clippingHoldTicks > 0)
+            --clippingHoldTicks;
+    }
+
     repaint();  // Redraw glow halos so they follow output level
 
     // Update Spectral tab (Lissajous drawn in SpectralPage::paint, Oscilloscope, Spectrum)
@@ -4573,13 +4924,16 @@ void SpaceDustAudioProcessorEditor::timerCallback()
         const auto& buf = audioProcessor.getGoniometerBuffer();
         const int validSamples = audioProcessor.getGoniometerValidSamples();
         spectralPage->repaint();
+        bool showClipping = clippingHoldTicks > 0;
         if (auto* osc = spectralPage->getOscilloscope())
         {
+            osc->setClipping(showClipping);
             osc->update(buf, validSamples);
             osc->repaint();
         }
         if (auto* spec = spectralPage->getSpectrumAnalyser())
         {
+            spec->setClipping(showClipping);
             spec->update(buf);
             spec->repaint();
         }
@@ -4607,33 +4961,123 @@ void SpaceDustAudioProcessorEditor::timerCallback()
 
 void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
 {
-    //==============================================================================
-    // -- Safety Check: Don't paint if being destroyed --
     if (isBeingDestroyed.load())
         return;
-    
-    //==============================================================================
-    // -- Background: Dark Cosmic Theme --
-    // Deep space blue-black background for immersive cosmic experience
+
+    const int w = getWidth();
+    const int h = getHeight();
+
     g.fillAll(juce::Colour(0xff0a0a1f));
 
     //==============================================================================
-    // -- Title: Space Dust --
-    // Compact title with subtle drop shadow
-    auto titleArea = juce::Rectangle<int>(0, 4, getWidth(), 36);
-    
-    // Draw subtle drop shadow (20-30% opacity, 1-2px offset)
-    g.setColour(juce::Colour(0x33000000));  // 20% opacity black
-    g.setFont(juce::Font(juce::FontOptions(28.0f, juce::Font::bold)));
-    g.drawText(safeString("Space Dust"), titleArea.translated(1, 2), juce::Justification::centred, true);
-    
-    // Draw main text (pure white or very light cyan)
-    g.setColour(juce::Colour(0xffffffff));  // Pure white
-    g.setFont(juce::Font(juce::FontOptions(28.0f, juce::Font::bold)));
-    g.drawText(safeString("Space Dust"), titleArea, juce::Justification::centred, true);
-    
+    // -- Arcade Edge Glow (top & bottom) - parabolic, subtle, smooth color gradient --
+    // Cyan -> deep blue -> transparent. Red variant when metering in red zone.
+    // Tabs are translucent so glow shows through at their bottom edge.
+    {
+        float avgLevel = 0.5f * (audioProcessor.getLeftPeakLevel() + audioProcessor.getRightPeakLevel());
+        avgLevel = juce::jmin(1.0f, avgLevel);
+
+        const float maxGlowDepth = 90.0f;
+        const bool isRed = (clippingHoldTicks > 0);
+        // More subtle: reduced base alpha (was 15+140, now 6+60)
+        juce::uint8 peakAlpha = static_cast<juce::uint8>(juce::jlimit(0, 255, static_cast<int>(6 + 60 * avgLevel)));
+
+        // Color gradient: bright at edge, deeper shade inward, then transparent
+        const juce::Colour edgeCol = isRed ? juce::Colour(0xffdd3333) : juce::Colour(0xff00d4ff);  // Darker red when clipping
+        const juce::Colour midCol  = isRed ? juce::Colour(0xff991818) : juce::Colour(0xff0066aa);  // Deeper red
+        const juce::Colour fadeCol = juce::Colours::transparentBlack;
+
+        // Parabolic depth: center extends further (U/n-shape)
+        auto parabolicDepth = [](float xNorm, float layerHeight) -> float {
+            float t = 1.0f - 4.0f * (xNorm - 0.5f) * (xNorm - 0.5f);
+            t = juce::jmax(0.0f, t);
+            return layerHeight * (0.25f + 0.75f * t);
+        };
+
+        auto drawTopGlow = [&](float layerHeight, float alphaScale)
+        {
+            juce::Path path;
+            path.startNewSubPath(0.0f, 0.0f);
+            path.lineTo(static_cast<float>(w), 0.0f);
+            for (int x = w; x >= 0; x -= 2)
+            {
+                float xNorm = static_cast<float>(x) / static_cast<float>(w);
+                float depth = parabolicDepth(xNorm, layerHeight);
+                path.lineTo(static_cast<float>(x), depth);
+            }
+            path.closeSubPath();
+
+            // Smooth gradient: edge (bright) -> 30% -> 60% -> 90% (transparent). Color gradient cyan->blue or red shades
+            juce::ColourGradient grad(edgeCol.withAlpha(static_cast<juce::uint8>(peakAlpha * alphaScale)), (float)w * 0.5f, 0.0f,
+                                      fadeCol, (float)w * 0.5f, layerHeight, false);
+            grad.addColour(0.15f, edgeCol.withAlpha(static_cast<juce::uint8>(peakAlpha * alphaScale * 0.85f)));
+            grad.addColour(0.35f, midCol.withAlpha(static_cast<juce::uint8>(peakAlpha * alphaScale * 0.5f)));
+            grad.addColour(0.55f, midCol.withAlpha(static_cast<juce::uint8>(peakAlpha * alphaScale * 0.22f)));
+            grad.addColour(0.78f, fadeCol);
+            g.setGradientFill(grad);
+            g.fillPath(path);
+        };
+        auto drawBottomGlow = [&](float layerHeight, float alphaScale)
+        {
+            float yBase = static_cast<float>(h);
+            juce::Path path;
+            path.startNewSubPath(0.0f, yBase);
+            path.lineTo(static_cast<float>(w), yBase);
+            for (int x = w; x >= 0; x -= 2)
+            {
+                float xNorm = static_cast<float>(x) / static_cast<float>(w);
+                float depth = parabolicDepth(xNorm, layerHeight);
+                path.lineTo(static_cast<float>(x), yBase - depth);
+            }
+            path.closeSubPath();
+
+            juce::ColourGradient grad(fadeCol, (float)w * 0.5f, yBase - layerHeight,
+                                      edgeCol.withAlpha(static_cast<juce::uint8>(peakAlpha * alphaScale)), (float)w * 0.5f, yBase, false);
+            grad.addColour(0.22f, fadeCol);
+            grad.addColour(0.45f, midCol.withAlpha(static_cast<juce::uint8>(peakAlpha * alphaScale * 0.22f)));
+            grad.addColour(0.65f, midCol.withAlpha(static_cast<juce::uint8>(peakAlpha * alphaScale * 0.5f)));
+            grad.addColour(0.85f, edgeCol.withAlpha(static_cast<juce::uint8>(peakAlpha * alphaScale * 0.85f)));
+            g.setGradientFill(grad);
+            g.fillPath(path);
+        };
+
+        // Draw back-to-front: outer halo first, then bright core. Subtler layer alphas.
+        drawTopGlow(maxGlowDepth * 1.4f, 0.35f);
+        drawBottomGlow(maxGlowDepth * 1.4f, 0.35f);
+        drawTopGlow(maxGlowDepth, 0.55f);
+        drawBottomGlow(maxGlowDepth, 0.55f);
+        drawTopGlow(maxGlowDepth * 0.55f, 0.85f);
+        drawBottomGlow(maxGlowDepth * 0.55f, 0.85f);
+    }
+
     //==============================================================================
-    // -- Master Section Glow - brightness follows output level, max-blend for consistency --
+    // -- Title: Space Dust (Glitch Goblin font) --
+    {
+        auto titleArea = juce::Rectangle<int>(0, 2, w, 44);
+        juce::Font titleFont = customLookAndFeel.getTitleFont(40.0f);
+
+        // Outer glow layers (expanding offsets, decreasing opacity)
+        const juce::Colour glowCol(0xff00d4ff);
+        for (int i = 3; i >= 1; --i)
+        {
+            g.setColour(glowCol.withAlpha(static_cast<juce::uint8>(18 / i)));
+            g.setFont(titleFont);
+            g.drawText(safeString("Space Dust"), titleArea.expanded(i * 2, i), juce::Justification::centred, true);
+        }
+
+        // Drop shadow
+        g.setColour(juce::Colour(0x44000000));
+        g.setFont(titleFont);
+        g.drawText(safeString("Space Dust"), titleArea.translated(1, 2), juce::Justification::centred, true);
+
+        // Main text
+        g.setColour(juce::Colour(0xffffffff));
+        g.setFont(titleFont);
+        g.drawText(safeString("Space Dust"), titleArea, juce::Justification::centred, true);
+    }
+
+    //==============================================================================
+    // -- Master Section Glow --
     if (masterGroup.isVisible())
     {
         float avgLevel = 0.5f * (audioProcessor.getLeftPeakLevel() + audioProcessor.getRightPeakLevel());
@@ -4641,7 +5085,6 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
         const int baseAlpha = 8 + static_cast<int>(44.0f * avgLevel);
         drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff), { &masterGroup });
     }
-
 }
 
 //==============================================================================
@@ -4710,14 +5153,20 @@ void SpaceDustAudioProcessorEditor::resized()
     // Expand tab width by 10%
     int tabbedWidth = static_cast<int>((getWidth() - masterWidth - masterGap) * 0.9 * 1.1);
     tabbedComponent.setBounds(0, titleHeight, tabbedWidth, getHeight() - titleHeight);
+    // Tab glow overlay: sits on top of tab bar so parabolic glow shines through (drawn above tabs)
+    const int tabBarHeight = 36;
+    const int bottomGlowHeight = 90;
+    if (tabGlowOverlay != nullptr)
+        tabGlowOverlay->setBounds(0, titleHeight, tabbedWidth, tabBarHeight);
+    if (bottomTabGlowOverlay != nullptr)
+        bottomTabGlowOverlay->setBounds(0, getHeight() - bottomGlowHeight, tabbedWidth, bottomGlowHeight);
     
     //==============================================================================
     // -- Master Section Layout (Always Visible, Right Side) --
     // Master section spans from below title to bottom of window
     const int groupPadding = 10;         // Padding inside group boxes
     const int groupTitleHeight = 32;     // Compact height for group title area
-    // Match Master section knobs to Modulation tab visual size (~75px)
-    const int knobDiameter = 75;          // Uniform knob size (matched to Modulation tab knob visual size)
+    const int knobDiameter = 56;
     const int labelHeight = 18;           // Label height
     const int labelGap = 5;                // Gap between label and control
     const int comboHeight = 26;           // Combo box height
@@ -4762,7 +5211,7 @@ void SpaceDustAudioProcessorEditor::resized()
     masterCurrentY += meterHeight + verticalSpacing;
     
     // Bend Range on its own row, Pitch fader on row below
-    const int pitchKnobSize = 55;
+    const int pitchKnobSize = 56;
     const int pitchFaderWidth = 24;
     const int pitchFaderHeight = 80;
     int pitchCentreX = masterContent.getCentreX();
@@ -4807,9 +5256,9 @@ void SpaceDustAudioProcessorEditor::resized()
         }
     }
     
-    int legatoToggleY = masterCurrentY + knobDiameter + 10 + (labelGap / 2) + labelHeight + 6;
+    int legatoToggleY = masterCurrentY + knobDiameter + 10 + (labelGap / 2) + labelHeight + 1;
     legatoGlideLabel.setBounds(masterKnobX, legatoToggleY, knobDiameter, labelHeight);
-    legatoToggleY += labelHeight + 2;
+    legatoToggleY += labelHeight + 1;
     legatoGlideButton.setBounds(masterKnobX + (knobDiameter - 100) / 2, legatoToggleY, 100, 20);
     legatoGlideLabel.setVisible(false);
     bool isLegatoMode = (voiceModeIndex == 2);

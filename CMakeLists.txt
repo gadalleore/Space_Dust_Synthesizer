@@ -43,6 +43,12 @@ set_target_properties(SpaceDust PROPERTIES
     JUCE_COPY_PLUGIN_AFTER_BUILD TRUE
 )
 
+# Embed fonts as binary data (Glitch Goblin for title)
+juce_add_binary_data(SpaceDustBinaryData
+    SOURCES
+        Resources/GlitchGoblin.ttf
+)
+
 # Add source files
 target_sources(SpaceDust PRIVATE
     Source/PluginProcessor.cpp
@@ -98,6 +104,7 @@ target_compile_definitions(SpaceDust
 # Add JUCE modules
 target_link_libraries(SpaceDust
     PRIVATE
+        SpaceDustBinaryData
         juce::juce_audio_basics
         juce::juce_audio_devices
         juce::juce_audio_formats

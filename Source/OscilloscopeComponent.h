@@ -19,6 +19,11 @@ public:
         validSamples: actual number of audio samples (may be less than buffer size). */
     void update(const juce::AudioBuffer<float>& buffer, int validSamples = -1);
 
+    void setClipping(bool isClipping)
+    {
+        traceColour = isClipping ? juce::Colour(0xffdd2222) : juce::Colour(0xff48bde8);
+    }
+
 private:
     void drawBackground(juce::Graphics& g);
 

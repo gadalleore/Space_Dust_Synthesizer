@@ -31,7 +31,8 @@ public:
     void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
                           float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
                           juce::Slider& slider) override;
-    
+    void drawTabbedButtonBarBackground(juce::TabbedButtonBar& bar, juce::Graphics& g) override;
+
     //==============================================================================
     // -- Custom Drawing Helpers --
     
@@ -49,17 +50,35 @@ public:
                          juce::Colour glowColour,
                          float glowIntensity = 0.5f);
 
+    //==============================================================================
+    // -- Title Font (Glitch Goblin) / Body Font (standardized) --
+    juce::Font getTitleFont(float height) const;
+    juce::Font getBodyFont(float height, bool bold = false) const;
+
+    juce::Font getLabelFont(juce::Label&) override;
+    juce::Font getComboBoxFont(juce::ComboBox&) override;
+    juce::Font getTabButtonFont(juce::TabBarButton&, float height) override;
+
 private:
-    // Refined cosmic color palette - unified and elegant
-    juce::Colour titleWhite = juce::Colour(0xffffffff);           // Pure white for title
-    juce::Colour titleLightCyan = juce::Colour(0xffd0f4ff);       // Very light cyan for title (alternative)
-    juce::Colour groupTitleGrey = juce::Colour(0xffe0e0e0);       // Light grey-white for group titles
-    juce::Colour groupTitleCyan = juce::Colour(0xffc0e0ff);      // Light cyan for group titles (alternative)
-    juce::Colour labelCyan = juce::Colour(0xffa0d8ff);            // Light cyan-white for parameter labels
-    juce::Colour labelCyanAlt = juce::Colour(0xffb8e0ff);         // Alternative label color
-    juce::Colour valueCyan = juce::Colour(0xff6dd5fa);            // Bright but soft cyan for value readouts
-    juce::Colour valueCyanAlt = juce::Colour(0xff88e0ff);         // Alternative value color
-    juce::Colour shadowBlack = juce::Colour(0x33000000);          // 20% opacity black for subtle shadows
+    juce::Colour titleWhite = juce::Colour(0xffffffff);
+    juce::Colour titleLightCyan = juce::Colour(0xffd0f4ff);
+    juce::Colour groupTitleGrey = juce::Colour(0xffe0e0e0);
+    juce::Colour groupTitleCyan = juce::Colour(0xffc0e0ff);
+    juce::Colour labelCyan = juce::Colour(0xffa0d8ff);
+    juce::Colour labelCyanAlt = juce::Colour(0xffb8e0ff);
+    juce::Colour valueCyan = juce::Colour(0xff6dd5fa);
+    juce::Colour valueCyanAlt = juce::Colour(0xff88e0ff);
+    juce::Colour shadowBlack = juce::Colour(0x33000000);
+
+    // Knob accent colours
+    juce::Colour knobArcCyan    = juce::Colour(0xff00d4ff);
+    juce::Colour knobGlowCyan   = juce::Colour(0xff00b4ff);
+    juce::Colour knobBodyDark   = juce::Colour(0xff1a1a30);
+    juce::Colour knobBodyLight  = juce::Colour(0xff2a2a48);
+    juce::Colour knobRimDark    = juce::Colour(0xff303050);
+    juce::Colour knobRimLight   = juce::Colour(0xff505078);
+
+    juce::Typeface::Ptr glitchGoblinTypeface;
 };
 
 

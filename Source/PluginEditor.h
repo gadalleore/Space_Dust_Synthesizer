@@ -206,7 +206,8 @@ private:
 class SpaceDustAudioProcessorEditor : public juce::AudioProcessorEditor,
                                       public juce::Timer,
                                       public juce::Slider::Listener,
-                                      public juce::Button::Listener
+                                      public juce::Button::Listener,
+                                      public juce::AudioProcessorValueTreeState::Listener
 {
     // Allow page components to access private members for layout
     friend class MainPageComponent;
@@ -214,6 +215,8 @@ class SpaceDustAudioProcessorEditor : public juce::AudioProcessorEditor,
     friend class EffectsPageComponent;
     friend class SaturationColorPageComponent;
     friend class SpectralPageComponent;
+    friend class TabGlowOverlayComponent;
+    friend class BottomTabGlowOverlayComponent;
     
 public:
     SpaceDustAudioProcessorEditor(SpaceDustAudioProcessor&);
@@ -224,6 +227,7 @@ public:
     void sliderDragEnded(juce::Slider* slider) override;
     void buttonClicked(juce::Button* button) override {}
     void buttonStateChanged(juce::Button* button) override;
+    void parameterChanged(const juce::String& parameterID, float newValue) override;
 
     //==============================================================================
     void paint(juce::Graphics&) override;
@@ -242,8 +246,16 @@ private:
     // Flag to prevent timerCallback from accessing components during destruction
     std::atomic<bool> isBeingDestroyed{false};
 
+    // Bidirectional filter parameter sync when "Link to Master" is enabled
+    bool isSyncingFilterParams = false;
+    void syncLinkedFilterParams(const juce::String& parameterID, float newValue);
+
     // Pitch bend snap-back: poll processor ramp and sync display
     bool pitchBendSnapActive{false};
+
+    // Clipping hold for spectral tab (keeps red state for a duration after clipping)
+    int clippingHoldTicks = 0;
+    static constexpr int clippingHoldDuration = 10;  // ~500ms at 50ms timer
 
     // TooltipWindow required for setTooltip() to display (e.g. Pan labels)
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
@@ -251,6 +263,8 @@ private:
     //==============================================================================
     // -- Tabbed Component for Main/Modulation Pages --
     juce::TabbedComponent tabbedComponent;
+    std::unique_ptr<TabGlowOverlayComponent> tabGlowOverlay;
+    std::unique_ptr<BottomTabGlowOverlayComponent> bottomTabGlowOverlay;
     std::unique_ptr<MainPageComponent> mainPage;
     std::unique_ptr<ModulationPageComponent> modulationPage;
     std::unique_ptr<EffectsPageComponent> effectsPage;

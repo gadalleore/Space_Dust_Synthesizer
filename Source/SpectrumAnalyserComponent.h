@@ -21,6 +21,12 @@ public:
     /** Update with new stereo audio (uses L channel for FFT) */
     void update(const juce::AudioBuffer<float>& buffer);
 
+    void setClipping(bool isClipping)
+    {
+        fillColour = isClipping ? juce::Colour(0xffdd2222) : juce::Colour(0xff48bde8);
+        lineColour = isClipping ? juce::Colour(0xffdd3333) : juce::Colour(0xff6ba3d0);
+    }
+
 private:
     void drawBackground(juce::Graphics& g);
     void pushNextBlock(const float* src, int numSamples);
