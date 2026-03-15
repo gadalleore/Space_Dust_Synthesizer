@@ -799,7 +799,7 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     addAndMakeVisible(parentEditor.lfo1TripletStraightButton);
     addAndMakeVisible(parentEditor.lfo1FreeRateSlider);
     addAndMakeVisible(parentEditor.lfo1SyncRateCombo);
-    addAndMakeVisible(parentEditor.lfo1RateLabel);
+    // lfo1RateLabel omitted - only Hz/sync value label shown below knob
     addAndMakeVisible(parentEditor.lfo1RateValueLabel);
     addAndMakeVisible(parentEditor.lfo1DepthSlider);
     addAndMakeVisible(parentEditor.lfo1DepthLabel);
@@ -819,7 +819,7 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     addAndMakeVisible(parentEditor.lfo2TripletStraightButton);
     addAndMakeVisible(parentEditor.lfo2FreeRateSlider);
     addAndMakeVisible(parentEditor.lfo2SyncRateCombo);
-    addAndMakeVisible(parentEditor.lfo2RateLabel);
+    // lfo2RateLabel omitted - only Hz/sync value label shown below knob
     addAndMakeVisible(parentEditor.lfo2RateValueLabel);
     addAndMakeVisible(parentEditor.lfo2DepthSlider);
     addAndMakeVisible(parentEditor.lfo2DepthLabel);
@@ -899,6 +899,8 @@ void ModulationPageComponent::resized()
     const int columnGap = 22;  // Increased by 10% from reduced value
     
     const int modKnobDiameter = 56;
+    const int modRateKnobSize = 38;  // Rate knob smaller to match Depth (which has TextBoxBelow; 56-18)
+    const int modRateLabelWidth = 70;  // Width for "1/8 bar", "1/128 bar" etc. - prevents cutoff
     const int modLabelHeight = 14;
     const int modComboHeight = 22;
     const int modComboWidth = 100;
@@ -988,20 +990,23 @@ void ModulationPageComponent::resized()
     parentEditor.lfo1SyncButton.setBounds(lfo1CentreX - modButtonWidth / 2, lfo1CurrentY, modButtonWidth, modButtonHeight);
     lfo1CurrentY += modButtonHeight + modRowSpacing;
     
-    // LFO1 Rate (free rate slider or sync combo + value label)
-    parentEditor.lfo1RateLabel.setBounds(lfo1CentreX - modKnobDiameter / 2, lfo1CurrentY, modKnobDiameter, modLabelHeight);
+    // LFO1 Rate (knob + Hz/sync label only; "Rate" label hidden; knob size matches Depth)
+    parentEditor.lfo1RateLabel.setBounds(lfo1CentreX - modRateKnobSize / 2, lfo1CurrentY, modRateKnobSize, modLabelHeight);
+    parentEditor.lfo1RateLabel.setVisible(false);  // Hidden - only Hz/sync value label shown
     lfo1CurrentY += modLabelHeight + modLabelGap;
-    parentEditor.lfo1FreeRateSlider.setBounds(lfo1CentreX - modKnobDiameter / 2, lfo1CurrentY, modKnobDiameter, modKnobDiameter);
-    parentEditor.lfo1RateValueLabel.setBounds(lfo1CentreX - modKnobDiameter / 2, lfo1CurrentY + modKnobDiameter + 2, modKnobDiameter, 14);
+    parentEditor.lfo1FreeRateSlider.setBounds(lfo1CentreX - modRateKnobSize / 2, lfo1CurrentY, modRateKnobSize, modRateKnobSize);
+    parentEditor.lfo1RateValueLabel.setBounds(lfo1CentreX - modRateLabelWidth / 2, lfo1CurrentY + modRateKnobSize + 2, modRateLabelWidth, 14);
+    parentEditor.lfo1RateValueLabel.setVisible(true);   // Shows Hz or sync division
+    parentEditor.lfo1RateValueLabel.setAlpha(1.0f);
     parentEditor.lfo1SyncRateCombo.setBounds(lfo1CentreX - controlWidth / 2, lfo1CurrentY, controlWidth, modComboHeight);
     // Triplet button: positioned to the right of Rate knob, vertically centered
     const int tripletButtonSize = 24;
     const int tripletButtonWidth = 50;
     const int tripletButtonGap = 4;
-    parentEditor.lfo1TripletButton.setBounds(lfo1CentreX + modKnobDiameter / 2 + tripletButtonGap, lfo1CurrentY + (modKnobDiameter - tripletButtonSize) / 2, tripletButtonWidth, tripletButtonSize);
+    parentEditor.lfo1TripletButton.setBounds(lfo1CentreX + modRateKnobSize / 2 + tripletButtonGap, lfo1CurrentY + (modRateKnobSize - tripletButtonSize) / 2, tripletButtonWidth, tripletButtonSize);
     // Triplet/Straight toggle button: positioned to the left of Rate knob, vertically centered
-    parentEditor.lfo1TripletStraightButton.setBounds(lfo1CentreX - modKnobDiameter / 2 - tripletButtonGap - tripletButtonSize, lfo1CurrentY + (modKnobDiameter - tripletButtonSize) / 2, tripletButtonSize, tripletButtonSize);
-    lfo1CurrentY += modKnobDiameter + modRateValueGap;
+    parentEditor.lfo1TripletStraightButton.setBounds(lfo1CentreX - modRateKnobSize / 2 - tripletButtonGap - tripletButtonSize, lfo1CurrentY + (modRateKnobSize - tripletButtonSize) / 2, tripletButtonSize, tripletButtonSize);
+    lfo1CurrentY += modRateKnobSize + modRateValueGap;
     
     // LFO1 Depth
     parentEditor.lfo1DepthLabel.setBounds(lfo1CentreX - modKnobDiameter / 2, lfo1CurrentY, modKnobDiameter, modLabelHeight);
@@ -1118,17 +1123,20 @@ void ModulationPageComponent::resized()
     parentEditor.lfo2SyncButton.setBounds(lfo2CentreX - modButtonWidth / 2, lfo2CurrentY, modButtonWidth, modButtonHeight);
     lfo2CurrentY += modButtonHeight + modRowSpacing;
     
-    // LFO2 Rate (free rate slider or sync combo + value label)
-    parentEditor.lfo2RateLabel.setBounds(lfo2CentreX - modKnobDiameter / 2, lfo2CurrentY, modKnobDiameter, modLabelHeight);
+    // LFO2 Rate (knob + Hz/sync label only; "Rate" label hidden; knob size matches Depth)
+    parentEditor.lfo2RateLabel.setBounds(lfo2CentreX - modRateKnobSize / 2, lfo2CurrentY, modRateKnobSize, modLabelHeight);
+    parentEditor.lfo2RateLabel.setVisible(false);  // Hidden - only Hz/sync value label shown
     lfo2CurrentY += modLabelHeight + modLabelGap;
-    parentEditor.lfo2FreeRateSlider.setBounds(lfo2CentreX - modKnobDiameter / 2, lfo2CurrentY, modKnobDiameter, modKnobDiameter);
-    parentEditor.lfo2RateValueLabel.setBounds(lfo2CentreX - modKnobDiameter / 2, lfo2CurrentY + modKnobDiameter + 2, modKnobDiameter, 14);
+    parentEditor.lfo2FreeRateSlider.setBounds(lfo2CentreX - modRateKnobSize / 2, lfo2CurrentY, modRateKnobSize, modRateKnobSize);
+    parentEditor.lfo2RateValueLabel.setBounds(lfo2CentreX - modRateLabelWidth / 2, lfo2CurrentY + modRateKnobSize + 2, modRateLabelWidth, 14);
+    parentEditor.lfo2RateValueLabel.setVisible(true);   // Shows Hz or sync division
+    parentEditor.lfo2RateValueLabel.setAlpha(1.0f);
     parentEditor.lfo2SyncRateCombo.setBounds(lfo2CentreX - controlWidth / 2, lfo2CurrentY, controlWidth, modComboHeight);
     // Triplet button: positioned to the right of Rate knob, vertically centered
-    parentEditor.lfo2TripletButton.setBounds(lfo2CentreX + modKnobDiameter / 2 + tripletButtonGap, lfo2CurrentY + (modKnobDiameter - tripletButtonSize) / 2, tripletButtonWidth, tripletButtonSize);
+    parentEditor.lfo2TripletButton.setBounds(lfo2CentreX + modRateKnobSize / 2 + tripletButtonGap, lfo2CurrentY + (modRateKnobSize - tripletButtonSize) / 2, tripletButtonWidth, tripletButtonSize);
     // Triplet/Straight toggle button: positioned to the left of Rate knob, vertically centered
-    parentEditor.lfo2TripletStraightButton.setBounds(lfo2CentreX - modKnobDiameter / 2 - tripletButtonGap - tripletButtonSize, lfo2CurrentY + (modKnobDiameter - tripletButtonSize) / 2, tripletButtonSize, tripletButtonSize);
-    lfo2CurrentY += modKnobDiameter + modRateValueGap;
+    parentEditor.lfo2TripletStraightButton.setBounds(lfo2CentreX - modRateKnobSize / 2 - tripletButtonGap - tripletButtonSize, lfo2CurrentY + (modRateKnobSize - tripletButtonSize) / 2, tripletButtonSize, tripletButtonSize);
+    lfo2CurrentY += modRateKnobSize + modRateValueGap;
     
     // LFO2 Depth
     parentEditor.lfo2DepthLabel.setBounds(lfo2CentreX - modKnobDiameter / 2, lfo2CurrentY, modKnobDiameter, modLabelHeight);
@@ -3004,12 +3012,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         audioProcessor.getValueTreeState(), "lfo1TripletStraightToggle", lfo1TripletStraightButton);
     lfo1TripletStraightButton.setVisible(false);
     
-    // LFO1 Rate: Free rate slider (shown when sync off)
+    // LFO1 Rate: NoTextBox - only lfo1RateValueLabel shows Hz/sync; no raw value display
     lfo1FreeRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    lfo1FreeRateSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
-    lfo1FreeRateSlider.setColour(juce::Slider::textBoxTextColourId, juce::Colours::transparentBlack);
-    lfo1FreeRateSlider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
-    lfo1FreeRateSlider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    lfo1FreeRateSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     lfo1FreeRateSlider.setRange(0.0, 12.0, 0.01);  // Maps to 0.01-200 Hz logarithmically (free mode)
     lfo1FreeRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "lfo1Rate", lfo1FreeRateSlider);
@@ -3043,7 +3048,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // Always show the knob, hide the combo box
     lfo1FreeRateSlider.setVisible(true);
     lfo1SyncRateCombo.setVisible(false);
-    lfo1RateValueLabel.setVisible(true);
+    lfo1RateValueLabel.setVisible(true);  // Shows Hz or sync division
     
     lfo1DepthSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     lfo1DepthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
@@ -3125,10 +3130,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo2TripletStraightButton.setVisible(false);
     
     lfo2FreeRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    lfo2FreeRateSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
-    lfo2FreeRateSlider.setColour(juce::Slider::textBoxTextColourId, juce::Colours::transparentBlack);
-    lfo2FreeRateSlider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
-    lfo2FreeRateSlider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    lfo2FreeRateSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);  // Only Hz/sync label below
     lfo2FreeRateSlider.setRange(0.0, 12.0, 0.01);
     lfo2FreeRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "lfo2Rate", lfo2FreeRateSlider);
@@ -3161,7 +3163,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // Always show the knob, hide the combo box
     lfo2FreeRateSlider.setVisible(true);
     lfo2SyncRateCombo.setVisible(false);
-    lfo2RateValueLabel.setVisible(true);
+    lfo2RateValueLabel.setVisible(true);  // Shows Hz or sync division
     
     lfo2DepthSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     lfo2DepthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
@@ -4771,7 +4773,6 @@ void SpaceDustAudioProcessorEditor::timerCallback()
         if (!isBeingDestroyed.load())
         {
             lfo1RateValueLabel.setText(syncText, juce::dontSendNotification);
-            lfo1RateValueLabel.setVisible(true);
             lfo1TripletButton.setVisible(true);
             lfo1TripletStraightButton.setVisible(lfo1Triplet);
         }
@@ -4789,7 +4790,6 @@ void SpaceDustAudioProcessorEditor::timerCallback()
         if (!isBeingDestroyed.load())
         {
             lfo1RateValueLabel.setText(hzText, juce::dontSendNotification);
-            lfo1RateValueLabel.setVisible(true);
             lfo1TripletButton.setVisible(false);
             lfo1TripletStraightButton.setVisible(false);
         }
@@ -4830,7 +4830,6 @@ void SpaceDustAudioProcessorEditor::timerCallback()
         if (!isBeingDestroyed.load())
         {
             lfo2RateValueLabel.setText(syncText, juce::dontSendNotification);
-            lfo2RateValueLabel.setVisible(true);
             lfo2TripletButton.setVisible(true);
             lfo2TripletStraightButton.setVisible(lfo2Triplet);
         }
@@ -4848,7 +4847,6 @@ void SpaceDustAudioProcessorEditor::timerCallback()
         if (!isBeingDestroyed.load())
         {
             lfo2RateValueLabel.setText(hzText, juce::dontSendNotification);
-            lfo2RateValueLabel.setVisible(true);
             lfo2TripletButton.setVisible(false);
             lfo2TripletStraightButton.setVisible(false);
         }
