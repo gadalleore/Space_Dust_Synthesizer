@@ -527,6 +527,7 @@ void SynthVoice::updateFilterAdsrParameters()
     juce::ADSR::Parameters params;
     
     // Set all four Filter Envelope ADSR parameters together (required by JUCE)
+    // Times are in seconds - JUCE ADSR uses linear decay; value = time to reach sustain
     params.attack = juce::jmax(0.01f, filterEnvAttackTime);
     params.decay = juce::jmax(0.01f, filterEnvDecayTime);
     params.sustain = juce::jlimit(0.0f, 1.0f, filterEnvSustainLevel);
@@ -1063,7 +1064,9 @@ void SynthVoice::setCurrentPlaybackSampleRate(double newRate)
         updateNoiseEqFilters();
         
         adsr.setSampleRate(newRate);
+        filterAdsr.setSampleRate(newRate);
         updateAdsrParameters();
+        updateFilterAdsrParameters();
     }
     // If DSP not initialized yet, prepareToPlay() will handle initialization
 }

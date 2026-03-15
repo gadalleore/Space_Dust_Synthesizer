@@ -149,6 +149,11 @@ private:
     std::atomic<float> currentSustainLevel{0.7f}; // Sustain level (0.0-1.0)
     std::atomic<float> currentReleaseTime{0.2f};  // Release time in seconds (0.01-20.0)
     
+    // Filter envelope (same pattern as main ADSR - ensures correct conversion and label match)
+    std::atomic<float> currentFilterEnvAttack{0.01f};
+    std::atomic<float> currentFilterEnvDecay{0.8f};
+    std::atomic<float> currentFilterEnvRelease{3.0f};
+    
     // UI-only noise type (0=White, 1=Pink)
     std::atomic<int> noiseType{0};  // Default to White
     

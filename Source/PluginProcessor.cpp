@@ -289,6 +289,13 @@ SpaceDustAudioProcessor::SpaceDustAudioProcessor()
             currentReleaseTime.store(releaseSeconds);
             DBG("Space Dust: envRelease converted: " + safeStringFromNumber(releaseSeconds) + "s");
         }
+        // Filter envelope (same pattern: convert normalized to seconds)
+        if (auto* p = apvts.getParameter(juce::ParameterID{"filterEnvAttack", 1}.getParamID()))
+            currentFilterEnvAttack.store(juce::jmax(0.01f, p->convertFrom0to1(p->getValue())));
+        if (auto* p = apvts.getParameter(juce::ParameterID{"filterEnvDecay", 1}.getParamID()))
+            currentFilterEnvDecay.store(juce::jmax(0.01f, p->convertFrom0to1(p->getValue())));
+        if (auto* p = apvts.getParameter(juce::ParameterID{"filterEnvRelease", 1}.getParamID()))
+            currentFilterEnvRelease.store(juce::jmax(0.01f, p->convertFrom0to1(p->getValue())));
     }
     catch (const std::exception& e)
     {
@@ -316,7 +323,10 @@ SpaceDustAudioProcessor::SpaceDustAudioProcessor()
         
         apvts.addParameterListener(juce::ParameterID{"lfo1Retrigger", 1}.getParamID(), this);
         apvts.addParameterListener(juce::ParameterID{"lfo2Retrigger", 1}.getParamID(), this);
-        DBG("Space Dust: Added listeners for LFO retrigger");
+        apvts.addParameterListener(juce::ParameterID{"filterEnvAttack", 1}.getParamID(), this);
+        apvts.addParameterListener(juce::ParameterID{"filterEnvDecay", 1}.getParamID(), this);
+        apvts.addParameterListener(juce::ParameterID{"filterEnvRelease", 1}.getParamID(), this);
+        DBG("Space Dust: Added listeners for LFO retrigger and filter envelope");
     }
     catch (const std::exception& e)
     {
@@ -360,6 +370,13 @@ SpaceDustAudioProcessor::SpaceDustAudioProcessor()
             currentReleaseTime.store(releaseSeconds);
             DBG("Space Dust: envRelease converted: " + safeStringFromNumber(releaseSeconds) + "s");
         }
+        // Filter envelope (convert normalized to seconds - matches main ADSR pattern)
+        if (auto* p = apvts.getParameter(juce::ParameterID{"filterEnvAttack", 1}.getParamID()))
+            currentFilterEnvAttack.store(juce::jmax(0.01f, p->convertFrom0to1(p->getValue())));
+        if (auto* p = apvts.getParameter(juce::ParameterID{"filterEnvDecay", 1}.getParamID()))
+            currentFilterEnvDecay.store(juce::jmax(0.01f, p->convertFrom0to1(p->getValue())));
+        if (auto* p = apvts.getParameter(juce::ParameterID{"filterEnvRelease", 1}.getParamID()))
+            currentFilterEnvRelease.store(juce::jmax(0.01f, p->convertFrom0to1(p->getValue())));
         
         // Initialize LFO retrigger flags from parameters
         if (auto* lfo1RetriggerParam = apvts.getParameter(juce::ParameterID{"lfo1Retrigger", 1}.getParamID()))
@@ -402,6 +419,9 @@ SpaceDustAudioProcessor::~SpaceDustAudioProcessor()
     apvts.removeParameterListener(juce::ParameterID{"envRelease", 1}.getParamID(), this);
     apvts.removeParameterListener(juce::ParameterID{"lfo1Retrigger", 1}.getParamID(), this);
     apvts.removeParameterListener(juce::ParameterID{"lfo2Retrigger", 1}.getParamID(), this);
+    apvts.removeParameterListener(juce::ParameterID{"filterEnvAttack", 1}.getParamID(), this);
+    apvts.removeParameterListener(juce::ParameterID{"filterEnvDecay", 1}.getParamID(), this);
+    apvts.removeParameterListener(juce::ParameterID{"filterEnvRelease", 1}.getParamID(), this);
     DBG("Space Dust: Parameter listeners removed");
     
     //==============================================================================
@@ -893,14 +913,15 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     float modFilter2Resonance = modFilter2Link ? filterResonance : *apvts.getRawParameterValue("modFilter2Resonance");
     bool warmSaturationMod2 = modFilter2Link ? warmSaturationMaster : *apvts.getRawParameterValue("warmSaturationMod2") > 0.5f;
     
-    // Filter envelope parameters (convert normalized 0-1 to actual seconds)
+    // Filter envelope: read directly from parameters each block (guarantees label matches decay)
+    // Uses plain param ID strings to match SliderAttachment; p->get() returns exact displayed value
     float filterEnvAttack = 0.01f, filterEnvDecay = 0.8f, filterEnvRelease = 3.0f;
-    if (auto* p = apvts.getParameter("filterEnvAttack"))
-        filterEnvAttack = p->convertFrom0to1(*apvts.getRawParameterValue("filterEnvAttack"));
-    if (auto* p = apvts.getParameter("filterEnvDecay"))
-        filterEnvDecay = p->convertFrom0to1(*apvts.getRawParameterValue("filterEnvDecay"));
-    if (auto* p = apvts.getParameter("filterEnvRelease"))
-        filterEnvRelease = p->convertFrom0to1(*apvts.getRawParameterValue("filterEnvRelease"));
+    if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("filterEnvAttack")))
+        filterEnvAttack = juce::jlimit(0.01f, 20.0f, p->get());
+    if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("filterEnvDecay")))
+        filterEnvDecay = juce::jlimit(0.01f, 5.0f, p->get());
+    if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("filterEnvRelease")))
+        filterEnvRelease = juce::jlimit(0.01f, 20.0f, p->get());
     float filterEnvAmount = *apvts.getRawParameterValue("filterEnvAmount");
     
     // ADSR parameters: Use atomic values (already converted from normalized to seconds/level)
@@ -1043,6 +1064,24 @@ void SpaceDustAudioProcessor::parameterChanged(const juce::String& parameterID, 
     {
         lfo2Retrigger.store(newValue > 0.5f);
     }
+    else if (parameterID == juce::ParameterID{"filterEnvAttack", 1}.getParamID())
+    {
+        // Read actual value from param (matches UI label exactly)
+        if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(parameterID)))
+            currentFilterEnvAttack.store(juce::jlimit(0.01f, 20.0f, p->get()));
+    }
+    else if (parameterID == juce::ParameterID{"filterEnvDecay", 1}.getParamID())
+    {
+        // Read actual value from param (matches UI label exactly)
+        if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(parameterID)))
+            currentFilterEnvDecay.store(juce::jlimit(0.01f, 5.0f, p->get()));
+    }
+    else if (parameterID == juce::ParameterID{"filterEnvRelease", 1}.getParamID())
+    {
+        // Read actual value from param (matches UI label exactly)
+        if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(parameterID)))
+            currentFilterEnvRelease.store(juce::jlimit(0.01f, 20.0f, p->get()));
+    }
     // Filter link params: no sync needed. updateVoicesWithParameters() reads master
     // values directly when linked, bypassing the mod filter parameters entirely.
     // This avoids setValueNotifyingHost which triggers performEdit in the VST3 wrapper,
@@ -1166,6 +1205,12 @@ void SpaceDustAudioProcessor::releaseResources()
         float releaseSeconds = releaseParam->convertFrom0to1(normalizedValue);
         currentReleaseTime.store(releaseSeconds);
     }
+    if (auto* p = apvts.getParameter(juce::ParameterID{"filterEnvAttack", 1}.getParamID()))
+        currentFilterEnvAttack.store(juce::jmax(0.01f, p->convertFrom0to1(p->getValue())));
+    if (auto* p = apvts.getParameter(juce::ParameterID{"filterEnvDecay", 1}.getParamID()))
+        currentFilterEnvDecay.store(juce::jmax(0.01f, p->convertFrom0to1(p->getValue())));
+    if (auto* p = apvts.getParameter(juce::ParameterID{"filterEnvRelease", 1}.getParamID()))
+        currentFilterEnvRelease.store(juce::jmax(0.01f, p->convertFrom0to1(p->getValue())));
     DBG("Space Dust: Atomic parameters reset");
     
     // Note: DSP objects (ADSR, filters) in voices are automatically reset
@@ -2609,9 +2654,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             filterAttackRange, 0.01f),
         "filterEnvAttack");
     
-    // Filter envelope decay time (skewed: 0.01s to 20.0s, midpoint at 2.0s)
-    juce::NormalisableRange<float> filterDecayRange(0.01f, 20.0f, 0.001f);
-    filterDecayRange.setSkewForCentre(2.0f);
+    // Filter envelope decay time (0.01s to 5s, linear - 1:1 mapping so label matches decay exactly)
+    juce::NormalisableRange<float> filterDecayRange(0.01f, 5.0f, 0.001f);
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"filterEnvDecay", 1}, "Filter Env Decay",
