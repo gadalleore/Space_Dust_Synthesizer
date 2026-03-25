@@ -1,121 +1,114 @@
 #==============================================================================
-# Space Dust - Complete Build and Launch Script
-# Builds the plugin, copies it, then launches (or activates) Ableton Live.
-# Ableton opens after every successful build unless you pass -NoLaunch.
+# Space Dust - Build and Launch Script
+# Incremental build, copies VST3 to Program Files, launches/focuses Ableton.
 #==============================================================================
 
 param(
-    [switch]$NoLaunch  # Pass -NoLaunch to build and copy only, without opening Ableton
+    [switch]$NoLaunch  # Pass -NoLaunch to skip opening Ableton
 )
 
 $ErrorActionPreference = "Stop"
-
-Write-Host "`n[Space Dust] Starting build process..." -ForegroundColor Cyan
-
-# Get project root
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $projectRoot
 
-# Step 1: Clean build directory
-Write-Host "[Space Dust] Cleaning build directory..." -ForegroundColor Yellow
-Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
-mkdir build -ErrorAction SilentlyContinue | Out-Null
+# ── Step 1: CMake configure (only if build dir doesn't exist) ──────────────
+if (-not (Test-Path "build\CMakeCache.txt")) {
+    Write-Host "[Space Dust] No build directory found, configuring CMake..." -ForegroundColor Yellow
 
-# Step 2: Generate CMake project
-Write-Host "[Space Dust] Generating CMake project..." -ForegroundColor Yellow
-$juceDir = $env:JUCE_DIR
-if (-not $juceDir -and (Test-Path (Join-Path $projectRoot "juce_path.local"))) {
-    $juceDir = (Get-Content (Join-Path $projectRoot "juce_path.local") -Raw).Trim()
-}
-# Try VS 2026 first, then VS 2022
-$generators = @("Visual Studio 18 2026", "Visual Studio 17 2022")
-$cmakeOk = $false
-foreach ($gen in $generators) {
-    Set-Location $projectRoot
-    Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
-    mkdir build -ErrorAction SilentlyContinue | Out-Null
-    $cmakeArgs = @("..", "-G", $gen, "-A", "x64")
-    if ($juceDir) { $cmakeArgs += "-DJUCE_DIR=$juceDir" }
+    $juceDir = $env:JUCE_DIR
+    if (-not $juceDir -and (Test-Path "juce_path.local")) {
+        $juceDir = (Get-Content "juce_path.local" -Raw).Trim()
+    }
+
+    New-Item -ItemType Directory -Path build -Force | Out-Null
     Set-Location build
-    $cmakeOutput = & cmake @cmakeArgs 2>&1
-    if ($LASTEXITCODE -eq 0) {
-        $cmakeOk = $true
-        Write-Host "[Space Dust] Using $gen" -ForegroundColor Gray
-        break
+
+    $cmakeArgs = @("..", "-G", "Visual Studio 17 2022", "-A", "x64")
+    if ($juceDir) { $cmakeArgs += "-DJUCE_DIR=$juceDir" }
+
+    & cmake @cmakeArgs
+    if ($LASTEXITCODE -ne 0) {
+        # Retry with VS 2026
+        $cmakeArgs[2] = "Visual Studio 18 2026"
+        & cmake @cmakeArgs
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[Space Dust] CMake configure failed." -ForegroundColor Red
+            Set-Location $projectRoot; exit 1
+        }
     }
     Set-Location $projectRoot
 }
-if (-not $cmakeOk) {
-    Write-Host "[Space Dust] ✗ CMake generation failed! Install Visual Studio 2022+ with C++ workload." -ForegroundColor Red
-    Set-Location ..
-    exit 1
-}
 
-# Step 3: Build Release
-Write-Host "[Space Dust] Building Release configuration..." -ForegroundColor Yellow
-cmake --build . --config Release
+# ── Step 2: Incremental build ──────────────────────────────────────────────
+Write-Host "[Space Dust] Building..." -ForegroundColor Cyan
+cmake --build build --config Release --target SpaceDust_VST3
 if ($LASTEXITCODE -ne 0) {
-    Write-Host "[Space Dust] ✗ Build failed!" -ForegroundColor Red
-    Set-Location ..
+    Write-Host "[Space Dust] Build failed." -ForegroundColor Red
+    exit 1
+}
+Write-Host "[Space Dust] Build succeeded." -ForegroundColor Green
+
+# ── Step 3: Copy VST3 to all known VST3 locations ─────────────────────────
+$source = "build\SpaceDust_artefacts\Release\VST3\Space Dust.vst3"
+if (-not (Test-Path $source)) {
+    Write-Host "[Space Dust] VST3 artifact not found at: $source" -ForegroundColor Red
     exit 1
 }
 
-Set-Location ..
+$destinations = @(
+    "C:\Program Files\Common Files\VST3\Space Dust.vst3",
+    "$env:USERPROFILE\Documents\Ableton\User Library\VST3\Space Dust.vst3",
+    "$env:USERPROFILE\Documents\VST3\Space Dust.vst3",
+    "$env:USERPROFILE\VST3\Space Dust.vst3"
+)
 
-# Step 4: Copy VST3 to folders Ableton can load from
-Write-Host "[Space Dust] Copying VST3..." -ForegroundColor Yellow
-$sourceVST3 = "build\SpaceDust_artefacts\Release\VST3\Space Dust.vst3"
-if (-not (Test-Path $sourceVST3)) {
-    Write-Host "[Space Dust] WARNING: VST3 not found at $sourceVST3" -ForegroundColor Yellow
-    Write-Host "[Space Dust] Build completed, but plugin not found. Skipping copy and Ableton launch." -ForegroundColor Yellow
+foreach ($dest in $destinations) {
+    $destDir = Split-Path -Parent $dest
+    if (-not (Test-Path $destDir)) { continue }  # skip if parent folder doesn't exist
+    Write-Host "[Space Dust] Copying VST3 to $dest..." -ForegroundColor Cyan
+    if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
+    Copy-Item -Path $source -Destination $dest -Recurse -Force
+    Write-Host "[Space Dust] Copy complete -> $dest" -ForegroundColor Green
+}
+
+# ── Step 4: Launch or focus Ableton ───────────────────────────────────────
+if ($NoLaunch) {
+    Write-Host "[Space Dust] Done. (-NoLaunch: skipping Ableton)" -ForegroundColor Gray
     exit 0
 }
 
-# 4a) System VST3 (Ableton often scans this by default)
-$systemVST3 = "C:\Program Files\Common Files\VST3"
-$destSystem = Join-Path $systemVST3 "Space Dust.vst3"
-try {
-    if (Test-Path $systemVST3) {
-        Copy-Item -Path $sourceVST3 -Destination $destSystem -Recurse -Force -ErrorAction Stop
-        Write-Host "[Space Dust] Copied to: $destSystem" -ForegroundColor Green
-    }
-} catch {
-    Write-Host "[Space Dust] Could not copy to $systemVST3 (may need admin). Using User Library." -ForegroundColor Yellow
-}
-
-# 4b) Ableton User Library VST3 (in case you use a custom VST folder)
-$customVST3 = "$env:USERPROFILE\Documents\Ableton\User Library\VST3"
-if (-not (Test-Path $customVST3)) { New-Item -ItemType Directory -Path $customVST3 -Force | Out-Null }
-Copy-Item -Path $sourceVST3 -Destination $customVST3 -Recurse -Force -ErrorAction SilentlyContinue
-Write-Host "[Space Dust] Copied to: $customVST3" -ForegroundColor Green
-
-# Step 5: Wait for filesystem to settle
-Write-Host "[Space Dust] Waiting 2 seconds for filesystem to settle..." -ForegroundColor Gray
-Start-Sleep -Seconds 2
-
-# Step 6: Launch Ableton Live (if not disabled)
-$launchOk = $true
-if (-not $NoLaunch) {
-    Write-Host "[Space Dust] Launching Ableton Live..." -ForegroundColor Yellow
-    if (Test-Path ".\launch-ableton.ps1") {
-        & .\launch-ableton.ps1
-        if ($LASTEXITCODE -ne 0) {
-            $launchOk = $false
-            Write-Host "[Space Dust] Ableton did not start (launch-ableton.ps1 returned $LASTEXITCODE)." -ForegroundColor Red
-            Write-Host "[Space Dust] Edit launch-ableton.ps1 and set `$AbletonExePath to your Ableton .exe, then run again." -ForegroundColor Yellow
+$running = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like "Live*" }
+if ($running) {
+    Write-Host "[Space Dust] Ableton is running - bringing to front..." -ForegroundColor Green
+    try {
+        Add-Type -TypeDefinition @"
+using System; using System.Runtime.InteropServices;
+public class Win32 { [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd); }
+"@ -ErrorAction SilentlyContinue
+        $proc = $running | Select-Object -First 1
+        if ($proc.MainWindowHandle -ne [IntPtr]::Zero) {
+            [Win32]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
         }
-    }
-    else {
-        Write-Host "[Space Dust] launch-ableton.ps1 not found - skipping Ableton launch" -ForegroundColor Yellow
-        $launchOk = $false
-    }
-}
-else {
-    Write-Host "[Space Dust] Skipping Ableton launch (NoLaunch flag set)" -ForegroundColor Gray
+    } catch { }
+    Write-Host "[Space Dust] Rescan plugins in Ableton (Prefs > Plug-Ins > Rescan) to pick up the new build." -ForegroundColor Yellow
+    exit 0
 }
 
-Write-Host "`n[Space Dust] Build complete! Space Dust.vst3 is ready." -ForegroundColor Green
-Write-Host "[Space Dust] To see changes in Ableton: Rescan (Prefs > Plug-Ins > Rescan) or remove and re-add the instrument." -ForegroundColor Yellow
-if (-not $NoLaunch -and $launchOk) {
-    Write-Host "[Space Dust] Ableton launch initiated." -ForegroundColor Green
+# Find Ableton executable
+$abletonExe = $null
+$roots = @("C:\ProgramData\Ableton", "C:\Program Files\Ableton", "$env:ProgramFiles\Ableton")
+foreach ($root in $roots) {
+    if (-not (Test-Path $root)) { continue }
+    $found = Get-ChildItem -Path $root -Recurse -Filter "Ableton Live*.exe" -ErrorAction SilentlyContinue |
+             Where-Object { $_.FullName -match "\\Program\\" } | Select-Object -First 1
+    if ($found) { $abletonExe = $found.FullName; break }
 }
+
+if (-not $abletonExe) {
+    Write-Host "[Space Dust] Ableton Live not found. Set `$AbletonExePath in launch-ableton.ps1 or launch manually." -ForegroundColor Yellow
+    exit 0
+}
+
+Write-Host "[Space Dust] Launching $abletonExe..." -ForegroundColor Cyan
+Start-Process -FilePath $abletonExe
+Write-Host "[Space Dust] Ableton launched." -ForegroundColor Green

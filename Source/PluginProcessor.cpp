@@ -769,6 +769,10 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         transient_.prepare(reverbSpec);
         transient_.reset();
 
+        // Initialize final EQ
+        finalEQ_.prepare(reverbSpec);
+        finalEQ_.reset();
+
         // Initialize Ka-Donk delay lines
         {
             juce::dsp::ProcessSpec delaySpec;
@@ -1164,6 +1168,7 @@ void SpaceDustAudioProcessor::releaseResources()
     softClipper_.reset();
     compressor_.reset();
     lofi_.reset();
+    finalEQ_.reset();
     tranceGate_.reset();
     
     // Step 3: Clear all sounds (ReferenceCountedArray<SynthesiserSound>)
@@ -2273,6 +2278,34 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         lp.amount = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("lofiAmount")->load());
         lofi_.setParameters(lp);
         lofi_.process(buffer);
+    }
+
+    //==============================================================================
+    // -- Final EQ (5-band, end of chain, Saturation Color tab) --
+    {
+        bool finalEQEnabled = *apvts.getRawParameterValue("finalEQEnabled") > 0.5f;
+        if (finalEQEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
+        {
+            const SpaceDustFinalEQ::BandType bandTypes[5] = {
+                SpaceDustFinalEQ::BandType::LowShelf,
+                SpaceDustFinalEQ::BandType::Peak,
+                SpaceDustFinalEQ::BandType::Peak,
+                SpaceDustFinalEQ::BandType::Peak,
+                SpaceDustFinalEQ::BandType::HighShelf
+            };
+            SpaceDustFinalEQ::Parameters fep;
+            fep.enabled = true;
+            for (int i = 0; i < 5; ++i)
+            {
+                juce::String n(i + 1);
+                fep.bands[i].freqHz = juce::jlimit(20.0f, 20000.0f, apvts.getRawParameterValue("finalEQB" + n + "Freq")->load());
+                fep.bands[i].gainDb = juce::jlimit(-15.0f, 15.0f,    apvts.getRawParameterValue("finalEQB" + n + "Gain")->load());
+                fep.bands[i].Q      = juce::jlimit(0.1f, 10.0f,      apvts.getRawParameterValue("finalEQB" + n + "Q")->load());
+                fep.bands[i].type   = bandTypes[i];
+            }
+            finalEQ_.setParameters(fep);
+            finalEQ_.process(buffer);
+        }
     }
 
     //==============================================================================
@@ -3519,6 +3552,93 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"lofiAmount", 1}, "Lo-Fi Amount",
             juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f),
         "lofiAmount");
+
+    //==============================================================================
+    // -- Final EQ Parameters (5-band, end of chain, Saturation Color tab) --
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"finalEQEnabled", 1}, "Final EQ On", false),
+        "finalEQEnabled");
+    // Band 1 – Low Shelf (default 80 Hz)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"finalEQB1Freq", 1}, "EQ B1 Freq",
+            juce::NormalisableRange<float>(20.0f, 20000.0f, 1.0f, 0.2f), 80.0f),
+        "finalEQB1Freq");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"finalEQB1Gain", 1}, "EQ B1 Gain",
+            juce::NormalisableRange<float>(-15.0f, 15.0f, 0.01f), 0.0f),
+        "finalEQB1Gain");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"finalEQB1Q", 1}, "EQ B1 Q",
+            juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.3f), 0.707f),
+        "finalEQB1Q");
+    // Band 2 – Low Mid Peak (default 250 Hz)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"finalEQB2Freq", 1}, "EQ B2 Freq",
+            juce::NormalisableRange<float>(20.0f, 20000.0f, 1.0f, 0.2f), 250.0f),
+        "finalEQB2Freq");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"finalEQB2Gain", 1}, "EQ B2 Gain",
+            juce::NormalisableRange<float>(-15.0f, 15.0f, 0.01f), 0.0f),
+        "finalEQB2Gain");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"finalEQB2Q", 1}, "EQ B2 Q",
+            juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.3f), 1.0f),
+        "finalEQB2Q");
+    // Band 3 – Mid Peak (default 1000 Hz)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"finalEQB3Freq", 1}, "EQ B3 Freq",
+            juce::NormalisableRange<float>(20.0f, 20000.0f, 1.0f, 0.2f), 1000.0f),
+        "finalEQB3Freq");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"finalEQB3Gain", 1}, "EQ B3 Gain",
+            juce::NormalisableRange<float>(-15.0f, 15.0f, 0.01f), 0.0f),
+        "finalEQB3Gain");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"finalEQB3Q", 1}, "EQ B3 Q",
+            juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.3f), 1.0f),
+        "finalEQB3Q");
+    // Band 4 – High Mid Peak (default 4000 Hz)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"finalEQB4Freq", 1}, "EQ B4 Freq",
+            juce::NormalisableRange<float>(20.0f, 20000.0f, 1.0f, 0.2f), 4000.0f),
+        "finalEQB4Freq");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"finalEQB4Gain", 1}, "EQ B4 Gain",
+            juce::NormalisableRange<float>(-15.0f, 15.0f, 0.01f), 0.0f),
+        "finalEQB4Gain");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"finalEQB4Q", 1}, "EQ B4 Q",
+            juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.3f), 1.0f),
+        "finalEQB4Q");
+    // Band 5 – High Shelf (default 10000 Hz)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"finalEQB5Freq", 1}, "EQ B5 Freq",
+            juce::NormalisableRange<float>(20.0f, 20000.0f, 1.0f, 0.2f), 10000.0f),
+        "finalEQB5Freq");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"finalEQB5Gain", 1}, "EQ B5 Gain",
+            juce::NormalisableRange<float>(-15.0f, 15.0f, 0.01f), 0.0f),
+        "finalEQB5Gain");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"finalEQB5Q", 1}, "EQ B5 Q",
+            juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.3f), 0.707f),
+        "finalEQB5Q");
 
     //==============================================================================
     // -- Trance Gate Effect Parameters --

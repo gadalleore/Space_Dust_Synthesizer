@@ -7,6 +7,7 @@
 #include "SpaceDustLookAndFeel.h"
 #include "OscilloscopeComponent.h"
 #include "SpectrumAnalyserComponent.h"
+#include "FinalEQComponent.h"
 
 //==============================================================================
 /**
@@ -674,6 +675,12 @@ private:
     juce::Slider lofiAmountSlider;
     juce::Label lofiAmountLabel;
 
+    // Final EQ (Saturation Color tab, end of chain)
+    juce::GroupComponent finalEQGroup;
+    juce::ToggleButton   finalEQEnabledButton;
+    juce::Label          finalEQEnabledLabel;
+    std::unique_ptr<FinalEQComponent> finalEQComponent;
+
     // Trance Gate Effect (Effects tab)
     juce::GroupComponent tranceGateGroup;
     juce::ToggleButton tranceGateEnabledButton;
@@ -902,6 +909,9 @@ private:
     // Lo-Fi Attachments (Saturation Color tab)
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lofiEnabledAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lofiAmountAttachment;
+
+    // Final EQ Attachment (Saturation Color tab)
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> finalEQEnabledAttachment;
 
     // Trance Gate attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateEnabledAttachment;

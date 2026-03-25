@@ -57,3 +57,11 @@ SpaceDust_DebugLog.txt
 
 # Resource archives (keep .ttf, exclude .zip)
 Resources/*.zip
+Resources/vcr_extract/
+
+# Claude Code session data
+.claude/
+
+# Local helper scripts
+copy_vst.ps1
+install_vst_admin.bat

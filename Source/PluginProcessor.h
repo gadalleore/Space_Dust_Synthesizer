@@ -16,6 +16,7 @@
 #include "SpaceDustCompressor.h"
 #include "SpaceDustLofi.h"
 #include "SpaceDustTransient.h"
+#include "SpaceDustFinalEQ.h"
 
 //==============================================================================
 /**
@@ -194,6 +195,7 @@ private:
     SpaceDustCompressor compressor_;
     SpaceDustLofi lofi_;
     SpaceDustTransient transient_;
+    SpaceDustFinalEQ finalEQ_;
 
     // Ka-Donk delay line: delays synth output up to 1 second so transient leads
     static constexpr int kaDonkMaxSamples = 48000;  // ~1s at 48kHz

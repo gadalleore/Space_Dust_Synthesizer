@@ -34,13 +34,8 @@ juce_add_plugin(SpaceDust
     NEEDS_MIDI_OUTPUT FALSE
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-    COPY_PLUGIN_AFTER_BUILD TRUE
+    COPY_PLUGIN_AFTER_BUILD FALSE
     PLUGIN_MANUFACTURER "Shades"
-)
-
-# Automatically copy plugin to system VST3 folder after build
-set_target_properties(SpaceDust PROPERTIES
-    JUCE_COPY_PLUGIN_AFTER_BUILD TRUE
 )
 
 # Embed fonts as binary data (Glitch Goblin for title)
@@ -89,6 +84,10 @@ target_sources(SpaceDust PRIVATE
     Source/SpaceDustTransient.h
     Source/SpaceDustParametricEQ.cpp
     Source/SpaceDustParametricEQ.h
+    Source/SpaceDustFinalEQ.cpp
+    Source/SpaceDustFinalEQ.h
+    Source/FinalEQComponent.cpp
+    Source/FinalEQComponent.h
     Source/SexiconReverb.cpp
     Source/SexiconReverb.h
     Source/SpaceDustLookAndFeel.cpp

@@ -1934,6 +1934,12 @@ SaturationColorPageComponent::SaturationColorPageComponent(SpaceDustAudioProcess
     addAndMakeVisible(parentEditor.lofiEnabledLabel);
     addAndMakeVisible(parentEditor.lofiAmountSlider);
     addAndMakeVisible(parentEditor.lofiAmountLabel);
+    // Final EQ – spanning center+right columns
+    addAndMakeVisible(parentEditor.finalEQGroup);
+    addAndMakeVisible(parentEditor.finalEQEnabledButton);
+    addAndMakeVisible(parentEditor.finalEQEnabledLabel);
+    if (parentEditor.finalEQComponent)
+        addAndMakeVisible(parentEditor.finalEQComponent.get());
     addAndMakeVisible(parentEditor.transientGroup);
     addAndMakeVisible(parentEditor.transientEnabledButton);
     addAndMakeVisible(parentEditor.transientEnabledLabel);
@@ -1957,7 +1963,7 @@ void SaturationColorPageComponent::paint(juce::Graphics& g)
     float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
     avgLevel = juce::jmin(1.0f, avgLevel);
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
-    drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff), { &parentEditor.bitCrusherGroup, &parentEditor.compressorGroup, &parentEditor.softClipperGroup, &parentEditor.lofiGroup, &parentEditor.transientGroup });
+    drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff), { &parentEditor.bitCrusherGroup, &parentEditor.compressorGroup, &parentEditor.softClipperGroup, &parentEditor.lofiGroup, &parentEditor.transientGroup, &parentEditor.finalEQGroup });
 }
 
 void SaturationColorPageComponent::resized()
@@ -2122,6 +2128,26 @@ void SaturationColorPageComponent::resized()
     tfy += knobSize + 24 + pad;
 
     parentEditor.transientGroup.setBounds(leftColX, transY, colW, tfy - transY);
+
+    // --- Final EQ (center+right columns, below compressor / soft clipper) ---
+    // Top aligned to the lower of the two top-row groups; bottom aligned to
+    // the Transient group bottom (tfy) so both sides end at the same Y.
+    {
+        const int eqTopY  = juce::jmax(cy, sy) + pad;
+        const int eqBotY  = transY + (tfy - transY); // == tfy, same bottom as Transient
+        const int eqWidth = (rightColX + colW) - centerColX;
+        int efy = eqTopY + groupTitleH;
+
+        parentEditor.finalEQEnabledButton.setBounds(centerColX + pad, efy, bOnBtnW, bOnBtnH);
+        efy += bOnBtnH + gap;
+
+        const int eqDisplayH = juce::jmax(40, eqBotY - efy - pad);
+        if (parentEditor.finalEQComponent)
+            parentEditor.finalEQComponent->setBounds(centerColX + pad, efy,
+                                                     eqWidth - 2 * pad, eqDisplayH);
+
+        parentEditor.finalEQGroup.setBounds(centerColX, eqTopY, eqWidth, eqBotY - eqTopY);
+    }
 }
 
 //==============================================================================
@@ -4009,6 +4035,21 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lofiAmountLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     lofiAmountLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
+    // -- Final EQ --
+    finalEQGroup.setText(safeString("Final EQ"));
+    finalEQGroup.getProperties().set("viewportGlow", true);
+    finalEQEnabledButton.setButtonText(safeString("On"));
+    finalEQEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "finalEQEnabled", finalEQEnabledButton);
+    finalEQEnabledLabel.setText(safeString("Final EQ"), juce::dontSendNotification);
+    finalEQEnabledLabel.setJustificationType(juce::Justification::centred);
+    finalEQEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    finalEQEnabledLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+    finalEQComponent = std::make_unique<FinalEQComponent>(
+        audioProcessor.getValueTreeState(),
+        audioProcessor.getSampleRate() > 0.0 ? audioProcessor.getSampleRate() : 44100.0);
+    finalEQEnabledLabel.setVisible(false);
+
     // Trance Gate Effect (Effects tab)
     tranceGateEnabledButton.setButtonText(safeString("On"));
     tranceGateEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -4172,6 +4213,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     syncGroupGlow(grainDelayEnabledButton, grainDelayGroup);
     syncGroupGlow(lfo1EnabledButton, lfo1Group);
     syncGroupGlow(lfo2EnabledButton, lfo2Group);
+    finalEQEnabledButton.addListener(this);
+    syncGroupGlow(finalEQEnabledButton, finalEQGroup);
 
     grainDelayFilterHPCutoffSlider.setVisible(false);
     grainDelayFilterHPResonanceSlider.setVisible(false);
@@ -4495,6 +4538,7 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
     grainDelayEnabledButton.removeListener(this);
     lfo1EnabledButton.removeListener(this);
     lfo2EnabledButton.removeListener(this);
+    finalEQEnabledButton.removeListener(this);
     pitchBendSlider.removeListener(this);
     if (lfo1SyncRateListener)
         lfo1SyncRateCombo.removeListener(lfo1SyncRateListener.get());
@@ -4691,6 +4735,8 @@ void SpaceDustAudioProcessorEditor::buttonStateChanged(juce::Button* button)
         sync(lfo1EnabledButton, lfo1Group);
     else if (button == &lfo2EnabledButton)
         sync(lfo2EnabledButton, lfo2Group);
+    else if (button == &finalEQEnabledButton)
+        sync(finalEQEnabledButton, finalEQGroup);
 }
 
 //==============================================================================
