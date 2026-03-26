@@ -889,9 +889,9 @@ void ModulationPageComponent::resized()
     // Modulation page layout: LFO1 and LFO2 only (compact)
     const int outerMargin = 8;
     auto modulationContent = juce::Rectangle<int>(
-        outerMargin + 8,
+        outerMargin,
         8,
-        getWidth() - 2 * outerMargin - 20,
+        getWidth() - 2 * outerMargin - 12,
         getHeight() - 24
     );
     
@@ -1467,8 +1467,8 @@ void EffectsPageComponent::resized()
     
     // ---- Delay section (far left) - On button upper-left below label, Time+Decay+Mix in one row ----
     int cx = delayColX + colW / 2;
-    int y = pad + groupTitleH;
-    
+    int y = groupTitleH;
+
     auto placeLabel = [&](juce::Label& lbl, int w) { lbl.setBounds(cx - w/2, y, w, labelH); y += labelH + labelGap; };
     
     // On button: upper-left corner, right below the group label (larger for visibility)
@@ -1487,13 +1487,16 @@ void EffectsPageComponent::resized()
     parentEditor.delayDecayLabel.setBounds(dRowLeft + delayKnobSize + dKg, y, delayKnobSize, labelH);
     parentEditor.delayDryWetLabel.setBounds(dRowLeft + 2 * (delayKnobSize + dKg), y, delayKnobSize, labelH);
     y += labelH + labelGap;
-    parentEditor.delayFreeRateSlider.setBounds(dRowLeft, y, delayKnobSize, delayKnobSize);
+    // Time knob uses NoTextBox, so give it the same height as the rotary area
+    // of TextBoxBelow knobs (delayKnobSize - 18) to match visual size
+    const int delayTimeKnobH = delayKnobSize - 18;
+    parentEditor.delayFreeRateSlider.setBounds(dRowLeft, y, delayKnobSize, delayTimeKnobH);
     parentEditor.delayDecaySlider.setBounds(dRowLeft + delayKnobSize + dKg, y, delayKnobSize, delayKnobSize);
     parentEditor.delayDryWetSlider.setBounds(dRowLeft + 2 * (delayKnobSize + dKg), y, delayKnobSize, delayKnobSize);
-    parentEditor.delayRateValueLabel.setBounds(dRowLeft, y + delayKnobSize + 2, delayKnobSize, 12);
+    parentEditor.delayRateValueLabel.setBounds(dRowLeft, y + delayTimeKnobH + 2, delayKnobSize, 12);
     y += delayKnobSize + 12 + gap;
     
-    placeLabel(parentEditor.delayPingPongLabel, 100);
+    parentEditor.delayPingPongLabel.setVisible(false);
     parentEditor.delayPingPongButton.setBounds(cx - 50, y, 100, btnH);
     y += btnH + gap;
     
@@ -1537,13 +1540,13 @@ void EffectsPageComponent::resized()
     }
     
     const int delayContentHeight = y + pad;
-    parentEditor.delayGroup.setBounds(delayColX, 0, colW, delayContentHeight);
+    parentEditor.delayGroup.setBounds(delayColX, pad, colW, delayContentHeight);
 
     // ---- Grain Delay section (below Delay in left column) ----
     const int sectionGap = 6;  // Compact gap between effect sections
-    int grainStartY = delayContentHeight + sectionGap;
+    int grainStartY = pad + delayContentHeight + sectionGap;
     int gCx = delayColX + colW / 2;
-    int gY = grainStartY + pad + groupTitleH;
+    int gY = grainStartY + groupTitleH;
     const int gKnobSize = knobSize;
     const int gBtnW = 52;
     const int gBtnH = 22;
@@ -1580,9 +1583,8 @@ void EffectsPageComponent::resized()
     parentEditor.grainDelayJitterSlider.setBounds(gRowLeft + 2 * (gKnobSize + gKg), gY, gKnobSize, gKnobSize);
     gY += gKnobSize + gGap;
 
-    // Ping-Pong toggle
-    parentEditor.grainDelayPingPongLabel.setBounds(gCx - 50, gY, 100, gLabelH);
-    gY += gLabelH + gLabelGap;
+    // Ping-Pong toggle (label hidden - button text is sufficient)
+    parentEditor.grainDelayPingPongLabel.setVisible(false);
     parentEditor.grainDelayPingPongButton.setBounds(gCx - 50, gY, 100, gBtnH);
     gY += gBtnH + gGap;
 
@@ -1633,7 +1635,7 @@ void EffectsPageComponent::resized()
 
     // ---- Reverb section (center column) - On button upper-left, Mix lowest ----
     int rCx = reverbColX + colW / 2;
-    int rY = pad + groupTitleH;
+    int rY = groupTitleH;
     const int rKnobSize = knobSize;
     const int rBtnW = 48;
     const int rBtnH = 20;
@@ -1698,13 +1700,13 @@ void EffectsPageComponent::resized()
     rY += rKnobSize + pad;
     
     const int reverbContentHeight = rY;
-    parentEditor.reverbGroup.setBounds(reverbColX, 0, colW, reverbContentHeight);
+    parentEditor.reverbGroup.setBounds(reverbColX, pad, colW, reverbContentHeight);
 
     // ---- Trance Gate section (below Reverb in center column) ----
-    const int gateSectionGap = 8;  // Tighter gap between effect sections
-    int gateStartY = reverbContentHeight + gateSectionGap;
+    const int gateSectionGap = sectionGap;  // Same gap as other columns
+    int gateStartY = pad + reverbContentHeight + gateSectionGap;
     int tCx = reverbColX + colW / 2;
-    int tY = gateStartY + pad + groupTitleH;
+    int tY = gateStartY + groupTitleH;
     const int tKnobSize = knobSize;
     const int tBtnW = 48;
     const int tBtnH = 20;
@@ -1775,7 +1777,7 @@ void EffectsPageComponent::resized()
 
     // ---- Phaser section (right column, top) ----
     int pCx = grainColX + colW / 2;
-    int pY = pad + groupTitleH;
+    int pY = groupTitleH;
     const int pKnobSize = knobSize;
     const int pBtnW = 48;
     const int pBtnH = 20;
@@ -1837,12 +1839,12 @@ void EffectsPageComponent::resized()
     pY += pKnobSize + pad;
 
     const int phaserContentHeight = pY;
-    parentEditor.phaserGroup.setBounds(grainColX, 0, colW, phaserContentHeight);
+    parentEditor.phaserGroup.setBounds(grainColX, pad, colW, phaserContentHeight);
 
     // ---- Flanger section (below Phaser in right column) ----
-    int flangerStartY = phaserContentHeight + sectionGap;
+    int flangerStartY = pad + phaserContentHeight + sectionGap;
     int fCx = grainColX + colW / 2;
-    int fY = flangerStartY + pad + groupTitleH;
+    int fY = flangerStartY + groupTitleH;
     const int fKnobSize = knobSize;
     const int fOnBtnW = 62;
     const int fOnBtnH = 28;
@@ -1876,6 +1878,28 @@ void EffectsPageComponent::resized()
     fY += fKnobSize + pad;
     const int flangerContentHeight = fY - flangerStartY;
     parentEditor.flangerGroup.setBounds(grainColX, flangerStartY, colW, flangerContentHeight);
+
+    // Make column bottoms flush, excluding columns that have filters open
+    {
+        const int leftBottom   = grainStartY + grainContentHeight;
+        const int centerBottom = gateStartY + gateContentHeight;
+        const int rightBottom  = flangerStartY + flangerContentHeight;
+        const bool leftHasFilter   = filterShow || grainFilterShow;
+        const bool centerHasFilter = reverbFilterShow;
+
+        // Compute flush target only from columns without open filters
+        int maxBase = rightBottom;  // right column never has filters
+        if (!leftHasFilter)   maxBase = juce::jmax(maxBase, leftBottom);
+        if (!centerHasFilter) maxBase = juce::jmax(maxBase, centerBottom);
+
+        // Extend only non-filter columns to the flush target
+        if (!leftHasFilter && leftBottom < maxBase)
+            parentEditor.grainDelayGroup.setBounds(delayColX, grainStartY, colW, maxBase - grainStartY);
+        if (!centerHasFilter && centerBottom < maxBase)
+            parentEditor.tranceGateGroup.setBounds(reverbColX, gateStartY, colW, maxBase - gateStartY);
+        if (rightBottom < maxBase)
+            parentEditor.flangerGroup.setBounds(grainColX, flangerStartY, colW, maxBase - flangerStartY);
+    }
 }
 
 //==============================================================================
@@ -2072,12 +2096,14 @@ void SaturationColorPageComponent::resized()
     sy += knobSize + gap;
     parentEditor.softClipperOversampleCombo.setBounds(sCx - sOsComboW / 2, sy, sOsComboW, 22);
     sy += 24 + gap;
-    parentEditor.softClipperOversampleLabel.setBounds(sCx - sOsComboW / 2, sy, sOsComboW, labelH);
+    const int sOsLabelW = 90;  // Wider to fit "Oversampling"
+    parentEditor.softClipperOversampleLabel.setBounds(sCx - sOsLabelW / 2, sy, sOsLabelW, labelH);
     sy += labelH + labelGap;
     parentEditor.softClipperMixSlider.setBounds(sCx - knobSize / 2, sy, knobSize, knobSize);
     parentEditor.softClipperMixLabel.setBounds(sCx - knobSize / 2, sy + knobSize + 2, knobSize, labelH);
     sy += knobSize + labelH + 24 + pad;
-    parentEditor.softClipperGroup.setBounds(rightColX, pad, colW, sy - pad);
+    const int softClipperH = juce::jmax(sy - pad, cy - pad);  // Match Compressor height
+    parentEditor.softClipperGroup.setBounds(rightColX, pad, colW, softClipperH);
 
     // --- Lo-Fi (under Bit Crusher, same width) ---
     const int lofiY = by + pad;
@@ -2205,7 +2231,7 @@ void SpectralPageComponent::resized()
     auto bounds = getLocalBounds();
     if (bounds.isEmpty())
         return;
-    const int marginH = 20;       // Left/right margin
+    const int marginH = 8;        // Left/right margin - match Main tab's outerMargin
     const int marginTop = 8;     // Match Main tab's outerMargin - same distance from top as labels
     const int marginBottom = 20;
     const int pad = 12;
@@ -3323,7 +3349,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     delayTripletStraightButton.setVisible(false);
     
     delayFreeRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    delayFreeRateSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    delayFreeRateSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
     delayFreeRateSlider.setColour(juce::Slider::textBoxTextColourId, juce::Colours::transparentBlack);
     delayFreeRateSlider.setColour(juce::Slider::textBoxBackgroundColourId, juce::Colours::transparentBlack);
     delayFreeRateSlider.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
@@ -3853,7 +3879,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     softClipperOversampleCombo.setSelectedId(2);
     softClipperOversampleAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getValueTreeState(), "softClipperOversample", softClipperOversampleCombo);
-    softClipperOversampleLabel.setText(safeString("OS"), juce::dontSendNotification);
+    softClipperOversampleLabel.setText(safeString("Oversampling"), juce::dontSendNotification);
     softClipperOversampleLabel.setJustificationType(juce::Justification::centred);
     softClipperOversampleLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     softClipperOversampleLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
@@ -4036,12 +4062,12 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lofiAmountLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     // -- Final EQ --
-    finalEQGroup.setText(safeString("Final EQ"));
+    finalEQGroup.setText(safeString("Final Equalizer"));
     finalEQGroup.getProperties().set("viewportGlow", true);
     finalEQEnabledButton.setButtonText(safeString("On"));
     finalEQEnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "finalEQEnabled", finalEQEnabledButton);
-    finalEQEnabledLabel.setText(safeString("Final EQ"), juce::dontSendNotification);
+    finalEQEnabledLabel.setText(safeString("Final Equalizer"), juce::dontSendNotification);
     finalEQEnabledLabel.setJustificationType(juce::Justification::centred);
     finalEQEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     finalEQEnabledLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));

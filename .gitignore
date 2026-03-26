@@ -65,3 +65,9 @@ Resources/vcr_extract/
 # Local helper scripts
 copy_vst.ps1
 install_vst_admin.bat
+
+# Cursor IDE config
+.cursor/
+
+# MCP servers (development tooling)
+mcp-servers-jos/
