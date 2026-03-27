@@ -127,6 +127,9 @@ public:
     const juce::AudioBuffer<float>& getGoniometerBuffer() const;
     int getGoniometerValidSamples() const { return goniometerValidSamples.load(std::memory_order_acquire); }
 
+    // Update all voices with current parameter values (called after preset load)
+    void updateVoicesWithParameters(float lfo1Modulation = 0.0f, float lfo2Modulation = 0.0f);
+
 private:
     //==============================================================================
     // -- Parameter Management --
@@ -245,15 +248,6 @@ private:
         Defines all synthesizer parameters with ranges and defaults.
     */
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
-    
-    /**
-        Update all voices with current parameter values from APVTS.
-        Called from audio thread - real-time safe (atomic reads only).
-        
-        @param lfo1Modulation Optional LFO1 modulation value (-1.0 to 1.0) for filter cutoff
-        @param lfo2Modulation Optional LFO2 modulation value (-1.0 to 1.0) for osc detune
-    */
-    void updateVoicesWithParameters(float lfo1Modulation = 0.0f, float lfo2Modulation = 0.0f);
     
     /**
         ValueTree listener callback for ADSR parameter updates.

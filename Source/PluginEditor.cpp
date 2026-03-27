@@ -2480,6 +2480,60 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     catch (...) {}
     
     //==============================================================================
+    // -- Preset Manager Setup --
+    presetManager = std::make_unique<PresetManager>(audioProcessor.getValueTreeState());
+
+    presetCombo.setTextWhenNothingSelected("Init");
+    presetCombo.setTooltip("Select a preset");
+    presetCombo.onChange = [this]()
+    {
+        auto presets = presetManager->getAvailablePresets();
+        int idx = presetCombo.getSelectedItemIndex();
+        if (idx >= 0 && idx < presets.size())
+        {
+            presetManager->loadPreset(presets[idx]);
+            audioProcessor.updateVoicesWithParameters();
+        }
+    };
+    addAndMakeVisible(presetCombo);
+
+    savePresetButton.setTooltip("Save current settings as a preset");
+    savePresetButton.onClick = [this]() { showSavePresetDialog(); };
+    addAndMakeVisible(savePresetButton);
+
+    initPresetButton.setTooltip("Reset all parameters to defaults");
+    initPresetButton.onClick = [this]()
+    {
+        presetManager->loadInitPreset();
+        audioProcessor.updateVoicesWithParameters();
+        presetCombo.setSelectedId(0, juce::dontSendNotification);
+        presetCombo.setTextWhenNothingSelected("Init");
+    };
+    addAndMakeVisible(initPresetButton);
+
+    folderPresetButton.setTooltip("Select folder for presets");
+    folderPresetButton.onClick = [this]()
+    {
+        auto chooser = std::make_shared<juce::FileChooser>(
+            "Select Preset Folder",
+            presetManager->getPresetFolder(),
+            "");
+        chooser->launchAsync(juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectDirectories,
+            [this, chooser](const juce::FileChooser& fc)
+            {
+                auto result = fc.getResult();
+                if (result.exists() && result.isDirectory())
+                {
+                    presetManager->setPresetFolder(result);
+                    refreshPresetList();
+                }
+            });
+    };
+    addAndMakeVisible(folderPresetButton);
+
+    refreshPresetList();
+
+    //==============================================================================
     // -- Oscillators Section Setup --
     try
     {
@@ -2494,7 +2548,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         }
     }
     catch (...) {}
-    
+
     DBG("Space Dust: Setting up Oscillators section");
     
     // Note: Components will be added to page components, not directly to editor
@@ -4614,6 +4668,55 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
 }
 
 //==============================================================================
+// -- Preset Management Helpers --
+
+void SpaceDustAudioProcessorEditor::refreshPresetList()
+{
+    presetCombo.clear(juce::dontSendNotification);
+    auto presets = presetManager->getAvailablePresets();
+    for (int i = 0; i < presets.size(); ++i)
+        presetCombo.addItem(presets[i].getFileNameWithoutExtension(), i + 1);
+
+    // Try to select current preset by name
+    auto currentName = presetManager->getCurrentPresetName();
+    for (int i = 0; i < presets.size(); ++i)
+    {
+        if (presets[i].getFileNameWithoutExtension() == currentName)
+        {
+            presetCombo.setSelectedId(i + 1, juce::dontSendNotification);
+            return;
+        }
+    }
+    presetCombo.setTextWhenNothingSelected(currentName);
+}
+
+void SpaceDustAudioProcessorEditor::showSavePresetDialog()
+{
+    auto currentName = presetManager->getCurrentPresetName();
+    auto* alertWindow = new juce::AlertWindow("Save Preset",
+        "Enter a name for this preset:",
+        juce::AlertWindow::NoIcon, this);
+    alertWindow->addTextEditor("presetName", currentName, "Preset Name:");
+    alertWindow->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
+    alertWindow->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
+
+    alertWindow->enterModalState(true, juce::ModalCallbackFunction::create(
+        [this, alertWindow](int result)
+        {
+            if (result == 1)
+            {
+                auto name = alertWindow->getTextEditorContents("presetName").trim();
+                if (name.isNotEmpty())
+                {
+                    presetManager->savePreset(name);
+                    refreshPresetList();
+                }
+            }
+            delete alertWindow;
+        }), false);
+}
+
+//==============================================================================
 // -- APVTS Listener: Bidirectional Filter Parameter Sync --
 
 void SpaceDustAudioProcessorEditor::parameterChanged(const juce::String& parameterID, float newValue)
@@ -5212,9 +5315,29 @@ void SpaceDustAudioProcessorEditor::resized()
         catch (...) {}
     
     //==============================================================================
+    // -- Preset Controls Layout (Top Header Bar) --
+    const int titleHeight = 48;  // Compact: title + tab bar
+    {
+        const int presetY = 10;
+        const int presetH = 26;
+        const int gap = 4;
+        int px = 8;
+
+        presetCombo.setBounds(px, presetY, 142, presetH);
+        px += 142 + gap;
+
+        savePresetButton.setBounds(px, presetY, 80, presetH);
+        px += 80 + gap;
+
+        initPresetButton.setBounds(px, presetY, 105, presetH);
+        px += 105 + gap;
+
+        folderPresetButton.setBounds(px, presetY, 90, presetH);
+    }
+
+    //==============================================================================
     // -- Tabbed Component Layout --
     // Position tabbed component below title area, leaving space for Master section on right
-    const int titleHeight = 48;  // Compact: title + tab bar
     const int masterWidth = 220;  // Width of Master section
     const int masterGap = 80;     // Original gap (used for tabbedWidth calculation only)
     const int actualMasterGap = 40;  // Reduced by 50% - actual gap between tab and Master

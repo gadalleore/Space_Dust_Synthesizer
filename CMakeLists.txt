@@ -92,6 +92,8 @@ target_sources(SpaceDust PRIVATE
     Source/SexiconReverb.h
     Source/SpaceDustLookAndFeel.cpp
     Source/SpaceDustLookAndFeel.h
+    Source/PresetManager.cpp
+    Source/PresetManager.h
 )
 
 # Disable VST2 replacement compatibility for VST3-only plugin

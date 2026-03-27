@@ -8,6 +8,7 @@
 #include "OscilloscopeComponent.h"
 #include "SpectrumAnalyserComponent.h"
 #include "FinalEQComponent.h"
+#include "PresetManager.h"
 
 //==============================================================================
 /**
@@ -260,6 +261,16 @@ private:
 
     // TooltipWindow required for setTooltip() to display (e.g. Pan labels)
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
+
+    //==============================================================================
+    // -- Preset Management --
+    std::unique_ptr<PresetManager> presetManager;
+    juce::ComboBox presetCombo;
+    juce::TextButton savePresetButton { "Save Preset" };
+    juce::TextButton initPresetButton { "Initialize Preset" };
+    juce::TextButton folderPresetButton { "Preset Folder" };
+    void refreshPresetList();
+    void showSavePresetDialog();
 
     //==============================================================================
     // -- Tabbed Component for Main/Modulation Pages --
