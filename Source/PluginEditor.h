@@ -718,6 +718,14 @@ private:
     juce::ToggleButton tranceGateStep6Button;
     juce::ToggleButton tranceGateStep7Button;
     juce::ToggleButton tranceGateStep8Button;
+    juce::ToggleButton tranceGateStep9Button;
+    juce::ToggleButton tranceGateStep10Button;
+    juce::ToggleButton tranceGateStep11Button;
+    juce::ToggleButton tranceGateStep12Button;
+    juce::ToggleButton tranceGateStep13Button;
+    juce::ToggleButton tranceGateStep14Button;
+    juce::ToggleButton tranceGateStep15Button;
+    juce::ToggleButton tranceGateStep16Button;
 
     //==============================================================================
     // -- Parameter Attachments (Declared LAST for proper destruction order) --
@@ -941,6 +949,14 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep6Attachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep7Attachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep8Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep9Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep10Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep11Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep12Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep13Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep14Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep15Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep16Attachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpaceDustAudioProcessorEditor)
 };

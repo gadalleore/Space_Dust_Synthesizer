@@ -12,6 +12,224 @@ namespace
         return juce::String(raw);
     }
 
+    // Astronomically accurate starfield: Costa Mesa, CA (33.66°N, 117.90°W)
+    // March 29, 2026 at midnight PDT — commemorating the completion of Space Dust.
+    // Star positions from Yale Bright Star Catalog (J2000.0 epoch), projected via
+    // horizontal coordinate transform for the exact date/time/location.
+    // Bortle 7-8 sky (moderate light pollution): ~mag 4.0 naked-eye limit.
+    void drawStarfield(juce::Graphics& g, int w, int h)
+    {
+        if (w <= 0 || h <= 0) return;
+
+        // Star catalog: {RA (degrees), Dec (degrees), apparent magnitude}
+        struct CatStar { float ra, dec, mag; };
+        static const CatStar catalog[] = {
+            // -- Orion (setting in west) --
+            {88.79f,   7.41f, 0.50f},   // Betelgeuse (α Ori)
+            {78.63f,  -8.20f, 0.13f},   // Rigel (β Ori)
+            {81.28f,   6.35f, 1.64f},   // Bellatrix (γ Ori)
+            {83.00f,  -0.30f, 2.23f},   // Mintaka (δ Ori)
+            {84.05f,  -1.20f, 1.69f},   // Alnilam (ε Ori)
+            {85.19f,  -1.94f, 1.77f},   // Alnitak (ζ Ori)
+            {86.94f,  -9.67f, 2.09f},   // Saiph (κ Ori)
+            // -- Canis Major --
+            {101.29f,-16.72f,-1.46f},   // Sirius (α CMa)
+            {95.68f, -17.96f, 1.98f},   // Mirzam (β CMa)
+            {107.10f,-26.39f, 1.84f},   // Adhara (ε CMa)
+            {104.66f,-28.97f, 1.50f},   // Wezen (δ CMa)
+            // -- Canis Minor --
+            {114.83f,  5.22f, 0.34f},   // Procyon (α CMi)
+            {111.79f,  8.29f, 2.90f},   // Gomeisa (β CMi)
+            // -- Gemini --
+            {116.33f, 28.03f, 1.14f},   // Pollux (β Gem)
+            {113.65f, 31.89f, 1.58f},   // Castor (α Gem)
+            {99.43f,  16.40f, 1.93f},   // Alhena (γ Gem)
+            {95.74f,  22.51f, 2.88f},   // Tejat (μ Gem)
+            {100.98f, 25.13f, 2.98f},   // Mebsuta (ε Gem)
+            {110.03f, 21.98f, 3.53f},   // Wasat (δ Gem)
+            // -- Auriga --
+            {79.17f,  46.00f, 0.08f},   // Capella (α Aur)
+            {89.88f,  44.95f, 1.90f},   // Menkalinan (β Aur)
+            // -- Taurus --
+            {68.98f,  16.51f, 0.85f},   // Aldebaran (α Tau)
+            {81.57f,  28.61f, 1.65f},   // Elnath (β Tau)
+            // -- Leo --
+            {152.09f, 11.97f, 1.35f},   // Regulus (α Leo)
+            {177.27f, 14.57f, 2.14f},   // Denebola (β Leo)
+            {154.99f, 19.84f, 2.28f},   // Algieba (γ Leo)
+            {168.53f, 20.52f, 2.56f},   // Zosma (δ Leo)
+            {168.56f, 15.43f, 3.34f},   // Chertan (θ Leo)
+            {154.17f, 23.42f, 3.44f},   // Adhafera (ζ Leo)
+            {151.83f, 16.76f, 3.52f},   // η Leo
+            // -- Virgo --
+            {201.30f,-11.16f, 0.97f},   // Spica (α Vir)
+            {190.42f, -1.45f, 2.74f},   // Porrima (γ Vir)
+            {195.54f, 10.96f, 2.83f},   // Vindemiatrix (ε Vir)
+            // -- Boötes --
+            {213.92f, 19.18f,-0.05f},   // Arcturus (α Boo)
+            {221.25f, 27.07f, 2.70f},   // Izar (ε Boo)
+            {208.67f, 18.40f, 2.68f},   // Muphrid (η Boo)
+            {218.02f, 38.31f, 3.03f},   // Seginus (γ Boo)
+            {225.49f, 40.39f, 3.50f},   // Nekkar (β Boo)
+            // -- Ursa Major (Big Dipper high overhead) --
+            {165.93f, 61.75f, 1.79f},   // Dubhe (α UMa)
+            {165.46f, 56.38f, 2.37f},   // Merak (β UMa)
+            {178.46f, 53.69f, 2.44f},   // Phecda (γ UMa)
+            {183.86f, 57.03f, 3.31f},   // Megrez (δ UMa)
+            {193.51f, 55.96f, 1.77f},   // Alioth (ε UMa)
+            {200.98f, 54.93f, 2.27f},   // Mizar (ζ UMa)
+            {206.89f, 49.31f, 1.86f},   // Alkaid (η UMa)
+            {155.58f, 41.50f, 3.05f},   // Tania Australis (μ UMa)
+            {154.27f, 42.91f, 3.45f},   // Tania Borealis (λ UMa)
+            {169.62f, 33.09f, 3.49f},   // Alula Borealis (ν UMa)
+            {169.55f, 31.53f, 3.79f},   // Alula Australis (ξ UMa)
+            {201.31f, 54.99f, 4.01f},   // Alcor (80 UMa)
+            // -- Ursa Minor --
+            {37.95f,  89.26f, 1.98f},   // Polaris (α UMi)
+            {222.68f, 74.16f, 2.08f},   // Kochab (β UMi)
+            {230.18f, 71.83f, 3.05f},   // Pherkad (γ UMi)
+            // -- Hydra --
+            {141.90f, -8.66f, 1.98f},   // Alphard (α Hya)
+            // -- Cancer --
+            {124.13f,  9.19f, 3.52f},   // Al Tarf (β Cnc)
+            {131.17f, 18.15f, 3.94f},   // Asellus Australis (δ Cnc)
+            // -- Corvus --
+            {183.95f,-17.54f, 2.59f},   // Gienah (γ Crv)
+            {188.60f,-23.40f, 2.65f},   // Kraz (β Crv)
+            {187.47f,-16.52f, 2.95f},   // Algorab (δ Crv)
+            {182.53f,-22.62f, 3.02f},   // Minkar (ε Crv)
+            // -- Canes Venatici --
+            {194.01f, 38.32f, 2.90f},   // Cor Caroli (α CVn)
+            // -- Corona Borealis --
+            {233.67f, 26.71f, 2.23f},   // Alphecca (α CrB)
+            // -- Draco --
+            {269.15f, 51.49f, 2.23f},   // Eltanin (γ Dra)
+            {262.61f, 52.30f, 2.79f},   // Rastaban (β Dra)
+            {211.10f, 64.38f, 3.65f},   // Thuban (α Dra)
+            // -- Hercules --
+            {247.55f, 21.49f, 2.77f},   // Kornephoros (β Her)
+            {250.32f, 31.60f, 2.81f},   // ζ Her
+            {258.76f, 36.81f, 3.16f},   // π Her
+            {258.76f, 24.84f, 3.14f},   // Sarin (δ Her)
+            {258.66f, 14.39f, 3.48f},   // Rasalgethi (α Her)
+            {266.62f, 27.72f, 3.42f},   // μ Her
+            {250.72f, 38.92f, 3.53f},   // η Her
+            // -- Serpens --
+            {236.07f,  6.43f, 2.65f},   // Unukalhai (α Ser)
+            // -- Libra --
+            {222.72f,-16.04f, 2.75f},   // Zubenelgenubi (α Lib)
+            {229.25f, -9.38f, 2.61f},   // Zubeneschamali (β Lib)
+            // -- Lyra --
+            {279.23f, 38.78f, 0.03f},   // Vega (α Lyr)
+            // -- Cygnus --
+            {310.36f, 45.28f, 1.25f},   // Deneb (α Cyg)
+            // -- Centaurus --
+            {211.67f,-36.37f, 2.06f},   // Menkent (θ Cen)
+            // -- Perseus (low NW) --
+            {51.08f,  49.86f, 1.80f},   // Mirfak (α Per)
+            // -- Lynx --
+            {140.26f, 34.39f, 3.13f},   // α Lyn
+            // -- Leo Minor --
+            {163.33f, 34.22f, 3.83f},   // Praecipua (46 LMi)
+            // -- Cepheus --
+            {319.65f, 62.59f, 2.51f},   // Alderamin (α Cep)
+            // -- Ophiuchus --
+            {263.73f, 12.56f, 2.08f},   // Rasalhague (α Oph)
+            // -- Monoceros --
+            {107.99f, -0.49f, 3.93f},   // α Mon
+            // -- Cassiopeia (low north) --
+            {10.13f,  56.54f, 2.23f},   // Schedar (α Cas)
+            {2.29f,   59.15f, 2.27f},   // Caph (β Cas)
+        };
+        static const int catalogSize = sizeof(catalog) / sizeof(catalog[0]);
+
+        // Projected star cache (computed once, reused every paint)
+        struct ProjStar { float nx, ny, brightness; };
+        static ProjStar projected[200];
+        static int projCount = 0;
+        static bool computed = false;
+
+        if (!computed)
+        {
+            computed = true;
+            projCount = 0;
+
+            // Costa Mesa, CA: 33.6646°N, 117.9034°W
+            // March 29, 2026 midnight PDT (UTC-7) = 07:00 UTC
+            // GMST at 0h UTC: 188.81° + 7h sidereal rotation (105.29°) = 294.10°
+            // LST = GMST + longitude = 294.10 + (-117.90) = 176.20°
+            constexpr float lat       = 33.6646f;
+            constexpr float lst       = 176.20f;
+            constexpr float degToRad  = 3.14159265f / 180.0f;
+            constexpr float minAlt    = 5.0f;    // horizon cutoff (obstructions + haze)
+            constexpr float maxMag    = 4.2f;    // Bortle 7-8 naked-eye limit
+            constexpr float minMag    = -1.5f;
+            const float sinLat = std::sin(lat * degToRad);
+            const float cosLat = std::cos(lat * degToRad);
+            const float sinMinAlt = std::sin(minAlt * degToRad);
+
+            for (int i = 0; i < catalogSize && projCount < 200; ++i)
+            {
+                const auto& s = catalog[i];
+                if (s.mag > maxMag) continue;
+
+                float ha     = (lst - s.ra) * degToRad;
+                float sinDec = std::sin(s.dec * degToRad);
+                float cosDec = std::cos(s.dec * degToRad);
+
+                // Altitude
+                float sinAlt = sinDec * sinLat + cosDec * cosLat * std::cos(ha);
+                if (sinAlt < sinMinAlt) continue;  // below horizon / obstructed
+
+                float alt    = std::asin(sinAlt) / degToRad;
+                float cosAlt = std::cos(alt * degToRad);
+                if (cosAlt < 0.001f) cosAlt = 0.001f;  // zenith guard
+
+                // Azimuth (0°=N, 90°=E, 180°=S, 270°=W)
+                float sinAz = -cosDec * std::sin(ha) / cosAlt;
+                float cosAz = (sinDec - sinLat * sinAlt) / (cosLat * cosAlt);
+                float az    = std::atan2(sinAz, cosAz) / degToRad;
+                if (az < 0.0f) az += 360.0f;
+
+                // Cylindrical equidistant projection to normalized coords
+                float nx = az / 360.0f;
+                float ny = 1.0f - (alt / 90.0f);
+
+                // Brightness from magnitude (linear in perceptual range)
+                float brightness = (maxMag - s.mag) / (maxMag - minMag);
+                brightness = juce::jlimit(0.0f, 1.0f, brightness);
+
+                projected[projCount++] = { nx, ny, brightness };
+            }
+        }
+
+        // Draw catalog stars
+        for (int i = 0; i < projCount; ++i)
+        {
+            const auto& s = projected[i];
+            float alpha  = 60.0f + 130.0f * s.brightness;
+            float radius = 0.6f + 1.5f * s.brightness;
+            g.setColour(juce::Colour(255, 255, 255).withAlpha(
+                static_cast<juce::uint8>(juce::jlimit(0, 255, static_cast<int>(alpha)))));
+            float px = s.nx * static_cast<float>(w);
+            float py = s.ny * static_cast<float>(h);
+            g.fillEllipse(px - radius, py - radius, radius * 2.0f, radius * 2.0f);
+        }
+
+        // Faint filler stars (threshold-of-visibility, deterministic positions)
+        for (int i = 0; i < 35; ++i)
+        {
+            unsigned int hash = static_cast<unsigned int>((i + 500) * 2654435761u);
+            float sx = static_cast<float>(hash % static_cast<unsigned int>(w));
+            hash = (hash >> 13) ^ (hash * 1597334677u);
+            float sy = static_cast<float>(hash % static_cast<unsigned int>(h));
+            hash = (hash >> 7) ^ (hash * 2246822519u);
+            juce::uint8 alpha = static_cast<juce::uint8>(22 + (hash % 26));
+            g.setColour(juce::Colour(255, 255, 255).withAlpha(alpha));
+            g.fillEllipse(sx - 0.5f, sy - 0.5f, 1.0f, 1.0f);
+        }
+    }
+
     // Draw glow halos directly (keeps bleed fix from LookAndFeel, overlap may add slightly)
     void drawGlows(juce::Graphics& g, int baseAlpha, juce::Colour glowCol,
                   std::initializer_list<const juce::Component*> groupList)
@@ -404,6 +622,7 @@ void MainPageComponent::updateSubOscVisibility()
 void MainPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
+    drawStarfield(g, getWidth(), getHeight());
     float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
     avgLevel = juce::jmin(1.0f, avgLevel);
     const int baseAlpha = 8 + static_cast<int>(44.0f * avgLevel);
@@ -876,6 +1095,7 @@ void ModulationPageComponent::parameterChanged(const juce::String& parameterID, 
 void ModulationPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
+    drawStarfield(g, getWidth(), getHeight());
     float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
     avgLevel = juce::jmin(1.0f, avgLevel);
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
@@ -1359,6 +1579,16 @@ EffectsPageComponent::EffectsPageComponent(SpaceDustAudioProcessorEditor& editor
     addAndMakeVisible(parentEditor.tranceGateStep6Button);
     addAndMakeVisible(parentEditor.tranceGateStep7Button);
     addAndMakeVisible(parentEditor.tranceGateStep8Button);
+    addAndMakeVisible(parentEditor.tranceGateStep9Button);
+    addAndMakeVisible(parentEditor.tranceGateStep10Button);
+    addAndMakeVisible(parentEditor.tranceGateStep11Button);
+    addAndMakeVisible(parentEditor.tranceGateStep12Button);
+    addAndMakeVisible(parentEditor.tranceGateStep13Button);
+    addAndMakeVisible(parentEditor.tranceGateStep14Button);
+    addAndMakeVisible(parentEditor.tranceGateStep15Button);
+    addAndMakeVisible(parentEditor.tranceGateStep16Button);
+    // Re-layout step buttons when Steps dropdown changes
+    parentEditor.tranceGateStepsCombo.onChange = [this]() { resized(); };
     auto& apvts = parentEditor.audioProcessor.getValueTreeState();
     apvts.addParameterListener(juce::ParameterID{"delayFilterShow", 1}.getParamID(), this);
     apvts.addParameterListener(juce::ParameterID{"reverbFilterShow", 1}.getParamID(), this);
@@ -1370,6 +1600,7 @@ EffectsPageComponent::EffectsPageComponent(SpaceDustAudioProcessorEditor& editor
 
 EffectsPageComponent::~EffectsPageComponent()
 {
+    parentEditor.tranceGateStepsCombo.onChange = nullptr;
     auto& apvts = parentEditor.audioProcessor.getValueTreeState();
     apvts.removeParameterListener(juce::ParameterID{"delayFilterShow", 1}.getParamID(), this);
     apvts.removeParameterListener(juce::ParameterID{"reverbFilterShow", 1}.getParamID(), this);
@@ -1434,6 +1665,7 @@ void EffectsPageComponent::updateReverbFilterVisibility()
 void EffectsPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
+    drawStarfield(g, getWidth(), getHeight());
     float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
     avgLevel = juce::jmin(1.0f, avgLevel);
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
@@ -1722,8 +1954,6 @@ void EffectsPageComponent::resized()
     parentEditor.tranceGatePreEffectButton.setBounds(tCx - 60, tY, 120, tBtnH);
     tY += tBtnH + tGap;
 
-    parentEditor.tranceGateStepsLabel.setBounds(tCx - 60, tY, 120, tLabelH);
-    tY += tLabelH + labelGap;
     parentEditor.tranceGateStepsCombo.setBounds(tCx - 60, tY, 120, 20);
     tY += 24 + tGap;
 
@@ -1743,28 +1973,60 @@ void EffectsPageComponent::resized()
     parentEditor.tranceGateReleaseSlider.setBounds(tRowLeft + 2 * (tKnobSize + tKg), tY, tKnobSize, tKnobSize);
     tY += tKnobSize + tGap;
 
-    // 8 step buttons in a row (compact)
+    // Step buttons - show 4, 8, or 16 (two rows of 8) based on Steps dropdown
     const int stepBtnSize = 24;
-    const int stepTotalW = 8 * stepBtnSize + 7 * 4;
-    int stepLeft = tCx - stepTotalW / 2;
-    for (int s = 0; s < 8; ++s)
+    const int stepGap = 4;
+    const int selectedId = parentEditor.tranceGateStepsCombo.getSelectedId();
+    const int totalSteps = (selectedId == 1) ? 4 : (selectedId == 3) ? 16 : 8;
+    const int rowSize = 8;  // max buttons per row
+    const int row1Count = juce::jmin(totalSteps, rowSize);
+
+    const int row1TotalW = row1Count * stepBtnSize + (row1Count - 1) * stepGap;
+    int stepLeft = tCx - row1TotalW / 2;
+
+    juce::ToggleButton* stepBtns[16] = {
+        &parentEditor.tranceGateStep1Button, &parentEditor.tranceGateStep2Button,
+        &parentEditor.tranceGateStep3Button, &parentEditor.tranceGateStep4Button,
+        &parentEditor.tranceGateStep5Button, &parentEditor.tranceGateStep6Button,
+        &parentEditor.tranceGateStep7Button, &parentEditor.tranceGateStep8Button,
+        &parentEditor.tranceGateStep9Button, &parentEditor.tranceGateStep10Button,
+        &parentEditor.tranceGateStep11Button, &parentEditor.tranceGateStep12Button,
+        &parentEditor.tranceGateStep13Button, &parentEditor.tranceGateStep14Button,
+        &parentEditor.tranceGateStep15Button, &parentEditor.tranceGateStep16Button
+    };
+
+    // Row 1: steps 1-8 (or 1-4)
+    for (int s = 0; s < rowSize; ++s)
     {
-        juce::ToggleButton* btn = nullptr;
-        switch (s)
+        if (s < row1Count)
         {
-            case 0: btn = &parentEditor.tranceGateStep1Button; break;
-            case 1: btn = &parentEditor.tranceGateStep2Button; break;
-            case 2: btn = &parentEditor.tranceGateStep3Button; break;
-            case 3: btn = &parentEditor.tranceGateStep4Button; break;
-            case 4: btn = &parentEditor.tranceGateStep5Button; break;
-            case 5: btn = &parentEditor.tranceGateStep6Button; break;
-            case 6: btn = &parentEditor.tranceGateStep7Button; break;
-            case 7: btn = &parentEditor.tranceGateStep8Button; break;
+            stepBtns[s]->setVisible(true);
+            stepBtns[s]->setBounds(stepLeft + s * (stepBtnSize + stepGap), tY, stepBtnSize, stepBtnSize);
         }
-        if (btn)
-            btn->setBounds(stepLeft + s * (stepBtnSize + 4), tY, stepBtnSize, stepBtnSize);
+        else
+        {
+            stepBtns[s]->setVisible(false);
+        }
     }
-    tY += stepBtnSize + tGap;
+    tY += stepBtnSize + stepGap;
+
+    // Row 2: steps 9-16 (only when 16 steps selected)
+    if (totalSteps == 16)
+    {
+        for (int s = 0; s < rowSize; ++s)
+        {
+            stepBtns[rowSize + s]->setVisible(true);
+            stepBtns[rowSize + s]->setBounds(stepLeft + s * (stepBtnSize + stepGap), tY, stepBtnSize, stepBtnSize);
+        }
+        tY += stepBtnSize + tGap;
+    }
+    else
+    {
+        // Hide steps 9-16 when not in 16-step mode
+        for (int s = 0; s < rowSize; ++s)
+            stepBtns[rowSize + s]->setVisible(false);
+        tY += tGap - stepGap;  // restore normal gap (we already added stepGap above)
+    }
 
     // Mix knob - always the lowest knob
     parentEditor.tranceGateMixLabel.setBounds(tCx - tKnobSize/2, tY, tKnobSize, tLabelH);
@@ -1887,16 +2149,20 @@ void EffectsPageComponent::resized()
         const bool leftHasFilter   = filterShow || grainFilterShow;
         const bool centerHasFilter = reverbFilterShow;
 
+        // Use center column's base height (without 16-step extra row) for flush
+        const int centerExtraFor16 = (totalSteps == 16) ? (stepBtnSize + stepGap) : 0;
+        const int centerBaseBottom = centerBottom - centerExtraFor16;
+
         // Compute flush target only from columns without open filters
         int maxBase = rightBottom;  // right column never has filters
         if (!leftHasFilter)   maxBase = juce::jmax(maxBase, leftBottom);
-        if (!centerHasFilter) maxBase = juce::jmax(maxBase, centerBottom);
+        if (!centerHasFilter) maxBase = juce::jmax(maxBase, centerBaseBottom);
 
         // Extend only non-filter columns to the flush target
         if (!leftHasFilter && leftBottom < maxBase)
             parentEditor.grainDelayGroup.setBounds(delayColX, grainStartY, colW, maxBase - grainStartY);
-        if (!centerHasFilter && centerBottom < maxBase)
-            parentEditor.tranceGateGroup.setBounds(reverbColX, gateStartY, colW, maxBase - gateStartY);
+        if (!centerHasFilter && centerBaseBottom < maxBase)
+            parentEditor.tranceGateGroup.setBounds(reverbColX, gateStartY, colW, juce::jmax(gateContentHeight, maxBase - gateStartY));
         if (rightBottom < maxBase)
             parentEditor.flangerGroup.setBounds(grainColX, flangerStartY, colW, maxBase - flangerStartY);
     }
@@ -1984,6 +2250,7 @@ SaturationColorPageComponent::SaturationColorPageComponent(SpaceDustAudioProcess
 void SaturationColorPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
+    drawStarfield(g, getWidth(), getHeight());
     float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
     avgLevel = juce::jmin(1.0f, avgLevel);
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
@@ -2220,6 +2487,7 @@ SpectralPageComponent::SpectralPageComponent(SpaceDustAudioProcessorEditor& edit
 void SpectralPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
+    drawStarfield(g, getWidth(), getHeight());
     if (!lissajousDrawArea.isEmpty())
         drawLissajous(g, lissajousDrawArea, parentEditor.audioProcessor.getGoniometerBuffer(),
                       parentEditor.audioProcessor.getGoniometerValidSamples());
@@ -4145,9 +4413,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     tranceGatePreEffectLabel.setJustificationType(juce::Justification::centred);
     tranceGatePreEffectLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     tranceGatePreEffectLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    tranceGateStepsCombo.addItem(safeString("4"), 1);
-    tranceGateStepsCombo.addItem(safeString("8"), 2);
-    tranceGateStepsCombo.addItem(safeString("16"), 3);
+    tranceGateStepsCombo.addItem(safeString("4 Steps"), 1);
+    tranceGateStepsCombo.addItem(safeString("8 Steps"), 2);
+    tranceGateStepsCombo.addItem(safeString("16 Steps"), 3);
     tranceGateStepsCombo.setSelectedId(2);
     tranceGateStepsAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getValueTreeState(), "tranceGateSteps", tranceGateStepsCombo);
@@ -4220,6 +4488,30 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     tranceGateStep8Button.setButtonText(safeString("8"));
     tranceGateStep8Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "tranceGateStep8", tranceGateStep8Button);
+    tranceGateStep9Button.setButtonText(safeString("9"));
+    tranceGateStep9Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateStep9", tranceGateStep9Button);
+    tranceGateStep10Button.setButtonText(safeString("10"));
+    tranceGateStep10Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateStep10", tranceGateStep10Button);
+    tranceGateStep11Button.setButtonText(safeString("11"));
+    tranceGateStep11Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateStep11", tranceGateStep11Button);
+    tranceGateStep12Button.setButtonText(safeString("12"));
+    tranceGateStep12Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateStep12", tranceGateStep12Button);
+    tranceGateStep13Button.setButtonText(safeString("13"));
+    tranceGateStep13Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateStep13", tranceGateStep13Button);
+    tranceGateStep14Button.setButtonText(safeString("14"));
+    tranceGateStep14Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateStep14", tranceGateStep14Button);
+    tranceGateStep15Button.setButtonText(safeString("15"));
+    tranceGateStep15Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateStep15", tranceGateStep15Button);
+    tranceGateStep16Button.setButtonText(safeString("16"));
+    tranceGateStep16Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "tranceGateStep16", tranceGateStep16Button);
 
     // Hide redundant labels to save UI space (toggles are self-evident)
     delayEnabledLabel.setVisible(false);
@@ -4239,6 +4531,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     transientPostEffectLabel.setVisible(false);
     tranceGateEnabledLabel.setVisible(false);
     tranceGatePreEffectLabel.setVisible(false);
+    tranceGateStepsLabel.setVisible(false);
     tranceGateSyncLabel.setVisible(false);
     
     reverbFilterWarmSaturationButton.setVisible(false);
@@ -5141,6 +5434,7 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
     const int h = getHeight();
 
     g.fillAll(juce::Colour(0xff0a0a1f));
+    drawStarfield(g, w, h);
 
     //==============================================================================
     // -- Arcade Edge Glow (top & bottom) - parabolic, subtle, smooth color gradient --

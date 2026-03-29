@@ -42,8 +42,7 @@ float SpaceDustTranceGate::getStepValue(float phase) const
     const int steps = juce::jlimit(4, 16, params_.numSteps);
     const float stepSize = 1.0f / static_cast<float>(steps);
     const int stepIndex = static_cast<int>(std::floor(phase / stepSize)) % steps;
-    const int patternIndex = stepIndex % kMaxSteps;  // For 16 steps, uses 0-7 for first 8, 0-7 for second 8
-    return params_.stepOn[patternIndex] ? 1.0f : 0.0f;
+    return params_.stepOn[stepIndex] ? 1.0f : 0.0f;
 }
 
 float SpaceDustTranceGate::smoothEnvelope(float raw, float current, bool rising) const

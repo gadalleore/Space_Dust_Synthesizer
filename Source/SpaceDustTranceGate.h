@@ -19,18 +19,19 @@
 class SpaceDustTranceGate
 {
 public:
-    static constexpr int kMaxSteps = 8;
+    static constexpr int kMaxSteps = 16;
 
     struct Parameters
     {
         bool enabled = false;
-        int numSteps = 8;           // 4, 8, or 16 (16 = double speed over 8 steps)
+        int numSteps = 8;           // 4, 8, or 16
         bool sync = true;           // Tempo sync vs free Hz
         float rate = 4.0f;          // 0-12: sync index or free Hz (log scale)
         float attackMs = 2.0f;      // Attack time ms (0.1-50)
         float releaseMs = 5.0f;     // Release time ms (0.1-50)
         float mix = 1.0f;           // Wet mix 0-1
-        bool stepOn[8] = { true, false, true, false, true, false, true, false };  // Default: on-off pattern
+        bool stepOn[16] = { true, false, true, false, true, false, true, false,
+                            true, false, true, false, true, false, true, false };
     };
 
     SpaceDustTranceGate() = default;

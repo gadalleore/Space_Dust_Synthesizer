@@ -1877,7 +1877,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             tp.attackMs = *apvts.getRawParameterValue("tranceGateAttack");
             tp.releaseMs = *apvts.getRawParameterValue("tranceGateRelease");
             tp.mix = *apvts.getRawParameterValue("tranceGateMix");
-            for (int s = 0; s < 8; ++s)
+            for (int s = 0; s < 16; ++s)
             {
                 juce::String stepId = "tranceGateStep" + juce::String(s + 1);
                 if (auto* rp = apvts.getRawParameterValue(stepId))
@@ -3711,7 +3711,39 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{"tranceGateStep8", 1}, "Step 8", false),
         "tranceGateStep8");
-    
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateStep9", 1}, "Step 9", true),
+        "tranceGateStep9");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateStep10", 1}, "Step 10", false),
+        "tranceGateStep10");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateStep11", 1}, "Step 11", true),
+        "tranceGateStep11");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateStep12", 1}, "Step 12", false),
+        "tranceGateStep12");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateStep13", 1}, "Step 13", true),
+        "tranceGateStep13");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateStep14", 1}, "Step 14", false),
+        "tranceGateStep14");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateStep15", 1}, "Step 15", true),
+        "tranceGateStep15");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"tranceGateStep16", 1}, "Step 16", false),
+        "tranceGateStep16");
+
     //==============================================================================
     // -- DEBUG: createParameterLayout End --
     try
