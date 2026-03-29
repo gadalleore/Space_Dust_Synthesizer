@@ -94,6 +94,7 @@ target_sources(SpaceDust PRIVATE
     Source/SpaceDustLookAndFeel.h
     Source/PresetManager.cpp
     Source/PresetManager.h
+    Source/CheezeGuyGame.h
 )
 
 # Disable VST2 replacement compatibility for VST3-only plugin

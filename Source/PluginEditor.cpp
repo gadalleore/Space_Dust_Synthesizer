@@ -3243,7 +3243,51 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     masterVolumeLabel.setJustificationType(juce::Justification::centred);
     masterVolumeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
     masterVolumeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    
+
+    // Easter egg: 7 clicks on master knob in 5 seconds launches Cheeze Guy
+    masterVolumeSlider.onClicked = [this]()
+    {
+        auto now = (juce::int64)juce::Time::getMillisecondCounter();
+
+        if (masterKnobClickCount < 7)
+            masterKnobClickTimes[masterKnobClickCount++] = now;
+        else
+        {
+            for (int i = 0; i < 6; i++)
+                masterKnobClickTimes[i] = masterKnobClickTimes[i + 1];
+            masterKnobClickTimes[6] = now;
+        }
+
+        if (masterKnobClickCount >= 7 &&
+            (masterKnobClickTimes[6] - masterKnobClickTimes[0]) <= 5000)
+        {
+            masterKnobClickCount = 0;
+
+            // Add game tab if not already added
+            if (!cheezeGuyTabAdded)
+            {
+                cheezeGuyGame = std::make_unique<CheezeGuyGameComponent>();
+                tabbedComponent.addTab(safeString("Cheeze Guy"),
+                    juce::Colour(0xff0a0a1f), cheezeGuyGame.get(), false);
+                cheezeGuyTabAdded = true;
+            }
+            else
+            {
+                cheezeGuyGame->resetGame();
+            }
+
+            // Switch to the game tab
+            tabbedComponent.setCurrentTabIndex(tabbedComponent.getNumTabs() - 1);
+
+            // Grab keyboard focus for arrow key controls
+            juce::Timer::callAfterDelay(100, [this]()
+            {
+                if (cheezeGuyGame != nullptr)
+                    cheezeGuyGame->grabKeyboardFocus();
+            });
+        }
+    };
+
     // Pitch bend amount (1-24 semitones)
     pitchBendAmountSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     pitchBendAmountSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
@@ -4886,6 +4930,9 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
 
     isBeingDestroyed.store(true);
     stopTimer();
+
+    // Easter egg cleanup
+    cheezeGuyGame.reset();
 
     // Remove APVTS filter sync listeners
     {

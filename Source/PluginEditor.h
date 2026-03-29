@@ -9,6 +9,7 @@
 #include "SpectrumAnalyserComponent.h"
 #include "FinalEQComponent.h"
 #include "PresetManager.h"
+#include "CheezeGuyGame.h"
 
 //==============================================================================
 /**
@@ -205,6 +206,20 @@ private:
 };
 
 //==============================================================================
+// -- Easter Egg Slider: detects rapid clicks on the master knob --
+class EasterEggSlider : public juce::Slider
+{
+public:
+    std::function<void()> onClicked;
+
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        if (onClicked) onClicked();
+        juce::Slider::mouseDown(e);
+    }
+};
+
+//==============================================================================
 class SpaceDustAudioProcessorEditor : public juce::AudioProcessorEditor,
                                       public juce::Timer,
                                       public juce::Slider::Listener,
@@ -261,6 +276,13 @@ private:
 
     // TooltipWindow required for setTooltip() to display (e.g. Pan labels)
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
+
+    //==============================================================================
+    // -- Easter Egg: Cheeze Guy Game --
+    juce::int64 masterKnobClickTimes[7] = {};
+    int masterKnobClickCount = 0;
+    std::unique_ptr<CheezeGuyGameComponent> cheezeGuyGame;
+    bool cheezeGuyTabAdded = false;
 
     //==============================================================================
     // -- Preset Management --
@@ -406,7 +428,7 @@ private:
     
     juce::GroupComponent masterGroup;
     
-    juce::Slider masterVolumeSlider;
+    EasterEggSlider masterVolumeSlider;
     juce::Label masterVolumeLabel;
     
     // Pitch bend and master pitch (in Master section)
