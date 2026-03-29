@@ -3422,7 +3422,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"compressorType", 1}, "Compressor Type",
-            juce::StringArray("SSL", "1176", "LA-2A"), 0),
+            juce::StringArray("Compressor 1", "Compressor 2", "Compressor 3"), 0),
         safeString("compressorType"));
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(

@@ -17,9 +17,11 @@ namespace
     // Star positions from Yale Bright Star Catalog (J2000.0 epoch), projected via
     // horizontal coordinate transform for the exact date/time/location.
     // Bortle 7-8 sky (moderate light pollution): ~mag 4.0 naked-eye limit.
-    void drawStarfield(juce::Graphics& g, int w, int h)
+    void drawStarfield(juce::Graphics& g, int w, int h, float meterLevel = 0.0f)
     {
         if (w <= 0 || h <= 0) return;
+        // Stars breathe with the audio: up to 15% brighter at full level
+        const float meterBoost = 1.0f + 0.15f * juce::jlimit(0.0f, 1.0f, meterLevel);
 
         // Star catalog: {RA (degrees), Dec (degrees), apparent magnitude}
         struct CatStar { float ra, dec, mag; };
@@ -207,8 +209,8 @@ namespace
         for (int i = 0; i < projCount; ++i)
         {
             const auto& s = projected[i];
-            float alpha  = 60.0f + 130.0f * s.brightness;
-            float radius = 0.6f + 1.5f * s.brightness;
+            float alpha  = (60.0f + 130.0f * s.brightness) * meterBoost;
+            float radius = (0.6f + 1.5f * s.brightness) * meterBoost;
             g.setColour(juce::Colour(255, 255, 255).withAlpha(
                 static_cast<juce::uint8>(juce::jlimit(0, 255, static_cast<int>(alpha)))));
             float px = s.nx * static_cast<float>(w);
@@ -224,7 +226,8 @@ namespace
             hash = (hash >> 13) ^ (hash * 1597334677u);
             float sy = static_cast<float>(hash % static_cast<unsigned int>(h));
             hash = (hash >> 7) ^ (hash * 2246822519u);
-            juce::uint8 alpha = static_cast<juce::uint8>(22 + (hash % 26));
+            juce::uint8 alpha = static_cast<juce::uint8>(juce::jlimit(0, 255,
+                static_cast<int>((22 + (hash % 26)) * meterBoost)));
             g.setColour(juce::Colour(255, 255, 255).withAlpha(alpha));
             g.fillEllipse(sx - 0.5f, sy - 0.5f, 1.0f, 1.0f);
         }
@@ -622,9 +625,9 @@ void MainPageComponent::updateSubOscVisibility()
 void MainPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
-    drawStarfield(g, getWidth(), getHeight());
     float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
     avgLevel = juce::jmin(1.0f, avgLevel);
+    drawStarfield(g, getWidth(), getHeight(), avgLevel);
     const int baseAlpha = 8 + static_cast<int>(44.0f * avgLevel);
     drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff),
         { &parentEditor.oscillatorsGroup, &parentEditor.filterGroup, &parentEditor.filterEnvGroup, &parentEditor.envelopeGroup });
@@ -1095,9 +1098,9 @@ void ModulationPageComponent::parameterChanged(const juce::String& parameterID, 
 void ModulationPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
-    drawStarfield(g, getWidth(), getHeight());
     float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
     avgLevel = juce::jmin(1.0f, avgLevel);
+    drawStarfield(g, getWidth(), getHeight(), avgLevel);
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
     drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff),
         { &parentEditor.modulationGroup, &parentEditor.lfo1Group, &parentEditor.lfo2Group,
@@ -1665,9 +1668,9 @@ void EffectsPageComponent::updateReverbFilterVisibility()
 void EffectsPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
-    drawStarfield(g, getWidth(), getHeight());
     float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
     avgLevel = juce::jmin(1.0f, avgLevel);
+    drawStarfield(g, getWidth(), getHeight(), avgLevel);
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
     drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff),
         { &parentEditor.delayGroup, &parentEditor.reverbGroup, &parentEditor.grainDelayGroup,
@@ -2250,9 +2253,9 @@ SaturationColorPageComponent::SaturationColorPageComponent(SpaceDustAudioProcess
 void SaturationColorPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
-    drawStarfield(g, getWidth(), getHeight());
     float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
     avgLevel = juce::jmin(1.0f, avgLevel);
+    drawStarfield(g, getWidth(), getHeight(), avgLevel);
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
     drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff), { &parentEditor.bitCrusherGroup, &parentEditor.compressorGroup, &parentEditor.softClipperGroup, &parentEditor.lofiGroup, &parentEditor.transientGroup, &parentEditor.finalEQGroup });
 }
@@ -2487,7 +2490,9 @@ SpectralPageComponent::SpectralPageComponent(SpaceDustAudioProcessorEditor& edit
 void SpectralPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
-    drawStarfield(g, getWidth(), getHeight());
+    float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
+    avgLevel = juce::jmin(1.0f, avgLevel);
+    drawStarfield(g, getWidth(), getHeight(), avgLevel);
     if (!lissajousDrawArea.isEmpty())
         drawLissajous(g, lissajousDrawArea, parentEditor.audioProcessor.getGoniometerBuffer(),
                       parentEditor.audioProcessor.getGoniometerValidSamples());
@@ -4222,9 +4227,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     compressorEnabledLabel.setJustificationType(juce::Justification::centred);
     compressorEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     compressorEnabledLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    compressorTypeCombo.addItem(safeString("SSL"), 1);
-    compressorTypeCombo.addItem(safeString("1176"), 2);
-    compressorTypeCombo.addItem(safeString("LA-2A"), 3);
+    compressorTypeCombo.addItem(safeString("Compressor 1"), 1);
+    compressorTypeCombo.addItem(safeString("Compressor 2"), 2);
+    compressorTypeCombo.addItem(safeString("Compressor 3"), 3);
     compressorTypeCombo.setSelectedId(1);
     compressorTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getValueTreeState(), "compressorType", compressorTypeCombo);
@@ -4736,7 +4741,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         
         // Calculate the correct window height for tabbed interface
         // Effects tab needs extra height when Delay/Grain Delay filter is toggled on (controls must stay visible)
-        const int calculatedHeight = 857;  // ~5% shorter than 902
+        const int calculatedHeight = 857;  // Original height
         
         DBG("Space Dust: Timer callback - Calling setSize(1120, " + juce::String(calculatedHeight) + ")");
         try
@@ -4744,7 +4749,11 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             // CRITICAL: setSize() triggers resized() which will layout components
             // resized() must NOT call setSize() again to prevent infinite recursion
             setSize(1120, calculatedHeight);
-            
+
+            // Scale entire UI down 5% — everything (knobs, labels, groups) shrinks uniformly.
+            // setTransform handles both rendering AND mouse input mapping.
+            setTransform(juce::AffineTransform::scale(0.95f));
+
             DBG("Space Dust: Timer callback - setSize() completed");
             try
             {
@@ -5434,7 +5443,11 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
     const int h = getHeight();
 
     g.fillAll(juce::Colour(0xff0a0a1f));
-    drawStarfield(g, w, h);
+    {
+        float starLevel = 0.5f * (audioProcessor.getLeftPeakLevel() + audioProcessor.getRightPeakLevel());
+        starLevel = juce::jmin(1.0f, starLevel);
+        drawStarfield(g, w, h, starLevel);
+    }
 
     //==============================================================================
     // -- Arcade Edge Glow (top & bottom) - parabolic, subtle, smooth color gradient --
