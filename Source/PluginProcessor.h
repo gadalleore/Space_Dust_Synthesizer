@@ -130,6 +130,10 @@ public:
     // Update all voices with current parameter values (called after preset load)
     void updateVoicesWithParameters(float lfo1Modulation = 0.0f, float lfo2Modulation = 0.0f);
 
+    // Persistent UI state (survives editor close/reopen, saved in DAW session)
+    juce::String currentPresetName { "Init" };
+    bool cheezeGuyActivated = false;
+
 private:
     //==============================================================================
     // -- Parameter Management --

@@ -2755,8 +2755,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     //==============================================================================
     // -- Preset Manager Setup --
     presetManager = std::make_unique<PresetManager>(audioProcessor.getValueTreeState());
+    presetManager->setCurrentPresetName(audioProcessor.currentPresetName);
 
-    presetCombo.setTextWhenNothingSelected("Init");
+    presetCombo.setTextWhenNothingSelected(audioProcessor.currentPresetName);
     presetCombo.setTooltip("Select a preset");
     presetCombo.onChange = [this]()
     {
@@ -2765,6 +2766,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         if (idx >= 0 && idx < presets.size())
         {
             presetManager->loadPreset(presets[idx]);
+            audioProcessor.currentPresetName = presetManager->getCurrentPresetName();
             audioProcessor.updateVoicesWithParameters();
         }
     };
@@ -2778,6 +2780,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     initPresetButton.onClick = [this]()
     {
         presetManager->loadInitPreset();
+        audioProcessor.currentPresetName = "Init";
         audioProcessor.updateVoicesWithParameters();
         presetCombo.setSelectedId(0, juce::dontSendNotification);
         presetCombo.setTextWhenNothingSelected("Init");
@@ -3270,6 +3273,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
                 tabbedComponent.addTab(safeString("Cheeze Guy"),
                     juce::Colour(0xff0a0a1f), cheezeGuyGame.get(), false);
                 cheezeGuyTabAdded = true;
+                audioProcessor.cheezeGuyActivated = true;
             }
             else
             {
@@ -4666,6 +4670,15 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         tabbedComponent.addTab(safeString("Saturation Color"), juce::Colour(0xff0a0a1f), saturationColorPage.get(), false);
         tabbedComponent.addTab(safeString("Spectral"), juce::Colour(0xff0a0a1f), spectralPage.get(), false);
 
+        // Restore Cheeze Guy tab if easter egg was previously activated
+        if (audioProcessor.cheezeGuyActivated)
+        {
+            cheezeGuyGame = std::make_unique<CheezeGuyGameComponent>();
+            tabbedComponent.addTab(safeString("Cheeze Guy"),
+                juce::Colour(0xff0a0a1f), cheezeGuyGame.get(), false);
+            cheezeGuyTabAdded = true;
+        }
+
         // Ensure ALL labels in all tabs use our LookAndFeel (fixes random font inconsistencies)
         mainPage->setLookAndFeel(&customLookAndFeel);
         modulationPage->setLookAndFeel(&customLookAndFeel);
@@ -5058,6 +5071,7 @@ void SpaceDustAudioProcessorEditor::showSavePresetDialog()
                 if (name.isNotEmpty())
                 {
                     presetManager->savePreset(name);
+                    audioProcessor.currentPresetName = presetManager->getCurrentPresetName();
                     refreshPresetList();
                 }
             }
