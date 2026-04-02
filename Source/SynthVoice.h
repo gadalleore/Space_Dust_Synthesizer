@@ -287,22 +287,25 @@ private:
     float smoothedEnvelope = 0.0f;
     float envSmoothCoeff = 0.0f;   // Computed from sample rate in prepareToPlay
 
-    // Mono fade-out: when a new mono note steals this voice, apply a fast 3ms
-    // linear fade-out instead of hard-cutting.  The new note starts on a FRESH
-    // voice with full reset — no state preservation needed.
-    bool monoFadeActive = false;
-    int monoFadeSamplesLeft = 0;
-    static constexpr int kMonoFadeSamples = 132; // ~3ms at 44.1kHz
+    // Voice fade: linear gain ramp applied to the FINAL output sample (after
+    // filter + ADSR) to prevent clicks on any hard stop.  When stopNote is called
+    // with allowTailOff=false (voice stealing, allNotesOff, etc.), the voice keeps
+    // producing audio while voiceFade ramps linearly from 1→0 over kVoiceFadeLength
+    // samples.  ONLY when the fade reaches zero does renderNextBlock do the full
+    // cleanup (adsr.reset, clearCurrentNote, zero deltas).  startNote cancels any
+    // pending fade immediately (voiceFade=1, remaining=0) for seamless voice reuse.
+    float voiceFade = 1.0f;                        // Current fade multiplier (1.0=full, 0.0=silent)
+    int voiceFadeSamplesRemaining = 0;             // Samples left in fade-out (0 = inactive)
+    static constexpr int kVoiceFadeLength = 64;    // ~1.5ms at 44.1kHz
 
-    void startMonoFadeOut() { monoFadeActive = true; monoFadeSamplesLeft = kMonoFadeSamples; }
-
-    // Retrigger fade: when mono/legato reuses the same voice, fade the current
-    // signal to near-zero over ~2ms, THEN do a full reset (phase, ADSR, filter).
-    // This guarantees a zero-crossing at the reset point — no click even with
-    // smooth waveforms (sine/triangle).
-    bool retriggerFadeActive = false;
-    int retriggerFadeSamplesLeft = 0;
-    static constexpr int kRetriggerFadeSamples = 88; // ~2ms at 44.1kHz
+    // Safety output smoother: one-pole lowpass on the final sample value.
+    // Catches any residual single-sample discontinuity (pitch/filter jumps on
+    // mono/legato handoff).  coeff=0.99 means 99% of error corrected each sample
+    // (τ ≈ 100 samples / ~2.3ms at 44.1kHz) — transparent to normal audio but
+    // smooths single-sample spikes.  Negligible CPU.
+    float outputSmootherL = 0.0f;
+    float outputSmootherR = 0.0f;
+    static constexpr float kOutputSmoothCoeff = 0.99f;
     
     //==============================================================================
     // -- Glide (Portamento) State --

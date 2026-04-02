@@ -42,11 +42,14 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
 {
     juce::ignoreUnused(sound);
 
-    // Cancel any pending fades if this voice is being reused
-    monoFadeActive = false;
-    monoFadeSamplesLeft = 0;
-    retriggerFadeActive = false;
-    retriggerFadeSamplesLeft = 0;
+    // ALWAYS cancel any pending voice fade so the voice is at full amplitude
+    // immediately.  This is critical for fast note repetition in mono mode —
+    // if a fade lingers from a previous hard-stop, the new note must override
+    // it instantly.  For preserving-voice/legato handoffs, stopNote does NOT
+    // start a fade at all (it just clears the JUCE note), so there's nothing
+    // to cancel in the common case.
+    voiceFade = 1.0f;
+    voiceFadeSamplesRemaining = 0;
 
     // Initialize MIDI pitch wheel from note-on (synth may not have sent pitchWheelMoved yet)
     lastPitchWheelNormalized = (static_cast<float>(currentPitchWheelPosition) - 8192.0f) / 8192.0f;
@@ -212,6 +215,8 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
         pinkSum = std::accumulate(pinkState.begin(), pinkState.end(), 0.0f);
         adsr.reset();
         smoothedEnvelope = 0.0f;
+        outputSmootherL = 0.0f;
+        outputSmootherR = 0.0f;
         filter.reset();
         modFilter1.reset();
         modFilter2.reset();
@@ -242,16 +247,11 @@ void SynthVoice::stopNote(float velocity, bool allowTailOff)
 {
     juce::ignoreUnused(velocity);
 
-    // Don't interrupt a mono fade-out in progress
-    if (monoFadeActive)
-        return;
-
-    // Voice reuse (mono/legato): keep ADSR, filter, oscillator state intact.
-    // Just clear the JUCE note so startVoice can re-assign it.
-    // CRITICAL: Do NOT zero angle deltas here. startNote sets them immediately
-    // after, and zeroing them would cause the render loop's early return
-    // (angleDelta == 0 check) to produce silence if any samples are rendered
-    // between this stopNote and the following startNote.
+    // Preserving-voice / legato handoff: startNote follows immediately inside
+    // startVoice.  Do NOT start a fade or touch ADSR — just clear the JUCE note
+    // assignment so startVoice can reassign.  The voice keeps producing audio
+    // with all DSP state intact (oscillator phases, ADSR level, filter).
+    // This is the standard JUCE mono/legato approach (Gin synth, forum consensus).
     if (synthesiser != nullptr
         && (synthesiser->isPreservingVoice() || synthesiser->isNextNoteLegato()))
     {
@@ -259,44 +259,21 @@ void SynthVoice::stopNote(float velocity, bool allowTailOff)
         return;
     }
 
-    //==============================================================================
-    // -- DEBUG LOGGING: Voice Deactivation --
-    // CRITICAL: Logger calls removed to prevent LeakedObjectDetector assertions
-    // DBG("Space Dust: Voice stopped - allowTailOff: " + safeStringFromBool(allowTailOff) + ", releasing");
-
     if (allowTailOff)
     {
-        // Start release phase (cosmic tails!)
-        // JUCE's ADSR handles the release phase automatically
+        // Normal release: ADSR handles the tail naturally
         adsr.noteOff();
-        filterAdsr.noteOff();  // Also release filter envelope
+        filterAdsr.noteOff();
         inReleasePhase = true;
     }
     else
     {
-        // Stop immediately (no tail)
-        const int voiceMode = (synthesiser != nullptr) ? synthesiser->getVoiceModeIndex() : 0;
-
-        if (voiceMode != 0)
-        {
-            // Mono/Legato: preserve envelope, filter, and oscillator state.
-            // Don't zero angle deltas — voice must keep producing audio until
-            // startNote sets new frequencies (prevents silence gap = click).
-            inReleasePhase = false;
-            clearCurrentNote();
-            // Don't reset ADSR, filter, deltas, or isActive — startNote handles everything
-        }
-        else
-        {
-            // Poly: full hard stop
-            adsr.reset();
-            filterAdsr.reset();
-            inReleasePhase = false;
-            clearCurrentNote();
-            osc1AngleDelta = 0.0;
-            osc2AngleDelta = 0.0;
-            isActive = false;
-        }
+        // Hard stop (allNotesOff, voice stealing, etc.): start a short linear
+        // fade-out instead of instantly killing the signal.  The voice keeps
+        // running with all DSP intact while voiceFade ramps 1→0.  Only when
+        // it reaches zero does renderNextBlock do the full cleanup.
+        voiceFade = 1.0f;
+        voiceFadeSamplesRemaining = kVoiceFadeLength;
     }
 }
 
@@ -876,8 +853,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         
         // Check if envelope has completed (release phase finished)
         // If not active, clear the note and stop rendering
-        // (Skip during retrigger fade — ADSR may hit zero before fade completes)
-        if (!adsr.isActive() && !retriggerFadeActive)
+        // (Skip during voice fade — ADSR may hit zero before fade completes)
+        if (!adsr.isActive() && voiceFadeSamplesRemaining <= 0)
         {
             inReleasePhase = false;
             clearCurrentNote();
@@ -885,6 +862,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             osc2AngleDelta = 0.0;
             subOscAngleDelta = 0.0;
             isActive = false;
+            outputSmootherL = 0.0f;
+            outputSmootherR = 0.0f;
             
             // CRITICAL: Only process samples we've actually generated
             if (i < maxSamples)
@@ -942,15 +921,20 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         float outL = juce::jlimit(-1.0f, 1.0f, voiceSingleSampleBuffer.getSample(0, 0));
         float outR = juce::jlimit(-1.0f, 1.0f, voiceSingleSampleBuffer.getSample(1, 0));
 
-        // Mono fade-out: apply linear gain ramp to zero, then kill the voice
-        if (monoFadeActive)
+        // Voice fade: linear gain ramp to zero, then full cleanup.
+        // This protects against ALL hard-stop clicks (allNotesOff, voice
+        // stealing, legato safety net).  Applied to the FINAL output after
+        // filter + ADSR so it catches every possible discontinuity source.
+        if (voiceFadeSamplesRemaining > 0)
         {
-            float gain = static_cast<float>(monoFadeSamplesLeft) / static_cast<float>(kMonoFadeSamples);
-            outL *= gain;
-            outR *= gain;
-            if (--monoFadeSamplesLeft <= 0)
+            outL *= voiceFade;
+            outR *= voiceFade;
+            voiceFade -= 1.0f / static_cast<float>(kVoiceFadeLength);
+            if (voiceFade < 0.0f) voiceFade = 0.0f;
+            if (--voiceFadeSamplesRemaining <= 0)
             {
-                monoFadeActive = false;
+                // Fade complete: full cleanup — voice is now silent
+                voiceFade = 0.0f;
                 adsr.reset();
                 smoothedEnvelope = 0.0f;
                 filterAdsr.reset();
@@ -963,6 +947,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                 osc2AngleDelta = 0.0;
                 subOscAngleDelta = 0.0;
                 isActive = false;
+                outputSmootherL = 0.0f;
+                outputSmootherR = 0.0f;
                 voiceTempBuffer.setSample(0, i, outL);
                 voiceTempBuffer.setSample(1, i, outR);
                 samplesProcessed = i + 1;
@@ -975,37 +961,14 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             }
         }
 
-        // Retrigger fade: fade current signal to near-zero, then full reset.
-        // Uses squared gain for faster decay near zero (inaudible transition).
-        if (retriggerFadeActive)
-        {
-            float t = static_cast<float>(retriggerFadeSamplesLeft) / static_cast<float>(kRetriggerFadeSamples);
-            float gain = t * t; // squared for faster approach to zero
-            outL *= gain;
-            outR *= gain;
-            if (--retriggerFadeSamplesLeft <= 0)
-            {
-                retriggerFadeActive = false;
-                // Full reset at zero-crossing: phase, ADSR, filter, envelope smoother
-                osc1Angle = 0.0;
-                osc2Angle = 0.0;
-                subOscAngle = 0.0;
-                adsr.reset();
-                adsr.noteOn();
-                smoothedEnvelope = 0.0f;
-                filterAdsr.reset();
-                filterAdsr.noteOn();
-                filter.reset();
-                modFilter1.reset();
-                modFilter2.reset();
-                pinkState.fill(0.0f);
-                pinkSum = 0.0f;
-                pinkIndex = 0;
-            }
-        }
+        // Safety output smoother: one-pole lowpass on final output.
+        // Catches any residual discontinuity from pitch/filter jumps during
+        // legato handoff while the voiceFade is still decaying.
+        outputSmootherL += kOutputSmoothCoeff * (outL - outputSmootherL);
+        outputSmootherR += kOutputSmoothCoeff * (outR - outputSmootherR);
 
-        voiceTempBuffer.setSample(0, i, outL);
-        voiceTempBuffer.setSample(1, i, outR);
+        voiceTempBuffer.setSample(0, i, outputSmootherL);
+        voiceTempBuffer.setSample(1, i, outputSmootherR);
         samplesProcessed = i + 1; // Track that we processed this sample
         
         // Update oscillator phases for next sample using current angle deltas
@@ -1135,10 +1098,10 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Anti-click envelope smoother: ~3ms one-pole lowpass on ADSR output
     envSmoothCoeff = 1.0f - std::exp(-1.0f / (0.003f * static_cast<float>(sampleRate)));
     smoothedEnvelope = 0.0f;
-    monoFadeActive = false;
-    monoFadeSamplesLeft = 0;
-    retriggerFadeActive = false;
-    retriggerFadeSamplesLeft = 0;
+    voiceFade = 1.0f;
+    voiceFadeSamplesRemaining = 0;
+    outputSmootherL = 0.0f;
+    outputSmootherR = 0.0f;
 
     // Mark DSP as properly initialized
     // This prevents issues if setCurrentPlaybackSampleRate() is called again
