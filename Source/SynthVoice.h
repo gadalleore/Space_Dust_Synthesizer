@@ -282,6 +282,27 @@ private:
     // Voice state
     bool isActive = false;
     bool inReleasePhase = false;   // True after noteOff() until ADSR completes
+
+    // Anti-click: one-pole lowpass smoother on envelope output (~3ms time constant).
+    float smoothedEnvelope = 0.0f;
+    float envSmoothCoeff = 0.0f;   // Computed from sample rate in prepareToPlay
+
+    // Mono fade-out: when a new mono note steals this voice, apply a fast 3ms
+    // linear fade-out instead of hard-cutting.  The new note starts on a FRESH
+    // voice with full reset — no state preservation needed.
+    bool monoFadeActive = false;
+    int monoFadeSamplesLeft = 0;
+    static constexpr int kMonoFadeSamples = 132; // ~3ms at 44.1kHz
+
+    void startMonoFadeOut() { monoFadeActive = true; monoFadeSamplesLeft = kMonoFadeSamples; }
+
+    // Retrigger fade: when mono/legato reuses the same voice, fade the current
+    // signal to near-zero over ~2ms, THEN do a full reset (phase, ADSR, filter).
+    // This guarantees a zero-crossing at the reset point — no click even with
+    // smooth waveforms (sine/triangle).
+    bool retriggerFadeActive = false;
+    int retriggerFadeSamplesLeft = 0;
+    static constexpr int kRetriggerFadeSamples = 88; // ~2ms at 44.1kHz
     
     //==============================================================================
     // -- Glide (Portamento) State --

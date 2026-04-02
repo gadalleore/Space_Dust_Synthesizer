@@ -41,6 +41,13 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
                            int currentPitchWheelPosition)
 {
     juce::ignoreUnused(sound);
+
+    // Cancel any pending fades if this voice is being reused
+    monoFadeActive = false;
+    monoFadeSamplesLeft = 0;
+    retriggerFadeActive = false;
+    retriggerFadeSamplesLeft = 0;
+
     // Initialize MIDI pitch wheel from note-on (synth may not have sent pitchWheelMoved yet)
     lastPitchWheelNormalized = (static_cast<float>(currentPitchWheelPosition) - 8192.0f) / 8192.0f;
     lastPitchWheelNormalized = juce::jlimit(-1.0f, 1.0f, lastPitchWheelNormalized);
@@ -93,6 +100,10 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
     //     * Glide applies to every note change whenever glideTimeSeconds > 0
     const bool glideTimeActive = (glideTimeSeconds > 0.0f && sampleRate > 0.0);
     const bool inLegatoMode = (mode == 2);
+    const int voiceMode = (synthesiser != nullptr) ? synthesiser->getVoiceModeIndex() : 0;
+    // Mono/legato retrigger: same voice is being reused (already active).
+    // We preserve oscillator phases and filter state for click-free transitions.
+    const bool isMonoRetrigger = (voiceMode != 0) && isActive;
     bool shouldGlideForThisNote = false;
 
     if (glideTimeActive)
@@ -128,6 +139,14 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
             updateOsc1Frequency(currentPitch);
             updateOsc2Frequency(currentPitch);
         }
+        else if (currentPitch > 0.0 && std::abs(currentPitch - targetPitch) > 0.01)
+        {
+            // Anti-click: legato with no user glide — tiny 3ms auto-glide
+            const double samplesToGlide = 0.003 * sampleRate;
+            glideDelta = (targetPitch - currentPitch) / samplesToGlide;
+            updateOsc1Frequency(currentPitch);
+            updateOsc2Frequency(currentPitch);
+        }
         else
         {
             currentPitch = targetPitch;
@@ -152,6 +171,16 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
         updateOsc1Frequency(currentPitch);
         updateOsc2Frequency(currentPitch);
     }
+    else if (isMonoRetrigger && currentPitch > 0.0 && std::abs(currentPitch - targetPitch) > 0.01)
+    {
+        // Anti-click: mono retrigger with no user glide — apply a tiny 3ms auto-glide
+        // to prevent the abrupt frequency change that causes clicks at low frequencies.
+        // 3ms is imperceptible as a glide but smooths the waveform transition.
+        const double samplesToGlide = 0.003 * sampleRate;
+        glideDelta = (targetPitch - currentPitch) / samplesToGlide;
+        updateOsc1Frequency(currentPitch);
+        updateOsc2Frequency(currentPitch);
+    }
     else
     {
         currentPitch = targetPitch;
@@ -162,44 +191,71 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
 
     // Full retrigger: new envelope, filter, and modulator cycles
     pitchEnvSamplesElapsed = 0.0f;
-    osc1Angle = 0.0;
-    osc2Angle = 0.0;
-    subOscAngle = 0.0;
-    pinkState.fill(0.0f);
-    pinkSum = 0.0f;
-    pinkIndex = 0;
-    random.setSeed(static_cast<juce::int64>(reinterpret_cast<uintptr_t>(this)) + juce::Time::getHighResolutionTicks());
-    for (auto& val : pinkState)
-        val = (random.nextFloat() * 2.0f - 1.0f) * 0.0625f;
-    pinkSum = std::accumulate(pinkState.begin(), pinkState.end(), 0.0f);
-    adsr.reset();
-    adsr.noteOn();
-    isActive = true;
-    filter.reset();
-    modFilter1.reset();
-    modFilter2.reset();
-    updateFilter();
-    filterAdsr.reset();
-    filterAdsr.noteOn();
+
+    // Anti-click: in mono/legato modes, DON'T reset oscillator phases or envelope to 0.
+    // Resetting phases causes a waveform discontinuity; resetting the envelope causes an
+    // amplitude jump from the current level to 0.  Both produce audible pops/clicks.
+    // Instead, let phases continue naturally and retrigger the envelope from its current
+    // level (analog mono-synth behaviour).  In poly mode, always reset for clean note starts.
+    if (!isMonoRetrigger)
+    {
+        // Poly or first note: full reset
+        osc1Angle = 0.0;
+        osc2Angle = 0.0;
+        subOscAngle = 0.0;
+        pinkState.fill(0.0f);
+        pinkSum = 0.0f;
+        pinkIndex = 0;
+        random.setSeed(static_cast<juce::int64>(reinterpret_cast<uintptr_t>(this)) + juce::Time::getHighResolutionTicks());
+        for (auto& val : pinkState)
+            val = (random.nextFloat() * 2.0f - 1.0f) * 0.0625f;
+        pinkSum = std::accumulate(pinkState.begin(), pinkState.end(), 0.0f);
+        adsr.reset();
+        smoothedEnvelope = 0.0f;
+        filter.reset();
+        modFilter1.reset();
+        modFilter2.reset();
+        filterAdsr.reset();
+
+        adsr.noteOn();
+        inReleasePhase = false;
+        isActive = true;
+        updateFilter();
+        filterAdsr.noteOn();
+    }
+    else
+    {
+        // Mono/legato retrigger: keep oscillator phases and filter state intact.
+        // Only retrigger the amplitude and filter envelopes from their current values.
+        // JUCE's ADSR::noteOn() continues from the current envelope level (no jump to 0),
+        // and smoothedEnvelope tracks any change with a ~3ms lowpass — fully click-free
+        // even on sine/triangle waveforms.
+        adsr.noteOn();
+        filterAdsr.noteOn();
+        inReleasePhase = false;
+        isActive = true;
+        // Don't reset filter — let it continue smoothly
+    }
 }
 
 void SynthVoice::stopNote(float velocity, bool allowTailOff)
 {
     juce::ignoreUnused(velocity);
 
-    // Legato handoff: Synthesiser is reassigning this voice to the overlapping note. Do not
-    // release the envelope — only clear the current note so startNote can set the new one.
-    // The envelope continues and startNote will only update pitch/glide.
-    //
-    // CRITICAL: Zero angle deltas so this voice stops producing sound immediately.
-    // If the synthesiser assigns a DIFFERENT voice for the new note (e.g. two simultaneous
-    // key presses), this voice would otherwise keep rendering forever (stuck note).
-    // If this voice gets the new note, startNote will set the deltas again.
-    if (synthesiser != nullptr && synthesiser->isNextNoteLegato())
+    // Don't interrupt a mono fade-out in progress
+    if (monoFadeActive)
+        return;
+
+    // Voice reuse (mono/legato): keep ADSR, filter, oscillator state intact.
+    // Just clear the JUCE note so startVoice can re-assign it.
+    // CRITICAL: Do NOT zero angle deltas here. startNote sets them immediately
+    // after, and zeroing them would cause the render loop's early return
+    // (angleDelta == 0 check) to produce silence if any samples are rendered
+    // between this stopNote and the following startNote.
+    if (synthesiser != nullptr
+        && (synthesiser->isPreservingVoice() || synthesiser->isNextNoteLegato()))
     {
         clearCurrentNote();
-        osc1AngleDelta = 0.0;
-        osc2AngleDelta = 0.0;
         return;
     }
 
@@ -219,13 +275,28 @@ void SynthVoice::stopNote(float velocity, bool allowTailOff)
     else
     {
         // Stop immediately (no tail)
-        adsr.reset(); // Reset envelope to 0 immediately
-        filterAdsr.reset();  // Reset filter envelope
-        inReleasePhase = false;
-        clearCurrentNote();
-        osc1AngleDelta = 0.0;
-        osc2AngleDelta = 0.0;
-        isActive = false;
+        const int voiceMode = (synthesiser != nullptr) ? synthesiser->getVoiceModeIndex() : 0;
+
+        if (voiceMode != 0)
+        {
+            // Mono/Legato: preserve envelope, filter, and oscillator state.
+            // Don't zero angle deltas — voice must keep producing audio until
+            // startNote sets new frequencies (prevents silence gap = click).
+            inReleasePhase = false;
+            clearCurrentNote();
+            // Don't reset ADSR, filter, deltas, or isActive — startNote handles everything
+        }
+        else
+        {
+            // Poly: full hard stop
+            adsr.reset();
+            filterAdsr.reset();
+            inReleasePhase = false;
+            clearCurrentNote();
+            osc1AngleDelta = 0.0;
+            osc2AngleDelta = 0.0;
+            isActive = false;
+        }
     }
 }
 
@@ -381,22 +452,15 @@ void SynthVoice::updateFilter()
     // Clamp cutoff to valid range
     float clampedCutoff = juce::jlimit(20.0f, 20000.0f, filterCutoff);
     
-    // Update filter based on mode
-    switch (filterMode)
-    {
-        case 0: // Low Pass
-            filter.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
-            break;
-        case 1: // Band Pass
-            filter.setType(juce::dsp::StateVariableTPTFilterType::bandpass);
-            break;
-        case 2: // High Pass
-            filter.setType(juce::dsp::StateVariableTPTFilterType::highpass);
-            break;
-        default:
-            filter.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
-            break;
-    }
+    // Update filter based on mode (only set type if changed to avoid internal state reset)
+    static const juce::dsp::StateVariableTPTFilterType types[] = {
+        juce::dsp::StateVariableTPTFilterType::lowpass,
+        juce::dsp::StateVariableTPTFilterType::bandpass,
+        juce::dsp::StateVariableTPTFilterType::highpass
+    };
+    int clampedMode = juce::jlimit(0, 2, filterMode);
+    if (filter.getType() != types[clampedMode])
+        filter.setType(types[clampedMode]);
     
     filter.setCutoffFrequency(clampedCutoff);
     filter.setResonance(q);
@@ -789,7 +853,10 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         
         // Step 6: Process envelopes (returns current amplitude value 0.0-1.0)
         // JUCE's ADSR handles all four stages automatically: Attack → Decay → Sustain → Release
-        float envelope = adsr.getNextSample();
+        float rawEnvelope = adsr.getNextSample();
+        // Anti-click: one-pole lowpass smooths any discontinuity from ADSR retrigger
+        smoothedEnvelope += envSmoothCoeff * (rawEnvelope - smoothedEnvelope);
+        float envelope = smoothedEnvelope;
         float filterEnvOutput = filterAdsr.getNextSample();
         
         // Modulate filter cutoff with filter envelope and LFO.
@@ -809,7 +876,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         
         // Check if envelope has completed (release phase finished)
         // If not active, clear the note and stop rendering
-        if (!adsr.isActive())
+        // (Skip during retrigger fade — ADSR may hit zero before fade completes)
+        if (!adsr.isActive() && !retriggerFadeActive)
         {
             inReleasePhase = false;
             clearCurrentNote();
@@ -831,7 +899,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // Apply envelope to stereo mix
         float leftEnv = leftMix * envelope;
         float rightEnv = rightMix * envelope;
-        
+
         // Step 7: Process through filter (stereo, per-sample to allow envelope modulation)
         voiceSingleSampleBuffer.setSample(0, 0, leftEnv);
         voiceSingleSampleBuffer.setSample(1, 0, rightEnv);
@@ -873,6 +941,69 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         
         float outL = juce::jlimit(-1.0f, 1.0f, voiceSingleSampleBuffer.getSample(0, 0));
         float outR = juce::jlimit(-1.0f, 1.0f, voiceSingleSampleBuffer.getSample(1, 0));
+
+        // Mono fade-out: apply linear gain ramp to zero, then kill the voice
+        if (monoFadeActive)
+        {
+            float gain = static_cast<float>(monoFadeSamplesLeft) / static_cast<float>(kMonoFadeSamples);
+            outL *= gain;
+            outR *= gain;
+            if (--monoFadeSamplesLeft <= 0)
+            {
+                monoFadeActive = false;
+                adsr.reset();
+                smoothedEnvelope = 0.0f;
+                filterAdsr.reset();
+                filter.reset();
+                modFilter1.reset();
+                modFilter2.reset();
+                inReleasePhase = false;
+                clearCurrentNote();
+                osc1AngleDelta = 0.0;
+                osc2AngleDelta = 0.0;
+                subOscAngleDelta = 0.0;
+                isActive = false;
+                voiceTempBuffer.setSample(0, i, outL);
+                voiceTempBuffer.setSample(1, i, outR);
+                samplesProcessed = i + 1;
+                if (i + 1 < numSamples)
+                {
+                    voiceTempBuffer.clear(0, i + 1, numSamples - i - 1);
+                    voiceTempBuffer.clear(1, i + 1, numSamples - i - 1);
+                }
+                break;
+            }
+        }
+
+        // Retrigger fade: fade current signal to near-zero, then full reset.
+        // Uses squared gain for faster decay near zero (inaudible transition).
+        if (retriggerFadeActive)
+        {
+            float t = static_cast<float>(retriggerFadeSamplesLeft) / static_cast<float>(kRetriggerFadeSamples);
+            float gain = t * t; // squared for faster approach to zero
+            outL *= gain;
+            outR *= gain;
+            if (--retriggerFadeSamplesLeft <= 0)
+            {
+                retriggerFadeActive = false;
+                // Full reset at zero-crossing: phase, ADSR, filter, envelope smoother
+                osc1Angle = 0.0;
+                osc2Angle = 0.0;
+                subOscAngle = 0.0;
+                adsr.reset();
+                adsr.noteOn();
+                smoothedEnvelope = 0.0f;
+                filterAdsr.reset();
+                filterAdsr.noteOn();
+                filter.reset();
+                modFilter1.reset();
+                modFilter2.reset();
+                pinkState.fill(0.0f);
+                pinkSum = 0.0f;
+                pinkIndex = 0;
+            }
+        }
+
         voiceTempBuffer.setSample(0, i, outL);
         voiceTempBuffer.setSample(1, i, outR);
         samplesProcessed = i + 1; // Track that we processed this sample
@@ -1000,7 +1131,15 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Now that sample rate is valid, parameters can be safely applied
     updateAdsrParameters();
     updateFilterAdsrParameters();
-    
+
+    // Anti-click envelope smoother: ~3ms one-pole lowpass on ADSR output
+    envSmoothCoeff = 1.0f - std::exp(-1.0f / (0.003f * static_cast<float>(sampleRate)));
+    smoothedEnvelope = 0.0f;
+    monoFadeActive = false;
+    monoFadeSamplesLeft = 0;
+    retriggerFadeActive = false;
+    retriggerFadeSamplesLeft = 0;
+
     // Mark DSP as properly initialized
     // This prevents issues if setCurrentPlaybackSampleRate() is called again
     isDspInitialized = true;

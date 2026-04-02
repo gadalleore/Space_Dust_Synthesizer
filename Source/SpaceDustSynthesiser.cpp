@@ -38,6 +38,55 @@ double SpaceDustSynthesiser::getMaxCurrentPitch() const
 }
 
 //==============================================================================
+void SpaceDustSynthesiser::noteOn(int midiChannel, int midiNoteNumber, float velocity)
+{
+    const int mode = getVoiceModeIndex();
+
+    // Mono & Legato: always reuse the same voice to prevent click from voice stealing.
+    // stopNote preserves ADSR/filter/oscillator state; startNote either retriggers
+    // ADSR (mono) or continues the envelope (legato), without resetting oscillator
+    // phases — keeping sine/triangle waveforms continuous.
+    if (mode != 0 && lastMonoVoiceIndex >= 0 && lastMonoVoiceIndex < getNumVoices())
+    {
+        auto* voice = getVoice(lastMonoVoiceIndex);
+        if (voice != nullptr)
+        {
+            nextNotePreservesVoice.store(true);
+            for (int s = 0; s < getNumSounds(); ++s)
+            {
+                auto sound = getSound(s);
+                if (sound != nullptr
+                    && sound->appliesToNote(midiNoteNumber)
+                    && sound->appliesToChannel(midiChannel))
+                {
+                    startVoice(voice, sound.get(), midiChannel, midiNoteNumber, velocity);
+                    nextNotePreservesVoice.store(false); // CRITICAL: clear after use
+                    return;
+                }
+            }
+            nextNotePreservesVoice.store(false); // clear if no matching sound found
+        }
+    }
+
+    // Default JUCE voice allocation (poly, mono fresh voice, or legato fallback).
+    juce::Synthesiser::noteOn(midiChannel, midiNoteNumber, velocity);
+
+    // Track which voice was allocated for legato voice reuse.
+    if (mode != 0)
+    {
+        for (int i = 0; i < getNumVoices(); ++i)
+        {
+            if (getVoice(i)->getCurrentlyPlayingNote() == midiNoteNumber
+                && getVoice(i)->isPlayingChannel(midiChannel))
+            {
+                lastMonoVoiceIndex = i;
+                break;
+            }
+        }
+    }
+}
+
+//==============================================================================
 void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int numSamples)
 {
     juce::ignoreUnused(numSamples);
@@ -98,26 +147,14 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
 
             //==========================================================================
             // Mono/Legato non-overlapping case:
-            // If no keys are currently held (empty noteStack), but there may still be
-            // voices in their release phase from a previous note, we want TRUE mono
-            // behaviour: the new note should immediately steal any lingering tails
-            // instead of layering release over the new attack (poly-like behaviour).
-            //
-            // To achieve this, we forcibly stop all voices *without* tail-off before
-            // starting the new note. This guarantees only one voice/envelope is ever
-            // active at a time for non-legato transitions.
-            //
-            // CRITICAL: This must happen BEFORE we add the new note to the stack, so
-            // that any voices currently in release phase are immediately cut off.
-            // This ensures non-overlapping notes don't stack release tails.
-            if (noteStack.empty())
-            {
-                // Hard-cut any existing tails (no tail-off) to emulate analog mono synth
-                // "voice stealing". ADSR will start cleanly from zero for the new note.
-                // allNotesOff with allowTailOff=false immediately stops all voices without
-                // allowing release tails to continue, preventing polyphonic stacking.
-                allNotesOff(channel, false);
-            }
+            // If no keys are currently held (empty noteStack), any voices still
+            // sounding are in their natural ADSR release phase.  We let them fade
+            // out naturally rather than hard-cutting with allNotesOff (which causes
+            // an audible pop by jumping the amplitude to 0 instantly).
+            // The new note will start on a free voice; the brief overlap of the
+            // release tail and the new attack is standard analog mono-synth
+            // behaviour and sounds clean.  If all 8 voices are busy (unlikely),
+            // JUCE voice-stealing reuses the oldest/quietest voice automatically.
 
             // Remove any existing instance of this note in the stack, then push as most recent.
             noteStack.erase(std::remove(noteStack.begin(), noteStack.end(), newNote), noteStack.end());
@@ -136,10 +173,9 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
             }
             else if (mode == 1)
             {
-                // Mono: retrigger ADSR on every new note (no legato).
-                // CRITICAL: In true mono mode, only one note should play at a time.
-                // Remove any note-ons we've already added this buffer (e.g. chord pressed)
-                // so the synth only receives the LAST note - no chords in mono!
+                // Mono: just send the noteOn. The noteOn override reuses the same
+                // voice (no voice stealing), and startNote retriggers ADSR from its
+                // current value without resetting oscillator phases.
                 juce::MidiBuffer filtered;
                 for (const auto meta : out)
                 {
@@ -148,7 +184,6 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
                         filtered.addEvent(m, meta.samplePosition);
                 }
                 out.swapWith(filtered);
-                allNotesOff(channel, false);
                 nextNoteIsLegato.store(false);
                 out.addEvent(message, pos);
             }
@@ -203,10 +238,9 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
             }
             else if (mode == 1)
             {
-                // Mono: when the top note is released but others remain, treat the
-                // return to the previous note as a new note (full ADSR retrigger).
+                // Mono: return to previous held note with full ADSR retrigger.
+                // Same voice is reused via noteOn override.
                 nextNoteIsLegato.store(false);
-                out.addEvent(message, pos); // note-off for the old top
                 out.addEvent(juce::MidiMessage::noteOn(channel, newTop, (juce::uint8)127), pos);
             }
             else // mode == 2 (Legato)
