@@ -2155,7 +2155,11 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         gp.grainSizeMs = juce::jlimit(10.0f, 500.0f, apvts.getRawParameterValue("grainDelaySize")->load());
         gp.pitchSemitones = juce::jlimit(-12.0f, 12.0f, apvts.getRawParameterValue("grainDelayPitch")->load());
         gp.mix = grainMix;
-        gp.decay = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("grainDelayDecay")->load() * 0.015f);  // 0-150% for longer decay
+        // Decay is 0–150% in the APVTS; getRawParameterValue is normalized — must use get() for real percent.
+        float grainDecayPct = 0.0f;
+        if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("grainDelayDecay")))
+            grainDecayPct = p->get();
+        gp.decay = juce::jlimit(0.0f, 1.0f, grainDecayPct / 150.0f);
         gp.density = juce::jlimit(1.0f, 8.0f, apvts.getRawParameterValue("grainDelayDensity")->load());
         gp.jitter = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("grainDelayJitter")->load() * 0.01f);
         gp.pingPong = *apvts.getRawParameterValue("grainDelayPingPong") > 0.5f;
