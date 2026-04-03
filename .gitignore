@@ -52,8 +52,9 @@ Thumbs.db
 # Local configuration (don't commit personal paths)
 juce_path.local
 
-# Debug logs (written to user Documents during runtime)
+# Debug logs / pitch traces (written to user Documents during runtime)
 SpaceDust_DebugLog.txt
+SpaceDustPitchTrace.csv
 
 # Resource archives (keep .ttf, exclude .zip)
 Resources/*.zip

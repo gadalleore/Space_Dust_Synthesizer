@@ -169,6 +169,10 @@ public:
     /** For glide: when a new note uses a different voice, we need the previous pitch from another voice. */
     double getCurrentPitch() const { return juce::jlimit(20.0, 20000.0, currentPitch); }
 
+    // Mono/legato pitch debug (see SynthVoice.cpp — SPACE_DUST_LOG_MONO_LEGATO_PITCH)
+    void debugLogPitchAfterStartNote(int midiNoteNumber);
+    void debugLogPitchRenderSample0(double osc1Hz, double baseHzBeforeOscTuning);
+
 private:
     SpaceDustSynthesiser* synthesiser = nullptr;
     SpaceDustAudioProcessor* processor = nullptr;  // Pointer to processor for LFO buffer access
@@ -325,6 +329,9 @@ private:
     // (set from SpaceDustSynthesiser via nextNoteIsLegato flag). This is *not* the same
     // as the global "Legato Glide" parameter – that lives in legatoGlideEnabled.
     bool isLegatoNote = false;
+
+    uint32_t pitchTraceSeq = 0;              // incremented each startNote (mono/legato debug)
+    uint32_t pitchTraceLastRenderLogSeq = 0; // so we log render line once per note-on
 
     // Global per-voice flag set from the processor: when true, glide only happens
     // on overlapping (legato) notes; when false, glide happens on every note change.

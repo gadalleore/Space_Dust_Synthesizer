@@ -151,10 +151,11 @@ namespace
         return result;
     }
     
-    // Release-safe file logger. Works in both Debug and Release builds.
-    // Rate-limited variant available via logToFileThrottled().
+    // Debug-only file logger (writes to Documents/SpaceDust_DebugLog.txt). Disabled in Release
+    // so shipped builds do not create or append to files on users' machines.
     void logToFile(const juce::String& msg)
     {
+#if JUCE_DEBUG
         try
         {
             juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -164,13 +165,15 @@ namespace
                 msg + "\n");
         }
         catch (...) {}
+#else
+        juce::ignoreUnused(msg);
+#endif
     }
 
-    // Throttled version: logs at most once per minIntervalMs globally.
-    // Uses a single atomic timestamp -- thread-safe for calls from any thread
-    // (audio, message, or host background threads during automation).
+    // Throttled version: logs at most once per minIntervalMs globally (Debug only).
     void logToFileThrottled(const juce::String& /*tag*/, const juce::String& msg, int minIntervalMs = 500)
     {
+#if JUCE_DEBUG
         static std::atomic<juce::uint32> lastLogTime{0};
         auto now = juce::Time::getMillisecondCounter();
         auto last = lastLogTime.load(std::memory_order_relaxed);
@@ -178,6 +181,10 @@ namespace
             return;
         lastLogTime.store(now, std::memory_order_relaxed);
         logToFile(msg);
+#else
+        juce::ignoreUnused(msg);
+        juce::ignoreUnused(minIntervalMs);
+#endif
     }
 
     // Legacy alias
@@ -1746,10 +1753,6 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         }
     }
     
-    // Update voices with current parameter values (real-time safe)
-    // LFO modulation is now applied per-sample in renderNextBlock via LFO buffers
-    updateVoicesWithParameters(0.0f, 0.0f);  // No block-based modulation, using per-sample buffers
-
     //==============================================================================
     // -- Transient: Scan MIDI for note-on events to trigger drum transient --
     bool transientEnabled = *apvts.getRawParameterValue("transientEnabled") > 0.5f;
@@ -1783,6 +1786,10 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // -- Process MIDI with Mono Mode Support --
     // Call custom synthesiser methods to handle mono mode
     synth.processMidiBuffer(midiMessages, numSamples);
+
+    // Voice params after mono/legato MIDI rewrite so coarse/detune retune uses currentPitch
+    // (see SynthVoice::setOsc* — must align with renderNextBlock base Hz, not stale MIDI note).
+    updateVoicesWithParameters(0.0f, 0.0f);
 
     //==============================================================================
     // -- Render the Synthesizer --

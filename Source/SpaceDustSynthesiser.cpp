@@ -259,6 +259,23 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
         }
     }
 
+    // JUCE Synthesiser::processNextBlock renders samples *before* each MIDI event when
+    // samplePosition > 0, so the voice keeps the previous pitch until that offset.
+    // Mono/legato stack rewriting often inherits the host's non-zero position; force
+    // note-on/note-off to sample 0 so pitch updates apply before any audio in the block.
+    {
+        juce::MidiBuffer coalesced;
+        for (const auto metadata : out)
+        {
+            auto m = metadata.getMessage();
+            int p = metadata.samplePosition;
+            if (m.isNoteOn() || m.isNoteOff())
+                p = 0;
+            coalesced.addEvent(m, p);
+        }
+        out.swapWith(coalesced);
+    }
+
     midiMessages.swapWith(out);
 }
 

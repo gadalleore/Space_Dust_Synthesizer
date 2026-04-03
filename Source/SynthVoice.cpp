@@ -4,6 +4,12 @@
 #include <juce_core/juce_core.h>
 #include <cmath>
 
+// Set to 1 to trace MIDI vs Hz in mono/legato: appends CSV rows to
+// Documents/SpaceDustPitchTrace.csv (and DBG in Debug builds). Set to 0 for release.
+#ifndef SPACE_DUST_LOG_MONO_LEGATO_PITCH
+#define SPACE_DUST_LOG_MONO_LEGATO_PITCH 0
+#endif
+
 //==============================================================================
 // -- UTF-8 String Validation Helper --
 namespace
@@ -31,6 +37,28 @@ namespace
     {
         return value ? juce::String("true") : juce::String("false");
     }
+
+#if SPACE_DUST_LOG_MONO_LEGATO_PITCH
+    juce::File getSpaceDustPitchTraceFile()
+    {
+        return juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+            .getChildFile("SpaceDustPitchTrace.csv");
+    }
+
+    void appendSpaceDustPitchCsvRow(const juce::String& row)
+    {
+        auto f = getSpaceDustPitchTraceFile();
+        static bool headerWritten = false;
+        if (!headerWritten)
+        {
+            headerWritten = true;
+            // START: col5=targetHz col6=currentHz col7=glideDelta col8=legato col9=mode col10=juceNote
+            // RENDER: col5=baseHz(slew+env) col6=osc1Hz col7=targetHz col8=currentHz col9=glideDelta col10=bendRatio
+            f.appendText("type,seq,midi,midiHz,col5,col6,col7,col8,col9,col10,extra\n");
+        }
+        f.appendText(row + "\n");
+    }
+#endif
 }
 
 //==============================================================================
@@ -51,14 +79,23 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
     voiceFade = 1.0f;
     voiceFadeSamplesRemaining = 0;
 
-    // Initialize MIDI pitch wheel from note-on (synth may not have sent pitchWheelMoved yet)
-    lastPitchWheelNormalized = (static_cast<float>(currentPitchWheelPosition) - 8192.0f) / 8192.0f;
-    lastPitchWheelNormalized = juce::jlimit(-1.0f, 1.0f, lastPitchWheelNormalized);
+    // Snapshot before this note (used for glide-from and pitch-wheel handling).
+    const bool wasVoiceActive = isActive;
 
-    // Per-note legato flag (true when this note was started as an overlapping legato note).
-    // This is driven by SpaceDustSynthesiser's mono/legato logic and is separate from the
-    // global "Legato Glide" parameter.
+    // Per-note legato / stack transition (SpaceDustSynthesiser); separate from "Legato Glide" portamento.
     isLegatoNote = (synthesiser != nullptr) ? synthesiser->getAndClearNextNoteLegato() : false;
+
+    const int voiceMode = (synthesiser != nullptr) ? synthesiser->getVoiceModeIndex() : 0;
+
+    // Initialize MIDI pitch wheel from note-on when starting fresh (synth may not have sent pitchWheelMoved yet).
+    // Mono/legato: skip — startNote's wheel argument is often center (8192) for synthesized stack note-ons,
+    // which would wipe lastPitchWheelNormalized from pitchWheelMoved until the next wheel MIDI (wrong pitch).
+    const bool skipPitchWheelFromNoteOnArg = (voiceMode != 0 && wasVoiceActive) || isLegatoNote;
+    if (!skipPitchWheelFromNoteOnArg)
+    {
+        lastPitchWheelNormalized = (static_cast<float>(currentPitchWheelPosition) - 8192.0f) / 8192.0f;
+        lastPitchWheelNormalized = juce::jlimit(-1.0f, 1.0f, lastPitchWheelNormalized);
+    }
 
     // Target pitch: MIDI note frequency (base frequency, tuning applied in renderNextBlock)
     auto baseFrequency = juce::MidiMessage::getMidiNoteInHertz(midiNoteNumber);
@@ -87,8 +124,6 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
         catch (...) { /* ignore */ }
     }
     
-    const int mode = (synthesiser != nullptr) ? synthesiser->getVoiceModeIndex() : 0;
-
     // Decide whether this note change should glide based on:
     // - Glide time
     // - Global Legato Glide parameter
@@ -102,11 +137,12 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
     // - Legato Glide OFF (legatoGlideEnabled = false):
     //     * Glide applies to every note change whenever glideTimeSeconds > 0
     const bool glideTimeActive = (glideTimeSeconds > 0.0f && sampleRate > 0.0);
-    const bool inLegatoMode = (mode == 2);
-    const int voiceMode = (synthesiser != nullptr) ? synthesiser->getVoiceModeIndex() : 0;
+    const bool inLegatoMode = (voiceMode == 2);
     // Mono/legato retrigger: same voice is being reused (already active).
     // We preserve oscillator phases and filter state for click-free transitions.
     const bool isMonoRetrigger = (voiceMode != 0) && isActive;
+    // wasVoiceActive: if the voice was idle, currentPitch must not leak from the previous session
+    // (mono + glide would glide from a stale Hz on the next note after stack release / repetition).
     bool shouldGlideForThisNote = false;
 
     if (glideTimeActive)
@@ -117,10 +153,17 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
             shouldGlideForThisNote = true;             // normal glide: every note change glides
     }
 
-    auto computeGlideFromPitch = [this](double fallBackTarget) -> double
+    // Poly mode only: when this voice has no valid currentPitch yet, use max pitch from other
+    // voices for glide "from". Mono/Legato must NEVER use that — it picked another voice's Hz
+    // and caused random detuning on every note change (regression from aggressive pitch resync).
+    const bool allowCrossVoiceGlideFrom = (voiceMode == 0);
+
+    auto computeGlideFromPitch = [this, allowCrossVoiceGlideFrom, wasVoiceActive](double fallBackTarget) -> double
     {
         double fromPitch = currentPitch;
-        if (fromPitch <= 0.0 && synthesiser != nullptr)
+        if (!wasVoiceActive)
+            fromPitch = 0.0;
+        if (fromPitch <= 0.0 && allowCrossVoiceGlideFrom && synthesiser != nullptr)
             fromPitch = synthesiser->getMaxCurrentPitch();
         if (fromPitch <= 0.0)
             fromPitch = fallBackTarget;
@@ -142,24 +185,32 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
             updateOsc1Frequency(currentPitch);
             updateOsc2Frequency(currentPitch);
         }
-        else if (currentPitch > 0.0 && std::abs(currentPitch - targetPitch) > 0.01)
-        {
-            // Anti-click: legato with no user glide — tiny 3ms auto-glide
-            const double samplesToGlide = 0.003 * sampleRate;
-            glideDelta = (targetPitch - currentPitch) / samplesToGlide;
-            updateOsc1Frequency(currentPitch);
-            updateOsc2Frequency(currentPitch);
-        }
         else
         {
-            currentPitch = targetPitch;
-            glideDelta = 0.0;
-            updateOsc1Frequency(currentPitch);
-            updateOsc2Frequency(currentPitch);
+            // Decide 3ms vs snap using resynced "from" pitch (not raw currentPitch alone), so
+            // stack-return cases don't mis-route before computeGlideFromPitch runs.
+            const double fromPitch = computeGlideFromPitch(targetPitch);
+            if (fromPitch > 0.0 && std::abs(fromPitch - targetPitch) > 0.01)
+            {
+                // Anti-click: legato with no user glide — tiny 3ms auto-glide
+                currentPitch = fromPitch;
+                const double samplesToGlide = 0.003 * sampleRate;
+                glideDelta = (targetPitch - currentPitch) / samplesToGlide;
+                updateOsc1Frequency(currentPitch);
+                updateOsc2Frequency(currentPitch);
+            }
+            else
+            {
+                currentPitch = targetPitch;
+                glideDelta = 0.0;
+                updateOsc1Frequency(currentPitch);
+                updateOsc2Frequency(currentPitch);
+            }
         }
 
         updateFilter();
         isActive = true;
+        debugLogPitchAfterStartNote(midiNoteNumber);
         return; // IMPORTANT: do NOT re-trigger ADSR on legato overlaps
     }
 
@@ -191,6 +242,8 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
         updateOsc1Frequency(currentPitch);
         updateOsc2Frequency(currentPitch);
     }
+
+    debugLogPitchAfterStartNote(midiNoteNumber);
 
     // Full retrigger: new envelope, filter, and modulator cycles
     pitchEnvSamplesElapsed = 0.0f;
@@ -275,6 +328,65 @@ void SynthVoice::stopNote(float velocity, bool allowTailOff)
         voiceFade = 1.0f;
         voiceFadeSamplesRemaining = kVoiceFadeLength;
     }
+}
+
+void SynthVoice::debugLogPitchAfterStartNote(int midiNoteNumber)
+{
+#if SPACE_DUST_LOG_MONO_LEGATO_PITCH
+    if (synthesiser == nullptr || synthesiser->getVoiceModeIndex() == 0)
+        return;
+    ++pitchTraceSeq;
+    const int mode = synthesiser->getVoiceModeIndex();
+    const double midiHz = juce::MidiMessage::getMidiNoteInHertz(midiNoteNumber);
+    const int jn = getCurrentlyPlayingNote();
+    juce::String extra;
+    if (std::abs(targetPitch - midiHz) > 0.5)
+        extra += "target_neq_midiHz;";
+    if (jn >= 0 && jn != midiNoteNumber)
+        extra += "juceNote_neq_param;";
+
+    appendSpaceDustPitchCsvRow(
+        juce::String("START,") + juce::String((int)pitchTraceSeq) + "," + juce::String(midiNoteNumber) + ","
+        + juce::String(midiHz, 6) + "," + juce::String(targetPitch, 6) + "," + juce::String(currentPitch, 6) + ","
+        + juce::String(glideDelta, 6) + "," + juce::String(isLegatoNote ? 1 : 0) + "," + juce::String(mode) + ","
+        + juce::String(jn) + ",\"" + extra + "\"");
+
+    DBG("Space Dust [pitch] #" << pitchTraceSeq << " START  MIDI=" << midiNoteNumber
+        << " (" << juce::MidiMessage::getMidiNoteName(midiNoteNumber, true, true, 3) << ")"
+        << "  targetHz=" << targetPitch << "  currentHz=" << currentPitch << "  glideDelta=" << glideDelta
+        << "  legato=" << (isLegatoNote ? "y" : "n") << "  mode=" << mode
+        << "  jucePlayingNote=" << jn << "  midiHz(ref)=" << midiHz);
+#else
+    juce::ignoreUnused(midiNoteNumber);
+#endif
+}
+
+void SynthVoice::debugLogPitchRenderSample0(double osc1HzFinal, double baseHzAfterPitchEnv)
+{
+#if SPACE_DUST_LOG_MONO_LEGATO_PITCH
+    if (synthesiser == nullptr || synthesiser->getVoiceModeIndex() == 0)
+        return;
+    const int n = getCurrentlyPlayingNote();
+    const double midiHz = (n >= 0 ? juce::MidiMessage::getMidiNoteInHertz(n) : 0.0);
+    const float totalBendNorm = juce::jlimit(-1.0f, 1.0f, lastPitchWheelNormalized + pitchBend);
+    const float bendSt = totalBendNorm * pitchBendAmountFloat;
+    const double bendRatio = std::pow(2.0, static_cast<double>(bendSt) / 12.0);
+    juce::String extra = "bendNorm=" + juce::String((double)totalBendNorm, 4) + ";bendSt=" + juce::String((double)bendSt, 4);
+
+    appendSpaceDustPitchCsvRow(
+        juce::String("RENDER,") + juce::String((int)pitchTraceSeq) + "," + juce::String(n) + ","
+        + juce::String(midiHz, 6) + "," + juce::String(baseHzAfterPitchEnv, 6) + "," + juce::String(osc1HzFinal, 6) + ","
+        + juce::String(targetPitch, 6) + "," + juce::String(currentPitch, 6) + "," + juce::String(glideDelta, 6) + ","
+        + juce::String(bendRatio, 6) + ",\"" + extra + "\"");
+
+    const juce::String noteName = (n >= 0 ? juce::MidiMessage::getMidiNoteName(n, true, true, 3) : juce::String("?"));
+    DBG("Space Dust [pitch] #" << pitchTraceSeq << " RENDER  MIDI=" << n << " (" << noteName << ")"
+        << "  baseHz(slew+env)=" << baseHzAfterPitchEnv << "  osc1Hz(final)=" << osc1HzFinal
+        << "  targetHz=" << targetPitch << "  currentHz=" << currentPitch << "  glideDelta=" << glideDelta
+        << "  bendRatio=" << bendRatio << "  midiHz(ref)=" << midiHz);
+#else
+    juce::ignoreUnused(osc1HzFinal, baseHzAfterPitchEnv);
+#endif
 }
 
 //==============================================================================
@@ -625,38 +737,10 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
     // Generate oscillator waveforms, mix, and apply envelope
     for (int i = 0; i < maxSamples; ++i)
     {
-        //==============================================================================
-        // -- Glide (Portamento) Slew: Smooth Pitch Transitions --
-        // 
-        // Real-time safe linear slew: Update currentPitch toward targetPitch
-        // This creates smooth pitch glides for expressive playing.
-        // 
-        // Glide behavior:
-        // - If glideDelta != 0: Slew currentPitch by glideDelta per sample
-        // - When currentPitch reaches targetPitch: Stop gliding (glideDelta = 0)
-        // - Update oscillator frequencies using currentPitch (not targetPitch)
-        // 
-        // This works in BOTH poly and mono modes:
-        // - Poly: Each voice glides independently
-        // - Mono: Glide only on legato transitions
-        
-        if (glideDelta != 0.0)
-        {
-            // Slew currentPitch toward targetPitch
-            currentPitch += glideDelta;
-            
-            // Check if we've reached (or passed) the target
-            if ((glideDelta > 0.0 && currentPitch >= targetPitch) ||
-                (glideDelta < 0.0 && currentPitch <= targetPitch))
-            {
-                // Glide complete: snap to target and stop gliding
-                currentPitch = targetPitch;
-                glideDelta = 0.0;
-            }
-            // Safety: clamp currentPitch to prevent runaway from precision/accumulation
-            currentPitch = juce::jlimit(20.0, 20000.0, currentPitch);
-        }
-        
+        // Glide (portamento): applied at END of each sample iteration so this sample's
+        // pitch matches startNote/currentPitch; advancing here first made the first output
+        // sample one glide step sharp/flat vs the requested transition (audible in mono/legato).
+
         //==============================================================================
         // -- PITCH ENVELOPE (separate from pitch bend) --
         // Computes base frequency from currentPitch + envelope. Independent of pitch bend.
@@ -756,6 +840,14 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // (LFO + envelope + bend can accumulate; NaN/Inf from precision loss causes extreme pitch)
         osc1Freq = juce::jlimit(20.0, 20000.0, osc1Freq);
         osc2Freq = juce::jlimit(20.0, 20000.0, osc2Freq);
+
+#if SPACE_DUST_LOG_MONO_LEGATO_PITCH
+        if (i == 0 && pitchTraceSeq != pitchTraceLastRenderLogSeq)
+        {
+            pitchTraceLastRenderLogSeq = pitchTraceSeq;
+            debugLogPitchRenderSample0(osc1Freq, pitchForOscillators);
+        }
+#endif
         
         // Update oscillator angle deltas with modulated frequencies
         if (sampleRate > 0.0)
@@ -858,6 +950,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         {
             inReleasePhase = false;
             clearCurrentNote();
+            currentPitch = 0.0;
+            targetPitch = 0.0;
+            glideDelta = 0.0;
             osc1AngleDelta = 0.0;
             osc2AngleDelta = 0.0;
             subOscAngleDelta = 0.0;
@@ -943,6 +1038,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                 modFilter2.reset();
                 inReleasePhase = false;
                 clearCurrentNote();
+                currentPitch = 0.0;
+                targetPitch = 0.0;
+                glideDelta = 0.0;
                 osc1AngleDelta = 0.0;
                 osc2AngleDelta = 0.0;
                 subOscAngleDelta = 0.0;
@@ -992,6 +1090,19 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                 subOscAngle -= 2.0 * juce::MathConstants<double>::pi;
             if (subOscAngle < 0.0)
                 subOscAngle += 2.0 * juce::MathConstants<double>::pi;
+        }
+
+        // Advance glide after audio for this sample (see comment at loop top)
+        if (glideDelta != 0.0)
+        {
+            currentPitch += glideDelta;
+            if ((glideDelta > 0.0 && currentPitch >= targetPitch) ||
+                (glideDelta < 0.0 && currentPitch <= targetPitch))
+            {
+                currentPitch = targetPitch;
+                glideDelta = 0.0;
+            }
+            currentPitch = juce::jlimit(20.0, 20000.0, currentPitch);
         }
     }
     
@@ -1194,44 +1305,55 @@ void SynthVoice::setOsc2Waveform(int waveform)
 void SynthVoice::setOsc1CoarseTune(float semitones)
 {
     osc1CoarseTune = juce::jlimit(-24.0f, 24.0f, semitones);
-    // Update frequency if note is playing
+    // Update frequency if note is playing — base Hz must match renderNextBlock's currentPitch
+    // (glide / legato). getMidiNoteInHertz(getCurrentlyPlayingNote()) can disagree for a whole
+    // block because updateVoicesWithParameters runs before MIDI is applied in renderNextBlock.
     if (isActive)
     {
-        auto baseFreq = juce::MidiMessage::getMidiNoteInHertz(getCurrentlyPlayingNote());
-        updateOsc1Frequency(baseFreq);
+        const int n = getCurrentlyPlayingNote();
+        const double baseHz = (currentPitch > 0.0)
+                                  ? juce::jlimit(20.0, 20000.0, currentPitch)
+                                  : (n >= 0 ? juce::MidiMessage::getMidiNoteInHertz(n) : 440.0);
+        updateOsc1Frequency(baseHz);
     }
 }
 
 void SynthVoice::setOsc1Detune(float cents)
 {
     osc1Detune = juce::jlimit(-50.0f, 50.0f, cents);
-    // Update frequency if note is playing
     if (isActive)
     {
-        auto baseFreq = juce::MidiMessage::getMidiNoteInHertz(getCurrentlyPlayingNote());
-        updateOsc1Frequency(baseFreq);
+        const int n = getCurrentlyPlayingNote();
+        const double baseHz = (currentPitch > 0.0)
+                                  ? juce::jlimit(20.0, 20000.0, currentPitch)
+                                  : (n >= 0 ? juce::MidiMessage::getMidiNoteInHertz(n) : 440.0);
+        updateOsc1Frequency(baseHz);
     }
 }
 
 void SynthVoice::setOsc2CoarseTune(float semitones)
 {
     osc2CoarseTune = juce::jlimit(-24.0f, 24.0f, semitones);
-    // Update frequency if note is playing
     if (isActive)
     {
-        auto baseFreq = juce::MidiMessage::getMidiNoteInHertz(getCurrentlyPlayingNote());
-        updateOsc2Frequency(baseFreq);
+        const int n = getCurrentlyPlayingNote();
+        const double baseHz = (currentPitch > 0.0)
+                                  ? juce::jlimit(20.0, 20000.0, currentPitch)
+                                  : (n >= 0 ? juce::MidiMessage::getMidiNoteInHertz(n) : 440.0);
+        updateOsc2Frequency(baseHz);
     }
 }
 
 void SynthVoice::setOsc2Detune(float cents)
 {
     osc2Detune = juce::jlimit(-50.0f, 50.0f, cents);
-    // Update frequency if note is playing
     if (isActive)
     {
-        auto baseFreq = juce::MidiMessage::getMidiNoteInHertz(getCurrentlyPlayingNote());
-        updateOsc2Frequency(baseFreq);
+        const int n = getCurrentlyPlayingNote();
+        const double baseHz = (currentPitch > 0.0)
+                                  ? juce::jlimit(20.0, 20000.0, currentPitch)
+                                  : (n >= 0 ? juce::MidiMessage::getMidiNoteInHertz(n) : 440.0);
+        updateOsc2Frequency(baseHz);
     }
 }
 
