@@ -266,7 +266,7 @@ private:
     float filterEnvDecayTime = 0.8f;     // Decay time (0.01-20.0s, skewed)
     float filterEnvSustainLevel = 0.7f;  // Sustain level (0.0-1.0, linear)
     float filterEnvReleaseTime = 3.0f;   // Release time (0.01-20.0s, skewed)
-    float filterEnvAmount = 0.0f;        // Envelope amount (-1.0 to 1.0, bipolar)
+    float filterEnvAmount = 0.0f;        // -100..+100 % (blend to full-range env sweep; sign inverts E)
     
     // -- ADSR Envelope --
     // Using JUCE's built-in ADSR for reliable, professional envelope behavior.
@@ -290,6 +290,10 @@ private:
     // Anti-click: one-pole lowpass smoother on envelope output (~3ms time constant).
     float smoothedEnvelope = 0.0f;
     float envSmoothCoeff = 0.0f;   // Computed from sample rate in prepareToPlay
+
+    // Anti-click: slew master filter cutoff (~1.5ms) — blocks knob/jumps between notes from clicking.
+    float smoothedFilterCutoffHz = 8000.0f;
+    float filterCutoffSmoothCoeff = 0.0f;
 
     // Voice fade: linear gain ramp applied to the FINAL output sample (after
     // filter + ADSR) to prevent clicks on any hard stop.  When stopNote is called

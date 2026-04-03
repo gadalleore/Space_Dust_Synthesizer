@@ -929,19 +929,26 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         float filterEnvOutput = filterAdsr.getNextSample();
         
         // Modulate filter cutoff with filter envelope and LFO.
-        // Logarithmic sweep: at 100% amount the envelope opens from baseCutoff to 20 kHz.
-        // Working in log-frequency gives a perceptually even sweep across octaves.
+        // Amount blends unmodulated cutoff (0%) with full-range envelope sweep (100%):
+        // E=1 → top of range, E=0 → bottom; sustain/decay set where E lands vs the knob.
+        // Log-frequency space for perceptually even motion across octaves.
         const float logMin = std::log(20.0f);
         const float logMax = std::log(20000.0f);
-        float logBase = std::log(juce::jmax(20.0f, baseFilterCutoff));
-        float envRange = (logMax - logBase) * (filterEnvAmount / 100.0f);
-        float logModulated = logBase + filterEnvOutput * envRange;
+        float logKnob = std::log(juce::jmax(20.0f, baseFilterCutoff));
+        float E = filterEnvOutput;
+        const float amtNorm = juce::jlimit(-1.0f, 1.0f, filterEnvAmount / 100.0f);
+        const float blend = std::abs(amtNorm);
+        if (amtNorm < 0.0f)
+            E = 1.0f - E;
+        const float logFullRange = logMin + E * (logMax - logMin);
+        float logModulated = (1.0f - blend) * logKnob + blend * logFullRange;
 
         const float lfoFilterScale = 0.5f;
         float lfoFactor = juce::jmax(0.0f, 1.0f + filterMod * lfoFilterScale);
         float modulatedCutoff = std::exp(juce::jlimit(logMin, logMax, logModulated)) * lfoFactor;
         modulatedCutoff = juce::jlimit(20.0f, 20000.0f, modulatedCutoff);
-        filter.setCutoffFrequency(modulatedCutoff);
+        smoothedFilterCutoffHz += filterCutoffSmoothCoeff * (modulatedCutoff - smoothedFilterCutoffHz);
+        filter.setCutoffFrequency(smoothedFilterCutoffHz);
         
         // Check if envelope has completed (release phase finished)
         // If not active, clear the note and stop rendering
@@ -1209,6 +1216,9 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Anti-click envelope smoother: ~3ms one-pole lowpass on ADSR output
     envSmoothCoeff = 1.0f - std::exp(-1.0f / (0.003f * static_cast<float>(sampleRate)));
     smoothedEnvelope = 0.0f;
+    // Slightly faster than amplitude smooth — only enough to kill zipper/parameter clicks.
+    filterCutoffSmoothCoeff = 1.0f - std::exp(-1.0f / (0.0015f * static_cast<float>(sampleRate)));
+    smoothedFilterCutoffHz = juce::jlimit(20.0f, 20000.0f, baseFilterCutoff);
     voiceFade = 1.0f;
     voiceFadeSamplesRemaining = 0;
     outputSmootherL = 0.0f;
@@ -1280,6 +1290,8 @@ void SynthVoice::setCurrentPlaybackSampleRate(double newRate)
         filterAdsr.setSampleRate(newRate);
         updateAdsrParameters();
         updateFilterAdsrParameters();
+        envSmoothCoeff = 1.0f - std::exp(-1.0f / (0.003f * static_cast<float>(newRate)));
+        filterCutoffSmoothCoeff = 1.0f - std::exp(-1.0f / (0.0015f * static_cast<float>(newRate)));
     }
     // If DSP not initialized yet, prepareToPlay() will handle initialization
 }

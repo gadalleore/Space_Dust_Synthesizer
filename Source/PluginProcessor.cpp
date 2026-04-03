@@ -896,7 +896,9 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     float noiseLevel = *apvts.getRawParameterValue("noiseLevel");
     
     int filterMode = (int)*apvts.getRawParameterValue("filterMode");
-    float filterCutoff = *apvts.getRawParameterValue("filterCutoff");
+    float filterCutoffHz = 8000.0f;
+    if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("filterCutoff")))
+        filterCutoffHz = juce::jlimit(20.0f, 20000.0f, p->get());
     // LFO filter modulation is applied per-sample in renderNextBlock
     
     float filterResonance = *apvts.getRawParameterValue("filterResonance");
@@ -915,12 +917,12 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     // This avoids calling setValueNotifyingHost for sync, which triggers performEdit
     // in the VST3 wrapper and causes Ableton to grey out automation lanes.
     int modFilter1Mode = modFilter1Link ? filterMode : (int)*apvts.getRawParameterValue("modFilter1Mode");
-    float modFilter1Cutoff = modFilter1Link ? filterCutoff : *apvts.getRawParameterValue("modFilter1Cutoff");
+    float modFilter1Cutoff = modFilter1Link ? filterCutoffHz : *apvts.getRawParameterValue("modFilter1Cutoff");
     float modFilter1Resonance = modFilter1Link ? filterResonance : *apvts.getRawParameterValue("modFilter1Resonance");
     bool warmSaturationMod1 = modFilter1Link ? warmSaturationMaster : *apvts.getRawParameterValue("warmSaturationMod1") > 0.5f;
 
     int modFilter2Mode = modFilter2Link ? filterMode : (int)*apvts.getRawParameterValue("modFilter2Mode");
-    float modFilter2Cutoff = modFilter2Link ? filterCutoff : *apvts.getRawParameterValue("modFilter2Cutoff");
+    float modFilter2Cutoff = modFilter2Link ? filterCutoffHz : *apvts.getRawParameterValue("modFilter2Cutoff");
     float modFilter2Resonance = modFilter2Link ? filterResonance : *apvts.getRawParameterValue("modFilter2Resonance");
     bool warmSaturationMod2 = modFilter2Link ? warmSaturationMaster : *apvts.getRawParameterValue("warmSaturationMod2") > 0.5f;
     
@@ -933,7 +935,18 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
         filterEnvDecay = juce::jlimit(0.01f, 5.0f, p->get());
     if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("filterEnvRelease")))
         filterEnvRelease = juce::jlimit(0.01f, 20.0f, p->get());
-    float filterEnvAmount = *apvts.getRawParameterValue("filterEnvAmount");
+    float filterEnvAmount = 0.0f;
+    if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("filterEnvAmount")))
+        filterEnvAmount = juce::jlimit(-100.0f, 100.0f, p->get());
+    // Sustain level tracks the cutoff knob on the full 20 Hz..20 kHz log span so the decay/hold
+    // stage matches the filter frequency when the envelope uses the full range (see SynthVoice).
+    float filterEnvSustain = 0.7f;
+    {
+        const float logMin = std::log(20.0f);
+        const float logMax = std::log(20000.0f);
+        const float logCut = std::log(filterCutoffHz);
+        filterEnvSustain = juce::jlimit(0.0f, 1.0f, (logCut - logMin) / (logMax - logMin));
+    }
     
     // ADSR parameters: Use atomic values (already converted from normalized to seconds/level)
     // This ensures real-time safe, lock-free access from the audio thread
@@ -997,7 +1010,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setLowShelfAmount(lowShelfAmount);
             voice->setHighShelfAmount(highShelfAmount);
             voice->setFilterMode(filterMode);
-            voice->setFilterCutoff(filterCutoff);
+            voice->setFilterCutoff(filterCutoffHz);
             voice->setFilterResonance(filterResonance);
             voice->setWarmSaturationMaster(warmSaturationMaster);
             voice->setModFilter1(modFilter1Show, modFilter1Link, modFilter1Mode, modFilter1Cutoff, modFilter1Resonance);
@@ -1006,7 +1019,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setWarmSaturationMod2(warmSaturationMod2);
             voice->setFilterEnvAttack(filterEnvAttack);
             voice->setFilterEnvDecay(filterEnvDecay);
-            voice->setFilterEnvSustain(0.0f);
+            voice->setFilterEnvSustain(filterEnvSustain);
             voice->setFilterEnvRelease(filterEnvRelease);
             voice->setFilterEnvAmount(filterEnvAmount);
             voice->setEnvAttack(envAttack);
