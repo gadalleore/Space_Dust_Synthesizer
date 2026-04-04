@@ -88,7 +88,6 @@ private:
     std::array<std::array<FirstOrderAllPass, kMaxStages>, 2> allPass_;  // [0]=L, [1]=R
 
     float lfoPhaseL_{0.0f};
-    float lfoPhaseR_{0.0f};
     float prevWetL_{0.0f};
     float prevWetR_{0.0f};
 

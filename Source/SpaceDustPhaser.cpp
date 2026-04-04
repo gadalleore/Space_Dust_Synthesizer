@@ -43,7 +43,6 @@ void SpaceDustPhaser::reset()
         for (int s = 0; s < kMaxStages; ++s)
             allPass_[ch][s].reset();
     lfoPhaseL_ = 0.0f;
-    lfoPhaseR_ = 0.0f;
 }
 
 void SpaceDustPhaser::setParameters(const Parameters& p)
@@ -92,9 +91,6 @@ void SpaceDustPhaser::process(juce::AudioBuffer<float>& buffer)
     const float rateHz = juce::jlimit(0.05f, 200.0f, params_.rateHz);
     const float phaseIncrement = rateHz / sr;
 
-    // Stereo phase offset: 0.5 = 180° for maximum width
-    const float stereoPhaseOff = params_.stereoOffset;
-
     for (int i = 0; i < numSamples; ++i)
     {
         // Smoothed parameters (advance once per sample)
@@ -102,9 +98,10 @@ void SpaceDustPhaser::process(juce::AudioBuffer<float>& buffer)
         const float depth = smoothedDepth_.getNextValue();
         const float centre = smoothedCentre_.getNextValue();
         const float feedback = smoothedFeedback_.getNextValue();
+        const float width = juce::jlimit(0.0f, 1.0f, params_.stereoOffset);
 
         // LFO: sine or triangle, with optional vintage JFET-like shaping
-        auto lfoValue = [this, phaseIncrement, stereoPhaseOff](float phase, bool vintage) -> float
+        auto lfoValue = [](float phase, bool vintage) -> float
         {
             float raw;
             if (vintage)
@@ -123,24 +120,31 @@ void SpaceDustPhaser::process(juce::AudioBuffer<float>& buffer)
             return juce::jlimit(0.0f, 1.0f, raw);
         };
 
-        const float lfoL = lfoValue(lfoPhaseL_, params_.vintageMode);
-        const float lfoR = lfoValue(lfoPhaseR_, params_.vintageMode);
-
-        // Advance LFO phases
+        // Advance LFO; R channel uses fixed phase offset from L (matches Flanger: param 0–1 → 0–180°)
         lfoPhaseL_ += phaseIncrement;
         if (lfoPhaseL_ >= 1.0f) lfoPhaseL_ -= 1.0f;
-        lfoPhaseR_ += phaseIncrement;
-        lfoPhaseR_ = std::fmod(lfoPhaseR_ + stereoPhaseOff, 1.0f);
-        if (lfoPhaseR_ < 0.0f) lfoPhaseR_ += 1.0f;
+
+        float phaseR = lfoPhaseL_ + width * 0.5f;
+        phaseR = std::fmod(phaseR, 1.0f);
+        if (phaseR < 0.0f) phaseR += 1.0f;
+
+        const float lfoL = lfoValue(lfoPhaseL_, params_.vintageMode);
+        const float lfoR = lfoValue(phaseR, params_.vintageMode);
 
         // Update all-pass coefficients for both channels (different LFO = stereo width)
         updateAllPassCoefficients(0, lfoL, depth, centre);
         updateAllPassCoefficients(1, lfoR, depth, centre);
 
+        const float lIn = buffer.getSample(0, i);
+        const float rIn = numChannels > 1 ? buffer.getSample(1, i) : lIn;
+        const float mid = 0.5f * (lIn + rIn);
+        const float lDry = width * lIn + (1.0f - width) * mid;
+        const float rDry = width * rIn + (1.0f - width) * mid;
+
         for (int ch = 0; ch < numChannels; ++ch)
         {
             auto* data = buffer.getWritePointer(ch);
-            const float dry = data[i];
+            const float dry = (ch == 0) ? lDry : rDry;
 
             // Feedback (Block Logo): feedback from last stage output to first stage input
             // Creates resonance/mid-hump like Phase 90 Block Logo. Script = no feedback.

@@ -96,15 +96,20 @@ void SpaceDustFlanger::process(juce::AudioBuffer<float>& buffer)
 
         const float lIn = left[i];
         const float rIn = right[i];
+        // Width 0 = mono (L/R from mid); width 1 = full stereo input (matches LFO phase spread)
+        const float mid = 0.5f * (lIn + rIn);
+        const float w = juce::jlimit(0.0f, 1.0f, width);
+        const float lSrc = w * lIn + (1.0f - w) * mid;
+        const float rSrc = w * rIn + (1.0f - w) * mid;
 
         float lDelayed = delayLineL_.popSample(0, delaySamplesL, true);
         float rDelayed = delayLineR_.popSample(0, delaySamplesR, true);
 
-        float lOut = (1.0f - mix) * lIn + mix * lDelayed;
-        float rOut = (1.0f - mix) * rIn + mix * rDelayed;
+        float lOut = (1.0f - mix) * lSrc + mix * lDelayed;
+        float rOut = (1.0f - mix) * rSrc + mix * rDelayed;
 
-        float lFb = std::tanh(juce::jlimit(-2.0f, 2.0f, lIn + fb * lDelayed));
-        float rFb = std::tanh(juce::jlimit(-2.0f, 2.0f, rIn + fb * rDelayed));
+        float lFb = std::tanh(juce::jlimit(-2.0f, 2.0f, lSrc + fb * lDelayed));
+        float rFb = std::tanh(juce::jlimit(-2.0f, 2.0f, rSrc + fb * rDelayed));
 
         delayLineL_.pushSample(0, lFb);
         delayLineR_.pushSample(0, rFb);
