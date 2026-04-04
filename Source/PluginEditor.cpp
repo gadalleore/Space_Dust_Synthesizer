@@ -670,7 +670,8 @@ void MainPageComponent::resized()
     // Increased horizontal spacing to give knobs more breathing room and match Modulation tab's balanced look
     const int horizontalSpacing = 50;      // Horizontal spacing between knobs (increased significantly: 18 + 32 = 50px for better visual balance)
     const int oscillatorTextBoxHeight = 12; // Text box height offset for oscillators (consistent for all)
-    const int oscLabelSpacing = oscillatorTextBoxHeight + (labelGap / 2); // Consistent label spacing below text box (shared)
+    const int oscLabelSpacing = oscillatorTextBoxHeight + (labelGap / 2); // Gap below knob text box (no separate title label below)
+    const int oscKnobLabelGap = 6;        // Match filter: gap between title label and knob
     const int topPaddingReduction = 0;   // Title now inside box - keep content below it
     
     // ============================================================================
@@ -748,22 +749,23 @@ void MainPageComponent::resized()
     parentEditor.osc1PanSlider.setBounds(oscContent.getX(), osc1PanY, comboWidth, panSliderHeight);
     parentEditor.osc1PanLabel.setBounds(oscContent.getX(), osc1PanY + panSliderHeight + 2, comboWidth, labelHeight);
     
-    int osc1KnobY = osc1Y + (comboHeight - knobDiameter) / 2; // Align knobs with combo center
+    // Knobs shifted down so title labels (Coarse, Detune, Level) sit above — matches Filter Cutoff/Resonance
+    int osc1KnobY = osc1Y + (comboHeight - knobDiameter) / 2 + labelHeight + oscKnobLabelGap;
     int osc1KnobX = oscContent.getX() + comboWidth + horizontalSpacing;
     
+    parentEditor.osc1CoarseTuneLabel.setBounds(osc1KnobX, osc1KnobY - labelHeight - oscKnobLabelGap, knobDiameter, labelHeight);
     parentEditor.osc1CoarseTuneSlider.setBounds(osc1KnobX, osc1KnobY, knobDiameter, knobDiameter);
-    parentEditor.osc1CoarseTuneLabel.setBounds(osc1KnobX, osc1KnobY + knobDiameter + oscLabelSpacing, knobDiameter, labelHeight);
     
     osc1KnobX += knobDiameter + horizontalSpacing;
+    parentEditor.osc1DetuneLabel.setBounds(osc1KnobX, osc1KnobY - labelHeight - oscKnobLabelGap, knobDiameter, labelHeight);
     parentEditor.osc1DetuneSlider.setBounds(osc1KnobX, osc1KnobY, knobDiameter, knobDiameter);
-    parentEditor.osc1DetuneLabel.setBounds(osc1KnobX, osc1KnobY + knobDiameter + oscLabelSpacing, knobDiameter, labelHeight);
     
     osc1KnobX += knobDiameter + horizontalSpacing;
+    parentEditor.osc1LevelLabel.setBounds(osc1KnobX, osc1KnobY - labelHeight - oscKnobLabelGap, knobDiameter, labelHeight);
     parentEditor.osc1LevelSlider.setBounds(osc1KnobX, osc1KnobY, knobDiameter, knobDiameter);
-    parentEditor.osc1LevelLabel.setBounds(osc1KnobX, osc1KnobY + knobDiameter + oscLabelSpacing, knobDiameter, labelHeight);
     
-    // Calculate bottom of Osc1 (including labels) for proper spacing to Osc2
-    int osc1Bottom = osc1KnobY + knobDiameter + oscLabelSpacing + labelHeight;
+    // Bottom of row: knob + value text box (no title label below)
+    int osc1Bottom = osc1KnobY + knobDiameter + oscLabelSpacing;
     
     // Osc2 - Same layout, below Osc1 with proper spacing to prevent overlaps
     int osc2Y = osc1Bottom + oscRowSpacing;
@@ -776,22 +778,21 @@ void MainPageComponent::resized()
     parentEditor.osc2PanSlider.setBounds(oscContent.getX(), osc2PanY, comboWidth, panSliderHeight);
     parentEditor.osc2PanLabel.setBounds(oscContent.getX(), osc2PanY + panSliderHeight + 2, comboWidth, labelHeight);
     
-    int osc2KnobY = osc2Y + (comboHeight - knobDiameter) / 2; // Align knobs with combo center
+    int osc2KnobY = osc2Y + (comboHeight - knobDiameter) / 2 + labelHeight + oscKnobLabelGap;
     int osc2KnobX = oscContent.getX() + comboWidth + horizontalSpacing;
     
+    parentEditor.osc2CoarseTuneLabel.setBounds(osc2KnobX, osc2KnobY - labelHeight - oscKnobLabelGap, knobDiameter, labelHeight);
     parentEditor.osc2CoarseTuneSlider.setBounds(osc2KnobX, osc2KnobY, knobDiameter, knobDiameter);
-    parentEditor.osc2CoarseTuneLabel.setBounds(osc2KnobX, osc2KnobY + knobDiameter + oscLabelSpacing, knobDiameter, labelHeight);
     
     osc2KnobX += knobDiameter + horizontalSpacing;
+    parentEditor.osc2DetuneLabel.setBounds(osc2KnobX, osc2KnobY - labelHeight - oscKnobLabelGap, knobDiameter, labelHeight);
     parentEditor.osc2DetuneSlider.setBounds(osc2KnobX, osc2KnobY, knobDiameter, knobDiameter);
-    parentEditor.osc2DetuneLabel.setBounds(osc2KnobX, osc2KnobY + knobDiameter + oscLabelSpacing, knobDiameter, labelHeight);
     
     osc2KnobX += knobDiameter + horizontalSpacing;
+    parentEditor.osc2LevelLabel.setBounds(osc2KnobX, osc2KnobY - labelHeight - oscKnobLabelGap, knobDiameter, labelHeight);
     parentEditor.osc2LevelSlider.setBounds(osc2KnobX, osc2KnobY, knobDiameter, knobDiameter);
-    parentEditor.osc2LevelLabel.setBounds(osc2KnobX, osc2KnobY + knobDiameter + oscLabelSpacing, knobDiameter, labelHeight);
     
-    // Calculate bottom of Osc2 (including labels) for proper spacing to Noise section
-    int osc2Bottom = osc2KnobY + knobDiameter + oscLabelSpacing + labelHeight;
+    int osc2Bottom = osc2KnobY + knobDiameter + oscLabelSpacing;
     
     // Noise - Below Osc2 with proper padding
     const int noisePadding = 14; // Padding between osc2 and noise section (compact)
@@ -800,23 +801,23 @@ void MainPageComponent::resized()
     noiseY += labelHeight + labelGap;
     parentEditor.noiseColorCombo.setBounds(oscContent.getX(), noiseY, comboWidth, comboHeight);
     
-    int noiseKnobY = noiseY + (comboHeight - knobDiameter) / 2;
+    int noiseKnobY = noiseY + (comboHeight - knobDiameter) / 2 + labelHeight + oscKnobLabelGap;
     int noiseKnobX = oscContent.getX() + comboWidth + horizontalSpacing;
+    parentEditor.noiseLevelLabel.setBounds(noiseKnobX, noiseKnobY - labelHeight - oscKnobLabelGap, knobDiameter, labelHeight);
     parentEditor.noiseLevelSlider.setBounds(noiseKnobX, noiseKnobY, knobDiameter, knobDiameter);
-    parentEditor.noiseLevelLabel.setBounds(noiseKnobX, noiseKnobY + knobDiameter + oscLabelSpacing, knobDiameter, labelHeight);
     parentEditor.noiseLevelSlider.setVisible(true);
     parentEditor.noiseLevelLabel.setVisible(true);
     
-    // Noise EQ knobs: positioned horizontally to the right of Level knob, same vertical level
-    // Layout: Level, Low Shelf/Cut, High Shelf/Cut (all in a horizontal row, like Coarse/Detune/Level above)
+    // Noise EQ knobs: same row as Level; title labels above (wider bounds for "Low Shelf/Cut")
     int eqKnob1X = noiseKnobX + knobDiameter + horizontalSpacing;  // Start after Level knob
     int eqKnob2X = eqKnob1X + knobDiameter + horizontalSpacing;     // Second knob next to first
+    const int eqLabelWidth = 90;  // "Low Shelf/Cut" / "High Shelf/Cut" — wider than knob
+    int lowShelfLabelX = eqKnob1X + (knobDiameter - eqLabelWidth) / 2;
+    int highShelfLabelX = eqKnob2X + (knobDiameter - eqLabelWidth) / 2;
+    parentEditor.lowShelfAmountLabel.setBounds(lowShelfLabelX, noiseKnobY - labelHeight - oscKnobLabelGap, eqLabelWidth, labelHeight);
     parentEditor.lowShelfAmountSlider.setBounds(eqKnob1X, noiseKnobY, knobDiameter, knobDiameter);
-    parentEditor.lowShelfAmountLabel.setBounds(eqKnob1X, noiseKnobY + knobDiameter + oscLabelSpacing, knobDiameter, labelHeight);
+    parentEditor.highShelfAmountLabel.setBounds(highShelfLabelX, noiseKnobY - labelHeight - oscKnobLabelGap, eqLabelWidth, labelHeight);
     parentEditor.highShelfAmountSlider.setBounds(eqKnob2X, noiseKnobY, knobDiameter, knobDiameter);
-    // Increase label width for "High Shelf/Cut" to prevent text cutoff
-    const int eqLabelWidth = 90;  // Wider label to accommodate "High Shelf/Cut" text
-    parentEditor.highShelfAmountLabel.setBounds(eqKnob2X, noiseKnobY + knobDiameter + oscLabelSpacing, eqLabelWidth, labelHeight);
     parentEditor.lowShelfAmountSlider.setVisible(true);
     parentEditor.lowShelfAmountLabel.setVisible(true);
     parentEditor.highShelfAmountSlider.setVisible(true);
@@ -826,6 +827,8 @@ void MainPageComponent::resized()
     // RIGHT SIDE: AMP ENVELOPE (Tall, narrow vertical column)
     // Master section is now handled by main editor, always visible on right side
     // Box shrinks/expands based on Sub Oscillator toggle (like Filter in Effects tab)
+    // Label→knob→value: same rhythm as Oscillators (oscKnobLabelGap + oscLabelSpacing).
+    // Between rows/sections: ampVerticalSpacing (tighter than default verticalSpacing) to save height.
     // ============================================================================
     // Use temp full height to compute content positions, then set final height
     auto ampEnvAreaTemp = juce::Rectangle<int>(rightX, topY, narrowStripWidth, availableHeight);
@@ -833,75 +836,85 @@ void MainPageComponent::resized()
     int ampEnvKnobX = ampEnvContent.getCentreX() - knobDiameter / 2; // Centered
     // Reduce top padding by ~50%: move content up by topPaddingReduction
     int ampEnvKnobY = ampEnvContent.getY() - topPaddingReduction;
-    // Spacing accounts for: knob (75) + reduced text box (10) + label (18) + reduced gaps
-    int ampEnvSpacing = knobDiameter + 10 + labelHeight + (labelGap / 2) + verticalSpacing;
+    const int ampVerticalSpacing = juce::jmax(2, verticalSpacing / 2); // compact gap between ADSR / pitch / sub blocks only
     
-    parentEditor.envAttackSlider.setBounds(ampEnvKnobX, ampEnvKnobY, knobDiameter, knobDiameter);
-    // Label positioned below text box (knob + reduced text box height + gap) - tighter spacing
-    parentEditor.envAttackLabel.setBounds(ampEnvKnobX, ampEnvKnobY + knobDiameter + 10 + (labelGap / 2), knobDiameter, labelHeight);
-    ampEnvKnobY += ampEnvSpacing;
+    auto layoutAmpEnvKnob = [&](juce::Slider& knob, juce::Label& label)
+    {
+        label.setBounds(ampEnvKnobX, ampEnvKnobY, knobDiameter, labelHeight);
+        ampEnvKnobY += labelHeight + oscKnobLabelGap; // match Oscillators: label bottom → knob top
+        knob.setBounds(ampEnvKnobX, ampEnvKnobY, knobDiameter, knobDiameter);
+        ampEnvKnobY += knobDiameter + oscLabelSpacing + ampVerticalSpacing; // knob → value area (osc) + tight row gap
+    };
+    layoutAmpEnvKnob(parentEditor.envAttackSlider, parentEditor.envAttackLabel);
+    layoutAmpEnvKnob(parentEditor.envDecaySlider, parentEditor.envDecayLabel);
+    layoutAmpEnvKnob(parentEditor.envSustainSlider, parentEditor.envSustainLabel);
+    layoutAmpEnvKnob(parentEditor.envReleaseSlider, parentEditor.envReleaseLabel);
     
-    parentEditor.envDecaySlider.setBounds(ampEnvKnobX, ampEnvKnobY, knobDiameter, knobDiameter);
-    parentEditor.envDecayLabel.setBounds(ampEnvKnobX, ampEnvKnobY + knobDiameter + 10 + (labelGap / 2), knobDiameter, labelHeight);
-    ampEnvKnobY += ampEnvSpacing;
-    
-    parentEditor.envSustainSlider.setBounds(ampEnvKnobX, ampEnvKnobY, knobDiameter, knobDiameter);
-    parentEditor.envSustainLabel.setBounds(ampEnvKnobX, ampEnvKnobY + knobDiameter + 10 + (labelGap / 2), knobDiameter, labelHeight);
-    ampEnvKnobY += ampEnvSpacing;
-    
-    parentEditor.envReleaseSlider.setBounds(ampEnvKnobX, ampEnvKnobY, knobDiameter, knobDiameter);
-    parentEditor.envReleaseLabel.setBounds(ampEnvKnobX, ampEnvKnobY + knobDiameter + 10 + (labelGap / 2), knobDiameter, labelHeight);
-    ampEnvKnobY += ampEnvSpacing;
-    
-    // Pitch envelope: 3 knobs in a row (Amount, Time, Pitch) - below Amp Envelope
+    // Pitch envelope: 3 knobs in a row (Amount, Time, Pitch) — labels above knobs
     const int pitchEnvKnobSize = 56;
+    // 56×56 bounds match other Main-tab rotaries (LAF splits dial + textbox inside the rect).
+    // Place Sub Osc using LookAndFeel-measured textBoxBounds (hardcoded gaps drift vs actual layout).
     int pitchEnvTotalWidth = 3 * pitchEnvKnobSize + 2 * 10;  // 3 knobs + 2 gaps
     int pitchEnvStartX = ampEnvContent.getCentreX() - pitchEnvTotalWidth / 2;
-    int pitchEnvKnobY = ampEnvKnobY;
     int pitchEnvGap = 10;
-    
-    parentEditor.pitchEnvAmountSlider.setBounds(pitchEnvStartX, pitchEnvKnobY, pitchEnvKnobSize, pitchEnvKnobSize);
-    parentEditor.pitchEnvAmountLabel.setBounds(pitchEnvStartX, pitchEnvKnobY + pitchEnvKnobSize + 10 + (labelGap / 2), pitchEnvKnobSize, labelHeight);
-    
     int pitchEnvKnob2X = pitchEnvStartX + pitchEnvKnobSize + pitchEnvGap;
-    parentEditor.pitchEnvTimeSlider.setBounds(pitchEnvKnob2X, pitchEnvKnobY, pitchEnvKnobSize, pitchEnvKnobSize);
-    parentEditor.pitchEnvTimeLabel.setBounds(pitchEnvKnob2X, pitchEnvKnobY + pitchEnvKnobSize + 10 + (labelGap / 2), pitchEnvKnobSize, labelHeight);
-    
     int pitchEnvKnob3X = pitchEnvKnob2X + pitchEnvKnobSize + pitchEnvGap;
+    int pitchEnvRowTop = ampEnvKnobY;
+    parentEditor.pitchEnvAmountLabel.setBounds(pitchEnvStartX, pitchEnvRowTop, pitchEnvKnobSize, labelHeight);
+    parentEditor.pitchEnvTimeLabel.setBounds(pitchEnvKnob2X, pitchEnvRowTop, pitchEnvKnobSize, labelHeight);
+    parentEditor.pitchEnvPitchLabel.setBounds(pitchEnvKnob3X, pitchEnvRowTop, pitchEnvKnobSize, labelHeight);
+    int pitchEnvKnobY = pitchEnvRowTop + labelHeight + oscKnobLabelGap;
+    parentEditor.pitchEnvAmountSlider.setBounds(pitchEnvStartX, pitchEnvKnobY, pitchEnvKnobSize, pitchEnvKnobSize);
+    parentEditor.pitchEnvTimeSlider.setBounds(pitchEnvKnob2X, pitchEnvKnobY, pitchEnvKnobSize, pitchEnvKnobSize);
     parentEditor.pitchEnvPitchSlider.setBounds(pitchEnvKnob3X, pitchEnvKnobY, pitchEnvKnobSize, pitchEnvKnobSize);
-    parentEditor.pitchEnvPitchLabel.setBounds(pitchEnvKnob3X, pitchEnvKnobY + pitchEnvKnobSize + 10 + (labelGap / 2), pitchEnvKnobSize, labelHeight);
+    // Anchor to full slider component bottom (rotary + value). getSliderLayout().textBoxBounds can disagree
+    // with the Slider's actual bounds when a custom LAF draws the dial but uses default layout math.
+    const int pitchValueBottom = juce::jmax(
+        parentEditor.pitchEnvAmountSlider.getBottom(),
+        parentEditor.pitchEnvTimeSlider.getBottom(),
+        parentEditor.pitchEnvPitchSlider.getBottom());
     
     // Sub oscillator (below pitch envelope, expandable when toggle is on)
-    // Layout: Level and Coarse knobs on top row, Waveform dropdown below with extra spacing to avoid overlap
-    int subOscY = pitchEnvKnobY + pitchEnvKnobSize + 10 + labelHeight + (labelGap / 2) + 12;
+    // Section gap after pitch value text = topBottomGap (same as Oscillators ↔ Filter)
+    int subOscY = pitchValueBottom + topBottomGap;
     int subOscToggleWidth = 120;  // Wide enough for "Sub Oscillator"
     int subOscToggleHeight = 22;
     parentEditor.subOscToggleButton.setBounds(ampEnvContent.getCentreX() - subOscToggleWidth / 2, subOscY, subOscToggleWidth, subOscToggleHeight);
     
-    int subOscKnobsY = subOscY + subOscToggleHeight + 8;
+    int subOscKnobsY = subOscY + subOscToggleHeight + topBottomGap;
     int subOscItemWidth = pitchEnvKnobSize;   // Match pitch envelope knob size (60)
     int subOscItemGap = pitchEnvGap;          // Match pitch envelope gap (10)
     int subOscKnobsTotalWidth = 2 * subOscItemWidth + subOscItemGap;  // Level + Coarse only
     int subOscKnobsStartX = ampEnvContent.getCentreX() - subOscKnobsTotalWidth / 2;
-    int subOscLabelSpacing = 10 + (labelGap / 2);  // Space between knob and label
-    // Row 1: Level and Coarse knobs with labels (each in its own column, no overlap)
-    parentEditor.subOscLevelSlider.setBounds(subOscKnobsStartX, subOscKnobsY, subOscItemWidth, subOscItemWidth);
-    parentEditor.subOscLevelLabel.setBounds(subOscKnobsStartX, subOscKnobsY + subOscItemWidth + subOscLabelSpacing, subOscItemWidth, labelHeight);
-    parentEditor.subOscCoarseSlider.setBounds(subOscKnobsStartX + subOscItemWidth + subOscItemGap, subOscKnobsY, subOscItemWidth, subOscItemWidth);
-    parentEditor.subOscCoarseLabel.setBounds(subOscKnobsStartX + subOscItemWidth + subOscItemGap, subOscKnobsY + subOscItemWidth + subOscLabelSpacing, subOscItemWidth, labelHeight);
-    // Row 2: Waveform dropdown - extra vertical gap so it doesn't step on Level/Coarse labels
-    int subOscWaveGap = 24;
-    int subOscWaveY = subOscKnobsY + subOscItemWidth + subOscLabelSpacing + labelHeight + subOscWaveGap;
+    // Row 1: Level and Coarse — labels above knobs (match Main tab)
+    parentEditor.subOscLevelLabel.setBounds(subOscKnobsStartX, subOscKnobsY, subOscItemWidth, labelHeight);
+    parentEditor.subOscCoarseLabel.setBounds(subOscKnobsStartX + subOscItemWidth + subOscItemGap, subOscKnobsY, subOscItemWidth, labelHeight);
+    subOscKnobsY += labelHeight + oscKnobLabelGap;
+    parentEditor.subOscLevelSlider.setBounds(subOscKnobsStartX, subOscKnobsY, subOscItemWidth, pitchEnvKnobSize);
+    parentEditor.subOscCoarseSlider.setBounds(subOscKnobsStartX + subOscItemWidth + subOscItemGap, subOscKnobsY, subOscItemWidth, pitchEnvKnobSize);
+    const int subOscValueBottom = juce::jmax(
+        parentEditor.subOscLevelSlider.getBottom(),
+        parentEditor.subOscCoarseSlider.getBottom());
+    // Row 2: Wave — topBottomGap after Level/Coarse value text, then label + combo
+    int subOscWaveLabelTop = subOscValueBottom + topBottomGap;
     int subOscWaveWidth = 80;  // Wide enough for "Triangle", centered - avoids overlap with Level/Coarse columns
     int subOscWaveX = ampEnvContent.getCentreX() - subOscWaveWidth / 2;
-    parentEditor.subOscWaveformLabel.setBounds(subOscWaveX, subOscWaveY - labelHeight - 2, subOscWaveWidth, labelHeight);
-    parentEditor.subOscWaveformCombo.setBounds(subOscWaveX, subOscWaveY, subOscWaveWidth, comboHeight);
+    parentEditor.subOscWaveformLabel.setBounds(subOscWaveX, subOscWaveLabelTop, subOscWaveWidth, labelHeight);
+    int subOscWaveComboY = subOscWaveLabelTop + labelHeight + 1;
+    parentEditor.subOscWaveformCombo.setBounds(subOscWaveX, subOscWaveComboY, subOscWaveWidth, comboHeight);
     
     // Amp Envelope box height: shrink when Sub Osc off, expand when on (like Filter in Effects tab)
+    // Bottom inset below last control matches Modulation tab LFO1 box: after the Filter toggle row,
+    // ModulationPageComponent uses lfo1FinalH = lfo1CurrentY - modulationContent.getY() + lfoBoxPadV
+    // where lfo1CurrentY already includes modRowSpacing below the row — same as lfoBoxPadV + modRowSpacing
+    // from the bottom of the Filter button to the bottom of the LFO1 group (32 + 4).
+    const int modLfoBoxPadV = 32;       // ModulationPageComponent lfoBoxPadV
+    const int modRowSpacing = 4;      // ModulationPageComponent modRowSpacing (gap after last row)
+    const int ampEnvBottomInset = modLfoBoxPadV + modRowSpacing;
     bool subOscOn = parentEditor.audioProcessor.getValueTreeState().getParameter("subOscOn") != nullptr
-        && *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("subOscOn") > 0.5f;
-    int ampEnvBottom = subOscOn ? (subOscWaveY + comboHeight) : (subOscY + subOscToggleHeight);
-    int ampEnvHeight = ampEnvBottom - topY + groupPadding;
+        && parentEditor.audioProcessor.getValueTreeState().getParameter("subOscOn")->getValue() > 0.5f;
+    int ampEnvBottom = subOscOn ? parentEditor.subOscWaveformCombo.getBottom() : (subOscY + subOscToggleHeight);
+    int ampEnvHeight = ampEnvBottom - topY + ampEnvBottomInset;
     parentEditor.envelopeGroup.setBounds(rightX, topY, narrowStripWidth, ampEnvHeight);
     
     // Master section is now handled by main editor's resized(), not MainPageComponent
@@ -959,8 +972,7 @@ void MainPageComponent::resized()
     // ============================================================================
     // Based on sketch, Filter Envelope controls are inside Filter box
     // Calculate bottom of filter knobs (including label spacing) for proper spacing to Filter Envelope
-    // Use same label spacing calculation as oscillators for consistency
-    const int filterLabelSpacing = oscillatorTextBoxHeight + (labelGap / 2); // Label spacing below text box
+    const int filterLabelSpacing = oscillatorTextBoxHeight + (labelGap / 2); // Gap below knob text box (no title label below)
     int filterKnobsBottom = filterCutoffKnobY + knobDiameter + filterLabelSpacing + labelHeight;
     int filterEnvY = filterKnobsBottom + filterRowGap;
     const int numFilterEnvKnobs = 4;
@@ -968,22 +980,23 @@ void MainPageComponent::resized()
     int filterEnvStartX = filterContent.getX() + filterEnvKnobSpacing;
     
     int filterEnvKnobX = filterEnvStartX;
-    int filterEnvKnobY = filterEnvY;
+    // Title labels above knobs (match Cutoff/Resonance)
+    int filterEnvKnobY = filterEnvY + labelHeight + filterLabelGap;
     
+    parentEditor.filterEnvAttackLabel.setBounds(filterEnvKnobX, filterEnvY, knobDiameter, labelHeight);
     parentEditor.filterEnvAttackSlider.setBounds(filterEnvKnobX, filterEnvKnobY, knobDiameter, knobDiameter);
-    parentEditor.filterEnvAttackLabel.setBounds(filterEnvKnobX, filterEnvKnobY + knobDiameter + filterLabelSpacing, knobDiameter, labelHeight);
     filterEnvKnobX += knobDiameter + filterEnvKnobSpacing;
     
+    parentEditor.filterEnvDecayLabel.setBounds(filterEnvKnobX, filterEnvY, knobDiameter, labelHeight);
     parentEditor.filterEnvDecaySlider.setBounds(filterEnvKnobX, filterEnvKnobY, knobDiameter, knobDiameter);
-    parentEditor.filterEnvDecayLabel.setBounds(filterEnvKnobX, filterEnvKnobY + knobDiameter + filterLabelSpacing, knobDiameter, labelHeight);
     filterEnvKnobX += knobDiameter + filterEnvKnobSpacing;
     
+    parentEditor.filterEnvReleaseLabel.setBounds(filterEnvKnobX, filterEnvY, knobDiameter, labelHeight);
     parentEditor.filterEnvReleaseSlider.setBounds(filterEnvKnobX, filterEnvKnobY, knobDiameter, knobDiameter);
-    parentEditor.filterEnvReleaseLabel.setBounds(filterEnvKnobX, filterEnvKnobY + knobDiameter + filterLabelSpacing, knobDiameter, labelHeight);
     filterEnvKnobX += knobDiameter + filterEnvKnobSpacing;
     
+    parentEditor.filterEnvAmountLabel.setBounds(filterEnvKnobX, filterEnvY, knobDiameter, labelHeight);
     parentEditor.filterEnvAmountSlider.setBounds(filterEnvKnobX, filterEnvKnobY, knobDiameter, knobDiameter);
-    parentEditor.filterEnvAmountLabel.setBounds(filterEnvKnobX, filterEnvKnobY + knobDiameter + filterLabelSpacing, knobDiameter, labelHeight);
     
     // Hide the separate Filter Envelope group box (it's now inside Filter)
     parentEditor.filterEnvGroup.setBounds(0, 0, 0, 0);
@@ -1669,6 +1682,8 @@ void EffectsPageComponent::updateGrainDelayFilterVisibility()
 void EffectsPageComponent::updateReverbFilterVisibility()
 {
     bool show = *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("reverbFilterShow") > 0.5f;
+    parentEditor.reverbWetMixLabel.setVisible(show);
+    parentEditor.reverbWetMixSlider.setVisible(show);
     parentEditor.reverbFilterWarmSaturationButton.setVisible(show);
     parentEditor.reverbFilterHPCutoffSlider.setVisible(show);
     parentEditor.reverbFilterHPResonanceSlider.setVisible(show);
@@ -1884,6 +1899,13 @@ void EffectsPageComponent::resized()
     const int grainContentHeight = gY - grainStartY;
     parentEditor.grainDelayGroup.setBounds(delayColX, grainStartY, colW, grainContentHeight);
 
+    // Bottom Y of Grain Delay as if both left-column filters were off (subtracts filter-only rows).
+    // Stable when toggling Delay / Grain Delay filters so Trance Gate / Flanger heights do not jump.
+    const int delayFilterExtra = filterShow ? (labelH + labelGap + knobSize + gap) : 0;
+    const int grainFilterExtra = grainFilterShow ? (labelH + labelGap + knobSize + gap) : 0;
+    const int grainBottomAlign = (pad + (delayContentHeight - delayFilterExtra) + sectionGap)
+                                  + (grainContentHeight - grainFilterExtra);
+
     // ---- Reverb section (center column) - On button upper-left, Mix lowest ----
     int rCx = reverbColX + colW / 2;
     int rY = groupTitleH;
@@ -1926,7 +1948,7 @@ void EffectsPageComponent::resized()
         parentEditor.reverbFilterWarmSaturationButton.setVisible(false);
     }
     rY += rBtnH + gap;
-    
+
     if (reverbFilterShow)
     {
         int rFGap = 6;
@@ -1942,13 +1964,13 @@ void EffectsPageComponent::resized()
         parentEditor.reverbFilterLPCutoffSlider.setBounds(rFilterLeft + 2*(rKnobSize + rFGap), rY, rKnobSize, rKnobSize);
         parentEditor.reverbFilterLPResonanceSlider.setBounds(rFilterLeft + 3*(rKnobSize + rFGap), rY, rKnobSize, rKnobSize);
         rY += rKnobSize + gap;
+
+        // Mix is the lowest knob only when the reverb filter section is expanded
+        parentEditor.reverbWetMixLabel.setBounds(rCx - rKnobSize/2, rY, rKnobSize, labelH);
+        rY += labelH + labelGap;
+        parentEditor.reverbWetMixSlider.setBounds(rCx - rKnobSize/2, rY, rKnobSize, rKnobSize);
+        rY += rKnobSize + pad;
     }
-    
-    // Mix knob - always the lowest knob
-    parentEditor.reverbWetMixLabel.setBounds(rCx - rKnobSize/2, rY, rKnobSize, labelH);
-    rY += labelH + labelGap;
-    parentEditor.reverbWetMixSlider.setBounds(rCx - rKnobSize/2, rY, rKnobSize, rKnobSize);
-    rY += rKnobSize + pad;
     
     const int reverbContentHeight = rY;
     parentEditor.reverbGroup.setBounds(reverbColX, pad, colW, reverbContentHeight);
@@ -2054,7 +2076,9 @@ void EffectsPageComponent::resized()
     tY += tKnobSize + pad;
 
     const int gateContentHeight = tY - gateStartY;
-    parentEditor.tranceGateGroup.setBounds(reverbColX, gateStartY, colW, gateContentHeight);
+    const int tranceH = reverbFilterShow ? gateContentHeight
+                                         : juce::jmax(gateContentHeight, grainBottomAlign - gateStartY);
+    parentEditor.tranceGateGroup.setBounds(reverbColX, gateStartY, colW, tranceH);
 
     // ---- Phaser section (right column, top) ----
     int pCx = grainColX + colW / 2;
@@ -2158,33 +2182,8 @@ void EffectsPageComponent::resized()
     parentEditor.flangerMixSlider.setBounds(fPairLeft + fKnobSize + fKg, fY, fKnobSize, fKnobSize);
     fY += fKnobSize + pad;
     const int flangerContentHeight = fY - flangerStartY;
-    parentEditor.flangerGroup.setBounds(grainColX, flangerStartY, colW, flangerContentHeight);
-
-    // Make column bottoms flush, excluding columns that have filters open
-    {
-        const int leftBottom   = grainStartY + grainContentHeight;
-        const int centerBottom = gateStartY + gateContentHeight;
-        const int rightBottom  = flangerStartY + flangerContentHeight;
-        const bool leftHasFilter   = filterShow || grainFilterShow;
-        const bool centerHasFilter = reverbFilterShow;
-
-        // Use center column's base height (without 16-step extra row) for flush
-        const int centerExtraFor16 = (totalSteps == 16) ? (stepBtnSize + stepGap) : 0;
-        const int centerBaseBottom = centerBottom - centerExtraFor16;
-
-        // Compute flush target only from columns without open filters
-        int maxBase = rightBottom;  // right column never has filters
-        if (!leftHasFilter)   maxBase = juce::jmax(maxBase, leftBottom);
-        if (!centerHasFilter) maxBase = juce::jmax(maxBase, centerBaseBottom);
-
-        // Extend only non-filter columns to the flush target
-        if (!leftHasFilter && leftBottom < maxBase)
-            parentEditor.grainDelayGroup.setBounds(delayColX, grainStartY, colW, maxBase - grainStartY);
-        if (!centerHasFilter && centerBaseBottom < maxBase)
-            parentEditor.tranceGateGroup.setBounds(reverbColX, gateStartY, colW, juce::jmax(gateContentHeight, maxBase - gateStartY));
-        if (rightBottom < maxBase)
-            parentEditor.flangerGroup.setBounds(grainColX, flangerStartY, colW, maxBase - flangerStartY);
-    }
+    const int flangerH = juce::jmax(flangerContentHeight, grainBottomAlign - flangerStartY);
+    parentEditor.flangerGroup.setBounds(grainColX, flangerStartY, colW, flangerH);
 }
 
 //==============================================================================
@@ -5773,63 +5772,87 @@ void SpaceDustAudioProcessorEditor::resized()
     const int comboWidth = 110;           // Combo box width
     const int verticalSpacing = 6;        // Compact vertical spacing between controls
     const int topPaddingReduction = 0;    // Title inside box - keep content below
+    const int panelBottomGap = 8;         // Match Main tab topBottomGap (Oscillators ↔ Filter); Amp Envelope bottom + Legato margin
     
     // Move Master box left by reducing the gap by 50%
     // Right edge of tab is at: tabbedWidth
     // New Master X position: tabbedWidth + actualMasterGap (reduced gap)
     int masterX = tabbedWidth + actualMasterGap;
-    int masterY = titleHeight + 10;  // 10px top margin to match bottom
-    int masterHeight = getHeight() - titleHeight - 20;  // 10px top + 10px bottom margins
+    int masterY = titleHeight + 10;  // 10px top margin inside editor
+    // Bottom edge aligns with Filter box: Main tab content ends getHeight()-8 from editor bottom; match that inset
+    int masterHeight = getHeight() - titleHeight - 18;  // bottom = getHeight() - 8 (same as Filter group bottom)
     
     masterGroup.setBounds(masterX, masterY, masterWidth, masterHeight);
     
     auto masterContent = masterGroup.getBounds().reduced(groupPadding, groupTitleHeight + groupPadding);
     int masterKnobX = masterContent.getCentreX() - knobDiameter / 2; // Centered
-    // Layout: Volume, Meter (below Volume), then Pitch bend, Mode, Glide, Legato
+    // Layout: Volume, Meter (below Volume), then Pitch bend, Mode, Glide, Legato (labels above knobs like Main tab)
     int masterCurrentY = masterContent.getY() - topPaddingReduction;
+    const int masterKnobTextTail = 10 + 18; // textbox gap + value height under rotary
     
-    // Spacing accounts for: knob (75) + reduced text box (10) + label (18) + reduced gaps
-    int masterSpacing = knobDiameter + 10 + labelHeight + (labelGap / 2) + verticalSpacing;
-    
+    masterVolumeLabel.setBounds(masterKnobX, masterCurrentY, knobDiameter, labelHeight);
+    masterCurrentY += labelHeight + labelGap;
     masterVolumeSlider.setBounds(masterKnobX, masterCurrentY, knobDiameter, knobDiameter);
-    masterVolumeLabel.setBounds(masterKnobX, masterCurrentY + knobDiameter + 10 + (labelGap / 2), knobDiameter, labelHeight);
     masterVolumeSlider.setVisible(true);
     masterVolumeLabel.setVisible(true);
-    masterCurrentY += masterSpacing;
+    masterCurrentY += knobDiameter + masterKnobTextTail + verticalSpacing;
+    const int meterStartY = masterCurrentY;
     
-    // Stereo Level Meters: below Volume, above everything else
-    const int meterBarWidth = 20;
-    const int meterGap = 4;
-    const int totalMeterWidth = (meterBarWidth * 2) + meterGap;
-    int meterHeight = 216;  // 90% of 240 (shrunk 10% to fit Legato Glide)
-    int meterX = masterContent.getCentreX() - totalMeterWidth / 2;
-    if (stereoLevelMeter != nullptr)
-    {
-        stereoLevelMeter->setBounds(meterX, masterCurrentY, totalMeterWidth, meterHeight);
-        stereoLevelMeter->setVisible(true);
-    }
-    masterCurrentY += meterHeight + verticalSpacing;
-    
-    // Bend Range on its own row, Pitch fader on row below
+    // Bend / Pitch / Voice block height (fixed) — used to size meter so Glide+Legato can anchor to bottom
     const int pitchKnobSize = 56;
     const int pitchFaderWidth = 24;
     const int pitchFaderHeight = 80;
+    const int fixedAfterMeter =
+        (labelHeight + labelGap) + pitchKnobSize + masterKnobTextTail + verticalSpacing
+      + (labelHeight + labelGap) + pitchFaderHeight + verticalSpacing
+      + (labelHeight + labelGap) + comboHeight + verticalSpacing;
+    
+    // Glide + Legato from bottom first (panelBottomGap matches Main tab Amp Envelope bottom)
+    const int legatoBtnH = 20;
+    const int gapGlideToLegato = 10 + (labelGap / 2) + 1;
+    const int mcBottom = masterContent.getBottom();
+    int legatoButtonY = mcBottom - panelBottomGap - legatoBtnH;
+    int legatoLabelY = legatoButtonY - 1 - labelHeight;
+    int glideKnobY = legatoLabelY - gapGlideToLegato - knobDiameter;
+    int glideLabelY = glideKnobY - labelHeight - labelGap;
+    
+    int rawMeterHeight = glideLabelY - meterStartY - verticalSpacing - fixedAfterMeter;
+    int meterHeight = juce::jlimit(120, 216, rawMeterHeight);
+    // If clamp hit a tall meter need, avoid Voice row overlapping Glide (rare / very short windows)
+    const int voiceRowEndIfMeter = meterStartY + meterHeight + verticalSpacing + fixedAfterMeter;
+    if (voiceRowEndIfMeter > glideLabelY + 1)
+        meterHeight = juce::jmax(80, glideLabelY - meterStartY - verticalSpacing - fixedAfterMeter);
+    
+    // Stereo Level Meters: height shrinks when needed so Legato sits panelBottomGap above content bottom
+    const int meterBarWidth = 20;
+    const int meterGap = 4;
+    const int totalMeterWidth = (meterBarWidth * 2) + meterGap;
+    int meterX = masterContent.getCentreX() - totalMeterWidth / 2;
+    if (stereoLevelMeter != nullptr)
+    {
+        stereoLevelMeter->setBounds(meterX, meterStartY, totalMeterWidth, meterHeight);
+        stereoLevelMeter->setVisible(true);
+    }
+    masterCurrentY = meterStartY + meterHeight + verticalSpacing;
+    
     int pitchCentreX = masterContent.getCentreX();
     
-    // Row 1: Bend Range (knob only, centered)
+    // Row 1: Bend Range (label above knob)
     int pitchKnobY = masterCurrentY;
+    pitchBendAmountLabel.setBounds(pitchCentreX - 40, pitchKnobY, 80, labelHeight);
+    pitchKnobY += labelHeight + labelGap;
     pitchBendAmountSlider.setBounds(pitchCentreX - pitchKnobSize / 2, pitchKnobY, pitchKnobSize, pitchKnobSize);
-    pitchBendAmountLabel.setBounds(pitchCentreX - 40, pitchKnobY + pitchKnobSize + 8, 80, labelHeight);  // "Bend Range" on its own line
     pitchBendAmountSlider.setVisible(true);
     pitchBendAmountLabel.setVisible(true);
-    masterCurrentY += pitchKnobSize + 8 + labelHeight + verticalSpacing;
+    masterCurrentY = pitchKnobY + pitchKnobSize + masterKnobTextTail + verticalSpacing;
     
-    // Row 2: Pitch Bend (vertical fader)
+    // Row 2: Pitch Bend (label above vertical fader)
+    pitchBendLabel.setBounds(pitchCentreX - 18, masterCurrentY, 36, labelHeight);
+    masterCurrentY += labelHeight + labelGap;
     pitchBendSlider.setBounds(pitchCentreX - pitchFaderWidth / 2, masterCurrentY, pitchFaderWidth, pitchFaderHeight);
-    pitchBendLabel.setBounds(pitchCentreX - 18, masterCurrentY + pitchFaderHeight + 8, 36, labelHeight);  // "Pitch"
     pitchBendSlider.setVisible(true);
     pitchBendLabel.setVisible(true);
-    masterCurrentY += pitchFaderHeight + 8 + labelHeight + verticalSpacing;
+    masterCurrentY += pitchFaderHeight + verticalSpacing;
     
     // Voice Mode combo (centered)
     int voiceModeX = masterContent.getCentreX() - comboWidth / 2;
@@ -5839,13 +5862,13 @@ void SpaceDustAudioProcessorEditor::resized()
     voiceModeCombo.setVisible(true);
     voiceModeLabel.setVisible(true);
     masterCurrentY += comboHeight + verticalSpacing;
-    
-    glideTimeSlider.setBounds(masterKnobX, masterCurrentY, knobDiameter, knobDiameter);
-    glideTimeLabel.setBounds(masterKnobX, masterCurrentY + knobDiameter + 10 + (labelGap / 2), knobDiameter, labelHeight);
+    // When raw meter height > 216, meter is capped and a gap may open between Voice and Glide (Glide stays bottom-anchored).
+    glideTimeLabel.setBounds(masterKnobX, glideLabelY, knobDiameter, labelHeight);
+    glideTimeSlider.setBounds(masterKnobX, glideKnobY, knobDiameter, knobDiameter);
     glideTimeSlider.setVisible(true);
     glideTimeLabel.setVisible(true);
     
-    // Legato Glide toggle: small button beneath the Glide knob label in the Master box
+    // Legato Glide toggle: small button beneath the Glide knob value area
     // Only visible when voice mode is "Legato" (index 2)
     int voiceModeIndex = 0;
     if (auto* voiceModeParam = audioProcessor.getValueTreeState().getParameter("voiceMode"))
@@ -5856,10 +5879,8 @@ void SpaceDustAudioProcessorEditor::resized()
         }
     }
     
-    int legatoToggleY = masterCurrentY + knobDiameter + 10 + (labelGap / 2) + labelHeight + 1;
-    legatoGlideLabel.setBounds(masterKnobX, legatoToggleY, knobDiameter, labelHeight);
-    legatoToggleY += labelHeight + 1;
-    legatoGlideButton.setBounds(masterKnobX + (knobDiameter - 100) / 2, legatoToggleY, 100, 20);
+    legatoGlideLabel.setBounds(masterKnobX, legatoLabelY, knobDiameter, labelHeight);
+    legatoGlideButton.setBounds(masterKnobX + (knobDiameter - 100) / 2, legatoButtonY, 100, legatoBtnH);
     legatoGlideLabel.setVisible(false);
     bool isLegatoMode = (voiceModeIndex == 2);
     legatoGlideButton.setVisible(isLegatoMode);

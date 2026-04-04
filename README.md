@@ -2,6 +2,13 @@
 
 A pure CMake-based polyphonic synthesizer VST3 plugin built with JUCE 8. Cosmic particles of sound.
 
+**Repository:** [github.com/gadalleore/Space_Dust_Synthesizer](https://github.com/gadalleore/Space_Dust_Synthesizer)
+
+```bash
+git clone https://github.com/gadalleore/Space_Dust_Synthesizer.git
+cd Space_Dust_Synthesizer
+```
+
 ## Features
 
 - **VST3 format** – VST3-only plugin
@@ -20,6 +27,8 @@ A pure CMake-based polyphonic synthesizer VST3 plugin built with JUCE 8. Cosmic 
 - **JUCE 8** – [juce.com](https://juce.com/get-juce) or [GitHub](https://github.com/juce-framework/JUCE)
 
 ## Setup
+
+`juce_path.local` is **gitignored**—create it only on your machine (it may contain a local filesystem path to JUCE). Never commit it.
 
 1. **Install JUCE** and point the project to it (choose one):
    - Copy `juce_path.local.example` to `juce_path.local` and put your JUCE path in it, or
@@ -68,6 +77,11 @@ Source/
 ├── SexiconReverb.*          # Additional reverb
 └── SpaceDustLookAndFeel.*   # Custom UI styling
 ```
+
+## Additional documentation
+
+- [docs/FIX_SUMMARY.md](docs/FIX_SUMMARY.md) — internal development notes (assertion fixes, UTF-8 handling)
+- [docs/REVERB_RESEARCH.md](docs/REVERB_RESEARCH.md)
 
 ## References
 
