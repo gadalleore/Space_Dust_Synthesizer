@@ -28,6 +28,16 @@ SpaceDustLookAndFeel::SpaceDustLookAndFeel()
 #endif
 }
 
+juce::Colour SpaceDustLookAndFeel::getMeterResponsiveKnobArcColour() const
+{
+    return outputMeterClipping ? juce::Colour(0xffff6666) : knobArcCyan;
+}
+
+juce::Colour SpaceDustLookAndFeel::getMeterResponsiveKnobGlowColour() const
+{
+    return outputMeterClipping ? juce::Colour(0xffdd3333) : knobGlowCyan;
+}
+
 //==============================================================================
 // -- Tab Bar: Semi-transparent background so edge glow shows through --
 
@@ -115,7 +125,7 @@ void SpaceDustLookAndFeel::drawGroupComponentOutline(juce::Graphics& g, int widt
     // Inward glow from border (more dramatic when effect/LFO enabled)
     if (viewportGlow || isActive)
     {
-        const juce::Colour viewportBlue(0xff00b4ff);
+        const juce::Colour viewportHue = outputMeterClipping ? juce::Colour(0xffdd3333) : juce::Colour(0xff00b4ff);
         const float glowThick = isActive ? 14.0f : 6.0f;
         const int numBands = 8;
         const float alphaScale = isActive ? 2.0f : 1.0f;
@@ -135,7 +145,7 @@ void SpaceDustLookAndFeel::drawGroupComponentOutline(juce::Graphics& g, int widt
             const float t = (float)i / (float)numBands;
             const int baseAlpha = isActive ? 55 : 38;
             juce::uint8 alpha = juce::uint8(juce::jlimit(0, 255, static_cast<int>(baseAlpha * alphaScale * (1.0f - t * t))));
-            g.setColour(viewportBlue.withAlpha(alpha));
+            g.setColour(viewportHue.withAlpha(alpha));
             g.fillPath(glowPath);
         }
     }
@@ -143,9 +153,9 @@ void SpaceDustLookAndFeel::drawGroupComponentOutline(juce::Graphics& g, int widt
     juce::Colour outlineCol = group.findColour(juce::GroupComponent::outlineColourId)
                               .withMultipliedAlpha(group.isEnabled() ? 1.0f : 0.5f);
     if (isActive)
-        outlineCol = juce::Colour(0xff60d4ff);   // Brighter cyan when effect/LFO on
+        outlineCol = outputMeterClipping ? juce::Colour(0xffff8888) : juce::Colour(0xff60d4ff);
     else if (viewportGlow)
-        outlineCol = juce::Colour(0xff00b4ff);  // Bright blue for viewport
+        outlineCol = outputMeterClipping ? juce::Colour(0xffff5555) : juce::Colour(0xff00b4ff);
     g.setColour(outlineCol);
     g.strokePath(p, roundedStroke((viewportGlow || isActive) ? 2.0f : 1.5f));
 
@@ -201,22 +211,31 @@ void SpaceDustLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButto
     
     bool isToggled = button.getToggleState();
     
-    // Background: glow effect when checked (brighter blue/cyan)
+    // Background: glow effect when checked (brighter blue/cyan, or red when meter clips)
     if (isToggled)
     {
-        // Draw outer glow with bright blue
-        g.setColour(juce::Colour(0x5500aaff));  // ~33% opacity blue glow
-        g.fillRoundedRectangle(bounds.expanded(4.0f), cornerSize + 2.0f);
-        g.setColour(juce::Colour(0x4400d4ff));  // Inner glow
-        g.fillRoundedRectangle(bounds.expanded(2.0f), cornerSize + 1.0f);
-        
-        // Main background: brighter cyan when checked
-        g.setColour(juce::Colour(0xff1a4a5f));  // Dark cyan-blue background
-        g.fillRoundedRectangle(bounds, cornerSize);
-        
-        // Border: bright blue when checked
-        g.setColour(juce::Colour(0xff00b4ff));  // Bright blue border
-        g.drawRoundedRectangle(bounds.reduced(0.5f), cornerSize, 1.5f);
+        if (outputMeterClipping)
+        {
+            g.setColour(juce::Colour(0x55ff4444));
+            g.fillRoundedRectangle(bounds.expanded(4.0f), cornerSize + 2.0f);
+            g.setColour(juce::Colour(0x44dd2222));
+            g.fillRoundedRectangle(bounds.expanded(2.0f), cornerSize + 1.0f);
+            g.setColour(juce::Colour(0xff4a1a1a));
+            g.fillRoundedRectangle(bounds, cornerSize);
+            g.setColour(juce::Colour(0xffff4444));
+            g.drawRoundedRectangle(bounds.reduced(0.5f), cornerSize, 1.5f);
+        }
+        else
+        {
+            g.setColour(juce::Colour(0x5500aaff));  // ~33% opacity blue glow
+            g.fillRoundedRectangle(bounds.expanded(4.0f), cornerSize + 2.0f);
+            g.setColour(juce::Colour(0x4400d4ff));  // Inner glow
+            g.fillRoundedRectangle(bounds.expanded(2.0f), cornerSize + 1.0f);
+            g.setColour(juce::Colour(0xff1a4a5f));  // Dark cyan-blue background
+            g.fillRoundedRectangle(bounds, cornerSize);
+            g.setColour(juce::Colour(0xff00b4ff));  // Bright blue border
+            g.drawRoundedRectangle(bounds.reduced(0.5f), cornerSize, 1.5f);
+        }
     }
     else
     {
@@ -260,11 +279,14 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
 
     if (radius < 6.0f) return;
 
+    const juce::Colour arcHue = getMeterResponsiveKnobArcColour();
+    const juce::Colour glowHue = getMeterResponsiveKnobGlowColour();
+
     // --- Outer glow (soft bloom behind the knob) ---
     {
         const float glowRadius = radius + 6.0f;
-        juce::ColourGradient glow(knobGlowCyan.withAlpha((juce::uint8)30), centreX, centreY,
-                                  knobGlowCyan.withAlpha((juce::uint8)0),  centreX, centreY - glowRadius, true);
+        juce::ColourGradient glow(glowHue.withAlpha((juce::uint8)30), centreX, centreY,
+                                  glowHue.withAlpha((juce::uint8)0),  centreX, centreY - glowRadius, true);
         g.setGradientFill(glow);
         g.fillEllipse(centreX - glowRadius, centreY - glowRadius, glowRadius * 2.0f, glowRadius * 2.0f);
     }
@@ -295,14 +317,14 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
         juce::Path glowArc;
         glowArc.addCentredArc(centreX, centreY, arcRadius, arcRadius, 0.0f,
                               rotaryStartAngle, angle, true);
-        g.setColour(knobGlowCyan.withAlpha((juce::uint8)50));
+        g.setColour(glowHue.withAlpha((juce::uint8)50));
         g.strokePath(glowArc, juce::PathStrokeType(arcThickness + 4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
         // Crisp arc on top
         juce::Path valueArc;
         valueArc.addCentredArc(centreX, centreY, arcRadius, arcRadius, 0.0f,
                                rotaryStartAngle, angle, true);
-        g.setColour(knobArcCyan);
+        g.setColour(arcHue);
         g.strokePath(valueArc, juce::PathStrokeType(arcThickness, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 

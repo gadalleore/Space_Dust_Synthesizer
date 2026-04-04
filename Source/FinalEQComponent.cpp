@@ -1,4 +1,5 @@
 #include "FinalEQComponent.h"
+#include "SpaceDustLookAndFeel.h"
 
 //==============================================================================
 // Static helpers
@@ -199,11 +200,16 @@ void FinalEQComponent::paint(juce::Graphics& g)
 
     const auto da = displayArea_.toFloat();
 
-    // Knob colour constants (matching SpaceDustLookAndFeel)
+    // Knob colour constants (matching SpaceDustLookAndFeel; arc/glow follow meter red zone)
     const juce::Colour knobBodyLight (0xff2a2a48);
     const juce::Colour knobBodyDark  (0xff1a1a30);
-    const juce::Colour knobArcCyan   (0xff00d4ff);
-    const juce::Colour knobGlowCyan  (0xff00b4ff);
+    juce::Colour knobArcCol = juce::Colour(0xff00d4ff);
+    juce::Colour knobGlowCol = juce::Colour(0xff00b4ff);
+    if (auto* laf = dynamic_cast<SpaceDustLookAndFeel*>(&getLookAndFeel()))
+    {
+        knobArcCol = laf->getMeterResponsiveKnobArcColour();
+        knobGlowCol = laf->getMeterResponsiveKnobGlowColour();
+    }
 
     // --- Background ---
     g.setColour(juce::Colour(0xff0b0b1e));
@@ -235,7 +241,7 @@ void FinalEQComponent::paint(juce::Graphics& g)
         filled.lineTo(x0 + static_cast<float>(w - 1), zeroY);
         filled.closeSubPath();
 
-        g.setColour(knobGlowCyan.withAlpha(0.12f));
+        g.setColour(knobGlowCol.withAlpha(0.12f));
         g.fillPath(filled);
 
         // Stroke
@@ -244,7 +250,7 @@ void FinalEQComponent::paint(juce::Graphics& g)
         for (int i = 1; i < w; ++i)
             stroke.lineTo(x0 + static_cast<float>(i), gainToY(responseMag_[i]));
 
-        g.setColour(knobArcCyan.withAlpha(0.9f));
+        g.setColour(knobArcCol.withAlpha(0.9f));
         g.strokePath(stroke, juce::PathStrokeType(1.8f,
                                                    juce::PathStrokeType::curved,
                                                    juce::PathStrokeType::rounded));
@@ -258,8 +264,8 @@ void FinalEQComponent::paint(juce::Graphics& g)
         // Outer glow halo (matches knob glow)
         {
             const float glowR = dotRadius_ + 4.0f;
-            juce::ColourGradient glow(knobGlowCyan.withAlpha(0.25f), dot.x, dot.y,
-                                      knobGlowCyan.withAlpha(0.0f),  dot.x, dot.y - glowR, true);
+            juce::ColourGradient glow(knobGlowCol.withAlpha(0.25f), dot.x, dot.y,
+                                      knobGlowCol.withAlpha(0.0f),  dot.x, dot.y - glowR, true);
             g.setGradientFill(glow);
             g.fillEllipse(dot.x - glowR, dot.y - glowR, glowR * 2.0f, glowR * 2.0f);
         }
@@ -273,13 +279,13 @@ void FinalEQComponent::paint(juce::Graphics& g)
                           dotRadius_ * 2.0f, dotRadius_ * 2.0f);
         }
 
-        // Cyan rim (matches knob arc colour)
-        g.setColour(knobArcCyan);
+        // Rim (matches knob arc colour)
+        g.setColour(knobArcCol);
         g.drawEllipse(dot.x - dotRadius_, dot.y - dotRadius_,
                       dotRadius_ * 2.0f, dotRadius_ * 2.0f, 1.5f);
 
         // Band number label
-        g.setColour(knobArcCyan.withAlpha(0.85f));
+        g.setColour(knobArcCol.withAlpha(0.85f));
         g.setFont(juce::Font(8.0f, juce::Font::bold));
         g.drawText(juce::String(b + 1),
                    static_cast<int>(dot.x - 5.0f), static_cast<int>(dot.y - 5.0f),

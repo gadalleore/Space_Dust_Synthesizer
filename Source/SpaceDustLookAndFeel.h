@@ -15,6 +15,14 @@ public:
     SpaceDustLookAndFeel();
     ~SpaceDustLookAndFeel() override = default;
 
+    /** When true, meter-linked glow (groups, knobs, EQ curve) uses red tones (matches peak clipping). */
+    void setOutputMeterClipping(bool clipping) noexcept { outputMeterClipping = clipping; }
+    bool isOutputMeterClipping() const noexcept { return outputMeterClipping; }
+
+    /** Colours that track the meter red zone (for Final EQ and other custom paint). */
+    juce::Colour getMeterResponsiveKnobArcColour() const;
+    juce::Colour getMeterResponsiveKnobGlowColour() const;
+
     //==============================================================================
     // -- Typography Enhancements --
     
@@ -77,6 +85,8 @@ private:
     juce::Colour knobBodyLight  = juce::Colour(0xff2a2a48);
     juce::Colour knobRimDark    = juce::Colour(0xff303050);
     juce::Colour knobRimLight   = juce::Colour(0xff505078);
+
+    bool outputMeterClipping = false;
 
     juce::Typeface::Ptr glitchGoblinTypeface;
 };

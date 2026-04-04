@@ -260,6 +260,18 @@ namespace
             }
         }
     }
+
+    /** Group halo / drawGlows hue: cyan vs red when meter is in clipping hold (matches edge glow). */
+    inline juce::Colour meterLinkedGroupGlowHue(bool clipping)
+    {
+        return clipping ? juce::Colour(0xffdd3333) : juce::Colour(0xff00b4ff);
+    }
+
+    /** Title outer-glow layers (slightly brighter cyan than group halos). */
+    inline juce::Colour meterLinkedTitleGlowHue(bool clipping)
+    {
+        return clipping ? juce::Colour(0xffdd3333) : juce::Colour(0xff00d4ff);
+    }
 }
 
 //==============================================================================
@@ -629,7 +641,7 @@ void MainPageComponent::paint(juce::Graphics& g)
     avgLevel = juce::jmin(1.0f, avgLevel);
     drawStarfield(g, getWidth(), getHeight(), avgLevel);
     const int baseAlpha = 8 + static_cast<int>(44.0f * avgLevel);
-    drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff),
+    drawGlows(g, baseAlpha, meterLinkedGroupGlowHue(parentEditor.clippingHoldTicks > 0),
         { &parentEditor.oscillatorsGroup, &parentEditor.filterGroup, &parentEditor.filterEnvGroup, &parentEditor.envelopeGroup });
 }
 
@@ -1021,7 +1033,7 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     addAndMakeVisible(parentEditor.lfo1TripletStraightButton);
     addAndMakeVisible(parentEditor.lfo1FreeRateSlider);
     addAndMakeVisible(parentEditor.lfo1SyncRateCombo);
-    // lfo1RateLabel omitted - only Hz/sync value label shown below knob
+    addAndMakeVisible(parentEditor.lfo1RateLabel);
     addAndMakeVisible(parentEditor.lfo1RateValueLabel);
     addAndMakeVisible(parentEditor.lfo1DepthSlider);
     addAndMakeVisible(parentEditor.lfo1DepthLabel);
@@ -1041,7 +1053,7 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     addAndMakeVisible(parentEditor.lfo2TripletStraightButton);
     addAndMakeVisible(parentEditor.lfo2FreeRateSlider);
     addAndMakeVisible(parentEditor.lfo2SyncRateCombo);
-    // lfo2RateLabel omitted - only Hz/sync value label shown below knob
+    addAndMakeVisible(parentEditor.lfo2RateLabel);
     addAndMakeVisible(parentEditor.lfo2RateValueLabel);
     addAndMakeVisible(parentEditor.lfo2DepthSlider);
     addAndMakeVisible(parentEditor.lfo2DepthLabel);
@@ -1102,7 +1114,7 @@ void ModulationPageComponent::paint(juce::Graphics& g)
     avgLevel = juce::jmin(1.0f, avgLevel);
     drawStarfield(g, getWidth(), getHeight(), avgLevel);
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
-    drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff),
+    drawGlows(g, baseAlpha, meterLinkedGroupGlowHue(parentEditor.clippingHoldTicks > 0),
         { &parentEditor.modulationGroup, &parentEditor.lfo1Group, &parentEditor.lfo2Group,
           &parentEditor.modFilter1Group, &parentEditor.modFilter2Group });
 }
@@ -1121,8 +1133,7 @@ void ModulationPageComponent::resized()
     // Larger gap between LFO columns so boxes do not intersect
     const int columnGap = 22;  // Increased by 10% from reduced value
     
-    const int modKnobDiameter = 56;
-    const int modRateKnobSize = 38;  // Rate knob smaller to match Depth (which has TextBoxBelow; 56-18)
+    const int modRateKnobSize = 38;  // Rate, Depth, Phase (and mod-filter knobs): one consistent rotary size
     const int modRateLabelWidth = 70;  // Width for "1/8 bar", "1/128 bar" etc. - prevents cutoff
     const int modLabelHeight = 14;
     const int modComboHeight = 22;
@@ -1133,7 +1144,10 @@ void ModulationPageComponent::resized()
     const int modWarmSatButtonW = 128; // Warm Saturation (wider so full text fits)
     const int modLabelGap = 2;
     const int modRowSpacing = 4;
-    const int modRateValueGap = 12;
+    const int modTextBoxH = 18;       // TextBoxBelow on Depth/Phase (matches slider text box height)
+    const int modValueTextH = 14;     // Hz / sync value under Rate knob
+    const int gapKnobToValue = 2;     // Space between rotary and value text (Rate + TextBoxBelow)
+    const int gapValueToNextLabel = modRowSpacing; // Same gap after Hz or after Depth/Phase value to next label
     // Extra padding inside each LFO box (title now inside box - need space below it)
     const int lfoBoxPadH = 8;
     const int lfoBoxPadV = 32;  // Match groupTitleHeight so content clears in-box title
@@ -1213,12 +1227,13 @@ void ModulationPageComponent::resized()
     parentEditor.lfo1SyncButton.setBounds(lfo1CentreX - modButtonWidth / 2, lfo1CurrentY, modButtonWidth, modButtonHeight);
     lfo1CurrentY += modButtonHeight + modRowSpacing;
     
-    // LFO1 Rate (knob + Hz/sync label only; "Rate" label hidden; knob size matches Depth)
+    // LFO1 Rate (label + knob + Hz/sync value; spacing matches Depth/Phase rows)
+    const int modRateSliderTotalH = modRateKnobSize + gapKnobToValue + modValueTextH;
     parentEditor.lfo1RateLabel.setBounds(lfo1CentreX - modRateKnobSize / 2, lfo1CurrentY, modRateKnobSize, modLabelHeight);
-    parentEditor.lfo1RateLabel.setVisible(false);  // Hidden - only Hz/sync value label shown
+    parentEditor.lfo1RateLabel.setVisible(true);
     lfo1CurrentY += modLabelHeight + modLabelGap;
     parentEditor.lfo1FreeRateSlider.setBounds(lfo1CentreX - modRateKnobSize / 2, lfo1CurrentY, modRateKnobSize, modRateKnobSize);
-    parentEditor.lfo1RateValueLabel.setBounds(lfo1CentreX - modRateLabelWidth / 2, lfo1CurrentY + modRateKnobSize + 2, modRateLabelWidth, 14);
+    parentEditor.lfo1RateValueLabel.setBounds(lfo1CentreX - modRateLabelWidth / 2, lfo1CurrentY + modRateKnobSize + gapKnobToValue, modRateLabelWidth, modValueTextH);
     parentEditor.lfo1RateValueLabel.setVisible(true);   // Shows Hz or sync division
     parentEditor.lfo1RateValueLabel.setAlpha(1.0f);
     parentEditor.lfo1SyncRateCombo.setBounds(lfo1CentreX - controlWidth / 2, lfo1CurrentY, controlWidth, modComboHeight);
@@ -1229,19 +1244,20 @@ void ModulationPageComponent::resized()
     parentEditor.lfo1TripletButton.setBounds(lfo1CentreX + modRateKnobSize / 2 + tripletButtonGap, lfo1CurrentY + (modRateKnobSize - tripletButtonSize) / 2, tripletButtonWidth, tripletButtonSize);
     // Triplet/Straight toggle button: positioned to the left of Rate knob, vertically centered
     parentEditor.lfo1TripletStraightButton.setBounds(lfo1CentreX - modRateKnobSize / 2 - tripletButtonGap - tripletButtonSize, lfo1CurrentY + (modRateKnobSize - tripletButtonSize) / 2, tripletButtonSize, tripletButtonSize);
-    lfo1CurrentY += modRateKnobSize + modRateValueGap;
+    lfo1CurrentY += modRateSliderTotalH + gapValueToNextLabel;
     
     // LFO1 Depth
-    parentEditor.lfo1DepthLabel.setBounds(lfo1CentreX - modKnobDiameter / 2, lfo1CurrentY, modKnobDiameter, modLabelHeight);
+    const int modRotaryTextBoxTotalH = modRateKnobSize + gapKnobToValue + modTextBoxH;
+    parentEditor.lfo1DepthLabel.setBounds(lfo1CentreX - modRateKnobSize / 2, lfo1CurrentY, modRateKnobSize, modLabelHeight);
     lfo1CurrentY += modLabelHeight + modLabelGap;
-    parentEditor.lfo1DepthSlider.setBounds(lfo1CentreX - modKnobDiameter / 2, lfo1CurrentY, modKnobDiameter, modKnobDiameter);
-    lfo1CurrentY += modKnobDiameter + modRowSpacing;
+    parentEditor.lfo1DepthSlider.setBounds(lfo1CentreX - modRateKnobSize / 2, lfo1CurrentY, modRateKnobSize, modRotaryTextBoxTotalH);
+    lfo1CurrentY += modRotaryTextBoxTotalH + gapValueToNextLabel;
     
     // LFO1 Phase
-    parentEditor.lfo1PhaseLabel.setBounds(lfo1CentreX - modKnobDiameter / 2, lfo1CurrentY, modKnobDiameter, modLabelHeight);
+    parentEditor.lfo1PhaseLabel.setBounds(lfo1CentreX - modRateKnobSize / 2, lfo1CurrentY, modRateKnobSize, modLabelHeight);
     lfo1CurrentY += modLabelHeight + modLabelGap;
-    parentEditor.lfo1PhaseSlider.setBounds(lfo1CentreX - modKnobDiameter / 2, lfo1CurrentY, modKnobDiameter, modKnobDiameter);
-    lfo1CurrentY += modKnobDiameter + modRowSpacing;
+    parentEditor.lfo1PhaseSlider.setBounds(lfo1CentreX - modRateKnobSize / 2, lfo1CurrentY, modRateKnobSize, modRotaryTextBoxTotalH);
+    lfo1CurrentY += modRotaryTextBoxTotalH + modRowSpacing;
     
     // LFO1 Retrigger button (below Phase knob)
     parentEditor.lfo1RetriggerButton.setBounds(lfo1CentreX - modButtonWidth / 2, lfo1CurrentY, modButtonWidth, modButtonHeight);
@@ -1268,7 +1284,7 @@ void ModulationPageComponent::resized()
     // Knobs same size as Depth, centered under Filter button
     if (modFilter1Show)
     {
-        const int filterKnobSize = modKnobDiameter;  // Match Depth knob size
+        const int filterKnobSize = modRateKnobSize;  // Match Rate/Depth/Phase
         const int filterKnobGap = 8;
         const int filterComboW = 90;
         const int filterComboH = 20;
@@ -1346,12 +1362,12 @@ void ModulationPageComponent::resized()
     parentEditor.lfo2SyncButton.setBounds(lfo2CentreX - modButtonWidth / 2, lfo2CurrentY, modButtonWidth, modButtonHeight);
     lfo2CurrentY += modButtonHeight + modRowSpacing;
     
-    // LFO2 Rate (knob + Hz/sync label only; "Rate" label hidden; knob size matches Depth)
+    // LFO2 Rate (label + knob + Hz/sync value; spacing matches Depth/Phase rows)
     parentEditor.lfo2RateLabel.setBounds(lfo2CentreX - modRateKnobSize / 2, lfo2CurrentY, modRateKnobSize, modLabelHeight);
-    parentEditor.lfo2RateLabel.setVisible(false);  // Hidden - only Hz/sync value label shown
+    parentEditor.lfo2RateLabel.setVisible(true);
     lfo2CurrentY += modLabelHeight + modLabelGap;
     parentEditor.lfo2FreeRateSlider.setBounds(lfo2CentreX - modRateKnobSize / 2, lfo2CurrentY, modRateKnobSize, modRateKnobSize);
-    parentEditor.lfo2RateValueLabel.setBounds(lfo2CentreX - modRateLabelWidth / 2, lfo2CurrentY + modRateKnobSize + 2, modRateLabelWidth, 14);
+    parentEditor.lfo2RateValueLabel.setBounds(lfo2CentreX - modRateLabelWidth / 2, lfo2CurrentY + modRateKnobSize + gapKnobToValue, modRateLabelWidth, modValueTextH);
     parentEditor.lfo2RateValueLabel.setVisible(true);   // Shows Hz or sync division
     parentEditor.lfo2RateValueLabel.setAlpha(1.0f);
     parentEditor.lfo2SyncRateCombo.setBounds(lfo2CentreX - controlWidth / 2, lfo2CurrentY, controlWidth, modComboHeight);
@@ -1359,19 +1375,19 @@ void ModulationPageComponent::resized()
     parentEditor.lfo2TripletButton.setBounds(lfo2CentreX + modRateKnobSize / 2 + tripletButtonGap, lfo2CurrentY + (modRateKnobSize - tripletButtonSize) / 2, tripletButtonWidth, tripletButtonSize);
     // Triplet/Straight toggle button: positioned to the left of Rate knob, vertically centered
     parentEditor.lfo2TripletStraightButton.setBounds(lfo2CentreX - modRateKnobSize / 2 - tripletButtonGap - tripletButtonSize, lfo2CurrentY + (modRateKnobSize - tripletButtonSize) / 2, tripletButtonSize, tripletButtonSize);
-    lfo2CurrentY += modRateKnobSize + modRateValueGap;
+    lfo2CurrentY += modRateSliderTotalH + gapValueToNextLabel;
     
     // LFO2 Depth
-    parentEditor.lfo2DepthLabel.setBounds(lfo2CentreX - modKnobDiameter / 2, lfo2CurrentY, modKnobDiameter, modLabelHeight);
+    parentEditor.lfo2DepthLabel.setBounds(lfo2CentreX - modRateKnobSize / 2, lfo2CurrentY, modRateKnobSize, modLabelHeight);
     lfo2CurrentY += modLabelHeight + modLabelGap;
-    parentEditor.lfo2DepthSlider.setBounds(lfo2CentreX - modKnobDiameter / 2, lfo2CurrentY, modKnobDiameter, modKnobDiameter);
-    lfo2CurrentY += modKnobDiameter + modRowSpacing;
+    parentEditor.lfo2DepthSlider.setBounds(lfo2CentreX - modRateKnobSize / 2, lfo2CurrentY, modRateKnobSize, modRotaryTextBoxTotalH);
+    lfo2CurrentY += modRotaryTextBoxTotalH + gapValueToNextLabel;
     
     // LFO2 Phase
-    parentEditor.lfo2PhaseLabel.setBounds(lfo2CentreX - modKnobDiameter / 2, lfo2CurrentY, modKnobDiameter, modLabelHeight);
+    parentEditor.lfo2PhaseLabel.setBounds(lfo2CentreX - modRateKnobSize / 2, lfo2CurrentY, modRateKnobSize, modLabelHeight);
     lfo2CurrentY += modLabelHeight + modLabelGap;
-    parentEditor.lfo2PhaseSlider.setBounds(lfo2CentreX - modKnobDiameter / 2, lfo2CurrentY, modKnobDiameter, modKnobDiameter);
-    lfo2CurrentY += modKnobDiameter + modRowSpacing;
+    parentEditor.lfo2PhaseSlider.setBounds(lfo2CentreX - modRateKnobSize / 2, lfo2CurrentY, modRateKnobSize, modRotaryTextBoxTotalH);
+    lfo2CurrentY += modRotaryTextBoxTotalH + modRowSpacing;
     
     // LFO2 Retrigger button (below Phase knob)
     parentEditor.lfo2RetriggerButton.setBounds(lfo2CentreX - modButtonWidth / 2, lfo2CurrentY, modButtonWidth, modButtonHeight);
@@ -1397,7 +1413,7 @@ void ModulationPageComponent::resized()
     // Knobs same size as Depth, centered under Filter button
     if (modFilter2Show)
     {
-        const int filterKnobSize = modKnobDiameter;  // Match Depth knob size
+        const int filterKnobSize = modRateKnobSize;  // Match Rate/Depth/Phase
         const int filterKnobGap = 8;
         const int filterComboW = 90;
         const int filterComboH = 20;
@@ -1672,7 +1688,7 @@ void EffectsPageComponent::paint(juce::Graphics& g)
     avgLevel = juce::jmin(1.0f, avgLevel);
     drawStarfield(g, getWidth(), getHeight(), avgLevel);
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
-    drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff),
+    drawGlows(g, baseAlpha, meterLinkedGroupGlowHue(parentEditor.clippingHoldTicks > 0),
         { &parentEditor.delayGroup, &parentEditor.reverbGroup, &parentEditor.grainDelayGroup,
           &parentEditor.phaserGroup, &parentEditor.flangerGroup, &parentEditor.tranceGateGroup, &parentEditor.delayFilterGroup });
 }
@@ -2259,7 +2275,7 @@ void SaturationColorPageComponent::paint(juce::Graphics& g)
     avgLevel = juce::jmin(1.0f, avgLevel);
     drawStarfield(g, getWidth(), getHeight(), avgLevel);
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
-    drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff), { &parentEditor.bitCrusherGroup, &parentEditor.compressorGroup, &parentEditor.softClipperGroup, &parentEditor.lofiGroup, &parentEditor.transientGroup, &parentEditor.finalEQGroup });
+    drawGlows(g, baseAlpha, meterLinkedGroupGlowHue(parentEditor.clippingHoldTicks > 0), { &parentEditor.bitCrusherGroup, &parentEditor.compressorGroup, &parentEditor.softClipperGroup, &parentEditor.lofiGroup, &parentEditor.transientGroup, &parentEditor.finalEQGroup });
 }
 
 void SaturationColorPageComponent::resized()
@@ -2467,7 +2483,7 @@ void SpectralPageComponent::GlowOverlayComponent::paint(juce::Graphics& g)
     float avgLevel = 0.5f * (pageRef.parentEditor.audioProcessor.getLeftPeakLevel() + pageRef.parentEditor.audioProcessor.getRightPeakLevel());
     avgLevel = juce::jmin(1.0f, avgLevel);
     const int baseAlpha = 8 + static_cast<int>(44.0f * avgLevel);
-    drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff),
+    drawGlows(g, baseAlpha, meterLinkedGroupGlowHue(pageRef.parentEditor.clippingHoldTicks > 0),
         { &pageRef.goniometerGroup, &pageRef.oscilloscopeGroup, &pageRef.spectrumGroup });
 }
 
@@ -5472,6 +5488,8 @@ void SpaceDustAudioProcessorEditor::timerCallback()
             --clippingHoldTicks;
     }
 
+    customLookAndFeel.setOutputMeterClipping(clippingHoldTicks > 0);
+
     repaint();  // Redraw glow halos so they follow output level
 
     // Update Spectral tab (Lissajous drawn in SpectralPage::paint, Oscilloscope, Spectrum)
@@ -5618,8 +5636,8 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
         auto titleArea = juce::Rectangle<int>(0, 2, w, 44);
         juce::Font titleFont = customLookAndFeel.getTitleFont(40.0f);
 
-        // Outer glow layers (expanding offsets, decreasing opacity)
-        const juce::Colour glowCol(0xff00d4ff);
+        // Outer glow layers (expanding offsets, decreasing opacity); red when meter clips
+        const juce::Colour glowCol = meterLinkedTitleGlowHue(clippingHoldTicks > 0);
         for (int i = 3; i >= 1; --i)
         {
             g.setColour(glowCol.withAlpha(static_cast<juce::uint8>(18 / i)));
@@ -5645,7 +5663,7 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
         float avgLevel = 0.5f * (audioProcessor.getLeftPeakLevel() + audioProcessor.getRightPeakLevel());
         avgLevel = juce::jmin(1.0f, avgLevel);
         const int baseAlpha = 8 + static_cast<int>(44.0f * avgLevel);
-        drawGlows(g, baseAlpha, juce::Colour(0xff00b4ff), { &masterGroup });
+        drawGlows(g, baseAlpha, meterLinkedGroupGlowHue(clippingHoldTicks > 0), { &masterGroup });
     }
 }
 
