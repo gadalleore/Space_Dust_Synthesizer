@@ -137,14 +137,11 @@ void SpaceDustPhaser::process(juce::AudioBuffer<float>& buffer)
 
         const float lIn = buffer.getSample(0, i);
         const float rIn = numChannels > 1 ? buffer.getSample(1, i) : lIn;
-        const float mid = 0.5f * (lIn + rIn);
-        const float lDry = width * lIn + (1.0f - width) * mid;
-        const float rDry = width * rIn + (1.0f - width) * mid;
 
         for (int ch = 0; ch < numChannels; ++ch)
         {
             auto* data = buffer.getWritePointer(ch);
-            const float dry = (ch == 0) ? lDry : rDry;
+            const float dry = (ch == 0) ? lIn : rIn;
 
             // Feedback (Block Logo): feedback from last stage output to first stage input
             // Creates resonance/mid-hump like Phase 90 Block Logo. Script = no feedback.

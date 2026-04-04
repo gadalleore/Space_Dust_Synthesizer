@@ -28,7 +28,7 @@ public:
         float rateHz = 0.5f;       // LFO speed 0.05-200 Hz
         float depth = 0.5f;        // Sweep amount (modulation depth) 0-1
         float feedback = 0.0f;     // Feedback -1 to 1 (0 = none)
-        float width = 0.5f;        // Stereo width 0-1 (0=mono, 1=full stereo L/R offset)
+        float width = 0.5f;        // L/R LFO phase spread 0-1 (0=same modulation both ch; 1=max offset)
         float mix = 0.5f;          // Dry/wet 0-1
     };
 

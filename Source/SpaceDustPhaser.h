@@ -39,7 +39,7 @@ public:
         float mix = 0.5f;           // Dry/wet 0-1
         float centreHz = 400.0f;    // Base sweep center 50-2000 Hz
         int numStages = 4;          // 4 = Phase 90, 6 = deeper
-        float stereoOffset = 0.5f;  // L/R LFO phase offset 0-1 (0.5 = 180°)
+        float stereoOffset = 0.5f;  // L/R LFO phase spread 0-1 (0=same modulation both ch; 1=max offset)
         bool vintageMode = false;   // Triangle LFO + JFET-like curve vs sine
     };
 
