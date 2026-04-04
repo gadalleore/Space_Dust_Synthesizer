@@ -163,6 +163,8 @@ public:
     void setPitchBendAmount(float semitones);  // Range for pitch bend (0-24)
     void setPitchBend(float value);           // Manual pitch bend (-1 to 1)
     void setLfoTargets(int lfo1Target, int lfo2Target);  // 0=Pitch, 1=Filter, 2=MasterVol, 3=Osc1, 4=Osc2, 5=Noise
+    // Analog Drift: emulates hardware component tolerance and slow oscillator/filter drift
+    void setAnalogDrift(float amount) { analogDriftAmount = juce::jlimit(0.0f, 1.0f, amount); }
     void setSynthesiser(SpaceDustSynthesiser* s) { synthesiser = s; }
     void setProcessor(SpaceDustAudioProcessor* p) { processor = p; }
     
@@ -231,6 +233,16 @@ private:
     float pinkSum = 0.0f;
     int pinkIndex = 0;
     juce::Random random{static_cast<juce::int64>(reinterpret_cast<uintptr_t>(this))};  // Random number generator for noise (seeded with voice address)
+    
+    // Analog Drift: emulates hardware component tolerance and slow oscillator/filter drift
+    float analogDriftAmount = 0.0f;
+    // Per-note random factors in [-1, 1]; scaled in render by analogDriftAmount (±5 cents / ±30 Hz at amount=1)
+    float osc1DriftOffset = 0.0f;
+    float osc2DriftOffset = 0.0f;
+    float filterDriftOffset = 0.0f;
+    float analogOscWalk = 0.0f;    // Smoothed osc drift (slow random walk)
+    float analogFilterWalk = 0.0f; // Smoothed filter cutoff wander (Hz-scale, smoothed)
+    float analogDriftWalkCoeff = 0.0f; // One-pole coeff toward white noise (~10 s time constant at 44.1 kHz)
     
     // -- Filter --
     juce::dsp::StateVariableTPTFilter<float> filter;

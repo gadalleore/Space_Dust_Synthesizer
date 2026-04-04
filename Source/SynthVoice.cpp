@@ -101,6 +101,29 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
     auto baseFrequency = juce::MidiMessage::getMidiNoteInHertz(midiNoteNumber);
     targetPitch = baseFrequency;
     targetPitch = juce::jlimit(20.0, 20000.0, targetPitch);
+
+    // Analog Drift: emulates hardware component tolerance and slow oscillator/filter drift
+    // New random draw each non-legato note; legato overlaps keep prior offsets (same "analog voice").
+    {
+        const bool resampleAnalogDrift = ! (isLegatoNote && voiceMode == 2);
+        if (resampleAnalogDrift)
+        {
+            if (analogDriftAmount > 0.0f)
+            {
+                osc1DriftOffset = random.nextFloat() * 2.0f - 1.0f;
+                osc2DriftOffset = random.nextFloat() * 2.0f - 1.0f;
+                filterDriftOffset = random.nextFloat() * 2.0f - 1.0f;
+            }
+            else
+            {
+                osc1DriftOffset = 0.0f;
+                osc2DriftOffset = 0.0f;
+                filterDriftOffset = 0.0f;
+            }
+            analogOscWalk = 0.0f;
+            analogFilterWalk = 0.0f;
+        }
+    }
     
     // LFO Retrigger: Reset LFO phases if retrigger is enabled
     if (processor != nullptr)
@@ -835,6 +858,18 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // Oscillator 2: base frequency + osc2 tuning + LFO modulation
         double osc2TotalSemitones = osc2CoarseTune + (osc2Detune / 100.0);
         osc2Freq = osc2Freq * std::pow(2.0, osc2TotalSemitones / 12.0);
+
+        // Analog Drift: emulates hardware component tolerance and slow oscillator/filter drift
+        if (analogDriftAmount > 0.0f)
+        {
+            const float a = analogDriftAmount;
+            analogOscWalk += analogDriftWalkCoeff * ((random.nextFloat() * 2.0f - 1.0f) - analogOscWalk);
+            const float walkCents = analogOscWalk * 1.25f * a;
+            const float cents1 = osc1DriftOffset * 5.0f * a + walkCents;
+            const float cents2 = osc2DriftOffset * 5.0f * a + walkCents;
+            osc1Freq *= std::pow(2.0, static_cast<double>(cents1) / 1200.0);
+            osc2Freq *= std::pow(2.0, static_cast<double>(cents2) / 1200.0);
+        }
         
         // CRITICAL: Clamp frequencies to prevent runaway pitch on long holds/legato
         // (LFO + envelope + bend can accumulate; NaN/Inf from precision loss causes extreme pitch)
@@ -934,7 +969,15 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // Log-frequency space for perceptually even motion across octaves.
         const float logMin = std::log(20.0f);
         const float logMax = std::log(20000.0f);
-        float logKnob = std::log(juce::jmax(20.0f, baseFilterCutoff));
+        float filterBaseHz = baseFilterCutoff;
+        if (analogDriftAmount > 0.0f)
+        {
+            analogFilterWalk += analogDriftWalkCoeff * ((random.nextFloat() * 2.0f - 1.0f) - analogFilterWalk);
+            const float a = analogDriftAmount;
+            const float driftHz = filterDriftOffset * 30.0f * a + analogFilterWalk * 10.0f * a;
+            filterBaseHz = juce::jlimit(20.0f, 20000.0f, baseFilterCutoff + driftHz);
+        }
+        float logKnob = std::log(juce::jmax(20.0f, filterBaseHz));
         float E = filterEnvOutput;
         const float amtNorm = juce::jlimit(-1.0f, 1.0f, filterEnvAmount / 100.0f);
         const float blend = std::abs(amtNorm);
@@ -1219,6 +1262,8 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Slightly faster than amplitude smooth — only enough to kill zipper/parameter clicks.
     filterCutoffSmoothCoeff = 1.0f - std::exp(-1.0f / (0.0015f * static_cast<float>(sampleRate)));
     smoothedFilterCutoffHz = juce::jlimit(20.0f, 20000.0f, baseFilterCutoff);
+    // ~10 s time constant for gentle analog-style wander (per sample)
+    analogDriftWalkCoeff = 1.0f - std::exp(-1.0f / (10.0f * static_cast<float>(sampleRate)));
     voiceFade = 1.0f;
     voiceFadeSamplesRemaining = 0;
     outputSmootherL = 0.0f;
@@ -1292,6 +1337,7 @@ void SynthVoice::setCurrentPlaybackSampleRate(double newRate)
         updateFilterAdsrParameters();
         envSmoothCoeff = 1.0f - std::exp(-1.0f / (0.003f * static_cast<float>(newRate)));
         filterCutoffSmoothCoeff = 1.0f - std::exp(-1.0f / (0.0015f * static_cast<float>(newRate)));
+        analogDriftWalkCoeff = 1.0f - std::exp(-1.0f / (10.0f * static_cast<float>(newRate)));
     }
     // If DSP not initialized yet, prepareToPlay() will handle initialization
 }

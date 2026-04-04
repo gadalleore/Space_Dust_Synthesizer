@@ -707,6 +707,8 @@ private:
     juce::Label lofiEnabledLabel;
     juce::Slider lofiAmountSlider;
     juce::Label lofiAmountLabel;
+    juce::Slider analogDriftSlider;
+    juce::Label analogDriftLabel;
 
     // Final EQ (Saturation Color tab, end of chain)
     juce::GroupComponent finalEQGroup;
@@ -950,6 +952,7 @@ private:
     // Lo-Fi Attachments (Saturation Color tab)
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lofiEnabledAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lofiAmountAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> analogDriftAttachment;
 
     // Final EQ Attachment (Saturation Color tab)
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> finalEQEnabledAttachment;

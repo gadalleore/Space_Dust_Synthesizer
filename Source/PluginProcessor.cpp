@@ -987,6 +987,11 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     {
         pitchBend = 0.0f;
     }
+
+    // Analog Drift lives in the Lo-Fi UI group; only apply when Lo-Fi is enabled
+    float analogDrift = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("analogDrift")->load());
+    if (*apvts.getRawParameterValue("lofiEnabled") <= 0.5f)
+        analogDrift = 0.0f;
     
     // Update all voices with current parameter values
     for (int i = 0; i < synth.getNumVoices(); ++i)
@@ -1038,6 +1043,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setPitchBendAmount(pitchBendAmount);
             voice->setPitchBend(pitchBend);
             voice->setLfoTargets(lfo1Target, lfo2Target);
+            voice->setAnalogDrift(analogDrift);
         }
     }
 }
@@ -3583,6 +3589,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"lofiAmount", 1}, "Lo-Fi Amount",
             juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f),
         "lofiAmount");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"analogDrift", 1}, "Analog Drift",
+            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f),
+        "analogDrift");
 
     //==============================================================================
     // -- Final EQ Parameters (5-band, end of chain, Saturation Color tab) --

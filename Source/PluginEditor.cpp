@@ -2227,6 +2227,8 @@ SaturationColorPageComponent::SaturationColorPageComponent(SpaceDustAudioProcess
     addAndMakeVisible(parentEditor.lofiEnabledLabel);
     addAndMakeVisible(parentEditor.lofiAmountSlider);
     addAndMakeVisible(parentEditor.lofiAmountLabel);
+    addAndMakeVisible(parentEditor.analogDriftSlider);
+    addAndMakeVisible(parentEditor.analogDriftLabel);
     // Final EQ – spanning center+right columns
     addAndMakeVisible(parentEditor.finalEQGroup);
     addAndMakeVisible(parentEditor.finalEQEnabledButton);
@@ -2375,17 +2377,20 @@ void SaturationColorPageComponent::resized()
     const int softClipperH = juce::jmax(sy - pad, cy - pad);  // Match Compressor height
     parentEditor.softClipperGroup.setBounds(rightColX, pad, colW, softClipperH);
 
-    // --- Lo-Fi (under Bit Crusher, same width) ---
+    // --- Lo-Fi + Analog Drift (under Bit Crusher, same width; knobs match tab knobSize) ---
     const int lofiY = by + pad;
-    const int lofiKnobW = 72;
+    const int lKg = 6;
+    const int lofiRowW = 2 * knobSize + lKg;
     int lfy = lofiY + groupTitleH;
-    int lCx = leftColX + colW / 2;
+    int lRowLeft = leftColX + (colW - lofiRowW) / 2;
     parentEditor.lofiEnabledButton.setBounds(leftColX + pad, lfy, bOnBtnW, bOnBtnH);
     lfy += bOnBtnH + gap;
-    parentEditor.lofiAmountLabel.setBounds(lCx - lofiKnobW / 2, lfy, lofiKnobW, labelH);
+    parentEditor.lofiAmountLabel.setBounds(lRowLeft, lfy, knobSize, labelH);
+    parentEditor.analogDriftLabel.setBounds(lRowLeft + knobSize + lKg, lfy, knobSize, labelH);
     lfy += labelH + labelGap;
-    parentEditor.lofiAmountSlider.setBounds(lCx - lofiKnobW / 2, lfy, lofiKnobW, lofiKnobW);
-    lfy += lofiKnobW + pad + 12;
+    parentEditor.lofiAmountSlider.setBounds(lRowLeft, lfy, knobSize, knobSize);
+    parentEditor.analogDriftSlider.setBounds(lRowLeft + knobSize + lKg, lfy, knobSize, knobSize);
+    lfy += knobSize + pad + 12;
     parentEditor.lofiGroup.setBounds(leftColX, lofiY, colW, lfy - lofiY);
 
     // --- Transient (under Lo-Fi, same column width) ---
@@ -4435,6 +4440,22 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lofiAmountLabel.setJustificationType(juce::Justification::centred);
     lofiAmountLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     lofiAmountLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+    analogDriftSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    analogDriftSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    analogDriftAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "analogDrift", analogDriftSlider);
+    analogDriftLabel.setText(safeString("Drift"), juce::dontSendNotification);
+    analogDriftLabel.setJustificationType(juce::Justification::centred);
+    analogDriftLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    analogDriftLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+    {
+        const juce::String driftTip = safeString(
+            "Only active while Lo-Fi is on. Analog-style imprecision: small random pitch offset per oscillator "
+            "and filter cutoff per note, plus a very slow wander while you play, like component tolerances "
+            "and drift in hardware synths. Higher values add more warmth and movement; keep low for subtlety.");
+        analogDriftSlider.setTooltip(driftTip);
+        analogDriftLabel.setTooltip(driftTip);
+    }
 
     // -- Final EQ --
     finalEQGroup.setText(safeString("Final Equalizer"));
