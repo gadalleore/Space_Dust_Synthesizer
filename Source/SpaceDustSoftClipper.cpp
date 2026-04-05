@@ -18,57 +18,76 @@ namespace
         const float x2 = x * x;
         return x * (27.0f + x2) / (27.0f + 9.0f * x2);
     }
+
+    /** Knee maps 0.3 (hard) .. 1.0 (soft) from UI; trims input before drive-shaped clipping. */
+    inline float kneeInputTrim(float kneeMapped)
+    {
+        return juce::jmap(kneeMapped, 0.3f, 1.0f, 1.28f, 0.62f);
+    }
 }
 
 //==============================================================================
 float SpaceDustSoftClipper::clipSmooth(float x, float k, float t) const
 {
-    // tanh-based: y = tanh(k*x), symmetric, tube-like
-    (void)t;
+    // tanh-based: knee trims level into the curve (low knee = harder, high = more gradual)
+    x *= kneeInputTrim(t);
     return fastTanh(k * juce::jlimit(-2.0f, 2.0f, x));
 }
 
 float SpaceDustSoftClipper::clipCrisp(float x, float k, float t) const
 {
-    // Cubic: 1.5*x - 0.5*x^3 for |x|<1, low-order odd harmonics
-    (void)t;
+    // Cubic: 1.5*x - 0.5*x^3 for |x|<1; knee widens soft region (threshold below 1.0)
+    x *= kneeInputTrim(t);
     x = k * juce::jlimit(-2.0f, 2.0f, x);
-    if (std::abs(x) >= 1.0f)
-        return (x > 0.0f) ? 1.0f : -1.0f;
+    const float th = juce::jmap(t, 0.3f, 1.0f, 0.96f, 0.72f);
+    const float ax = std::abs(x);
+    if (ax >= th)
+    {
+        const float excess = ax - th;
+        const float span = juce::jmax(1.0e-4f, 1.0f - th);
+        const float u = juce::jlimit(0.0f, 1.0f, excess / span);
+        const float yEnd = (x > 0.0f) ? 1.0f : -1.0f;
+        const float yTh = (x > 0.0f) ? (1.5f * th - 0.5f * th * th * th)
+                                     : -(1.5f * th - 0.5f * th * th * th);
+        return yTh + u * (yEnd - yTh);
+    }
     return 1.5f * x - 0.5f * x * x * x;
 }
 
 float SpaceDustSoftClipper::clipTube(float x, float k, float t) const
 {
     // Asymmetric: different curves for +/-, adds even harmonics
-    (void)t;
+    x *= kneeInputTrim(t);
     x = k * juce::jlimit(-2.0f, 2.0f, x);
+    const float negSqueeze = juce::jmap(t, 0.3f, 1.0f, 0.88f, 0.82f);
     if (x >= 0.0f)
         return fastTanh(x);
-    // Softer on negative half for tube asymmetry
-    return -fastTanh(-x * 0.85f);
+    return -fastTanh(-x * negSqueeze);
 }
 
 float SpaceDustSoftClipper::clipTape(float x, float k, float t) const
 {
     // Soft saturation: x / (1 + |x|^n), tape-like compression
-    (void)t;
+    x *= kneeInputTrim(t);
     x = k * juce::jlimit(-2.0f, 2.0f, x);
     const float ax = std::abs(x);
-    return x / (1.0f + ax * ax);
+    const float p = juce::jmap(t, 0.3f, 1.0f, 2.15f, 1.65f);
+    const float denom = 1.0f + std::pow(ax, p);
+    return x / denom;
 }
 
 float SpaceDustSoftClipper::clipGuitar(float x, float k, float t) const
 {
     // Asymmetric diode: sign(x) * (1 - exp(-k*|x|))
-    (void)t;
+    x *= kneeInputTrim(t);
     x = k * juce::jlimit(-2.0f, 2.0f, x);
     const float ax = std::abs(x);
+    const float skew = juce::jmap(t, 0.3f, 1.0f, 1.08f, 0.82f);
     float y;
     if (x >= 0.0f)
-        y = 1.0f - std::exp(-ax);
+        y = 1.0f - std::exp(-ax * skew);
     else
-        y = -(1.0f - std::exp(-ax)) * 0.92f;  // Slightly asymmetric
+        y = -(1.0f - std::exp(-ax * skew)) * 0.92f;
     return juce::jlimit(-1.0f, 1.0f, y);
 }
 
@@ -237,15 +256,17 @@ void SpaceDustSoftClipper::process(juce::AudioBuffer<float>& buffer)
                 ptr[i] = y;
             }
         }
-        if (mode == 3)
+    }
+
+    // Tape mode HF glue (same path for oversampled + non-oversampled output)
+    if (mode == 3)
+    {
+        for (int ch = 0; ch < numCh; ++ch)
         {
-            for (int ch = 0; ch < numCh; ++ch)
-            {
-                auto& filt = (ch == 0) ? tapeFilterL_ : tapeFilterR_;
-                auto* ptr = buffer.getWritePointer(ch);
-                for (int i = 0; i < numSamples; ++i)
-                    ptr[i] = filt.processSample(0, ptr[i]);
-            }
+            auto& filt = (ch == 0) ? tapeFilterL_ : tapeFilterR_;
+            auto* ptr = buffer.getWritePointer(ch);
+            for (int i = 0; i < numSamples; ++i)
+                ptr[i] = filt.processSample(0, ptr[i]);
         }
     }
 

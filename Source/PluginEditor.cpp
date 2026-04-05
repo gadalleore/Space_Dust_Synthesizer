@@ -1294,20 +1294,21 @@ void ModulationPageComponent::resized()
     lfo1CurrentY += modButtonHeight + modRowSpacing;
     
     // LFO1 Filter controls (when filter shown): Cutoff, Resonance, Mode dropdown, Link to master
-    // Knobs same size as Depth, centered under Filter button
+    // Rotary must use modRotaryTextBoxTotalH like Depth/Phase — TextBoxBelow in a square bounds shrinks the knob
     if (modFilter1Show)
     {
-        const int filterKnobSize = modRateKnobSize;  // Match Rate/Depth/Phase
+        const int filterKnobSize = modRateKnobSize;  // Rotary width matches Rate/Depth/Phase
         const int filterKnobGap = 8;
         const int filterComboW = 90;
         const int filterComboH = 20;
         int filterPairLeft = lfo1CentreX - (2 * filterKnobSize + filterKnobGap) / 2;  // Center pair under Filter button
-        parentEditor.modFilter1CutoffLabel.setBounds(filterPairLeft, lfo1CurrentY, filterKnobSize, 12);
-        parentEditor.modFilter1CutoffSlider.setBounds(filterPairLeft, lfo1CurrentY + 12, filterKnobSize, filterKnobSize);
         int resX = filterPairLeft + filterKnobSize + filterKnobGap;
-        parentEditor.modFilter1ResonanceLabel.setBounds(resX, lfo1CurrentY, filterKnobSize, 12);
-        parentEditor.modFilter1ResonanceSlider.setBounds(resX, lfo1CurrentY + 12, filterKnobSize, filterKnobSize);
-        lfo1CurrentY += filterKnobSize + 12 + modRowSpacing;
+        parentEditor.modFilter1CutoffLabel.setBounds(filterPairLeft, lfo1CurrentY, filterKnobSize, modLabelHeight);
+        parentEditor.modFilter1ResonanceLabel.setBounds(resX, lfo1CurrentY, filterKnobSize, modLabelHeight);
+        lfo1CurrentY += modLabelHeight + modLabelGap;
+        parentEditor.modFilter1CutoffSlider.setBounds(filterPairLeft, lfo1CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
+        parentEditor.modFilter1ResonanceSlider.setBounds(resX, lfo1CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
+        lfo1CurrentY += modRotaryTextBoxTotalH + gapValueToNextLabel;
         parentEditor.modFilter1ModeLabel.setBounds(lfo1CentreX - filterComboW / 2, lfo1CurrentY, filterComboW, 12);
         lfo1CurrentY += 14;
         parentEditor.modFilter1ModeCombo.setBounds(lfo1CentreX - filterComboW / 2, lfo1CurrentY, filterComboW, filterComboH);
@@ -1423,20 +1424,21 @@ void ModulationPageComponent::resized()
     lfo2CurrentY += modButtonHeight + modRowSpacing;
 
     // LFO2 Filter controls (when filter shown): Cutoff, Resonance, Mode dropdown, Link to master
-    // Knobs same size as Depth, centered under Filter button
+    // Rotary must use modRotaryTextBoxTotalH like Depth/Phase — TextBoxBelow in a square bounds shrinks the knob
     if (modFilter2Show)
     {
-        const int filterKnobSize = modRateKnobSize;  // Match Rate/Depth/Phase
+        const int filterKnobSize = modRateKnobSize;  // Rotary width matches Rate/Depth/Phase
         const int filterKnobGap = 8;
         const int filterComboW = 90;
         const int filterComboH = 20;
         int filterPairLeft = lfo2CentreX - (2 * filterKnobSize + filterKnobGap) / 2;  // Center pair under Filter button
-        parentEditor.modFilter2CutoffLabel.setBounds(filterPairLeft, lfo2CurrentY, filterKnobSize, 12);
-        parentEditor.modFilter2CutoffSlider.setBounds(filterPairLeft, lfo2CurrentY + 12, filterKnobSize, filterKnobSize);
         int resX = filterPairLeft + filterKnobSize + filterKnobGap;
-        parentEditor.modFilter2ResonanceLabel.setBounds(resX, lfo2CurrentY, filterKnobSize, 12);
-        parentEditor.modFilter2ResonanceSlider.setBounds(resX, lfo2CurrentY + 12, filterKnobSize, filterKnobSize);
-        lfo2CurrentY += filterKnobSize + 12 + modRowSpacing;
+        parentEditor.modFilter2CutoffLabel.setBounds(filterPairLeft, lfo2CurrentY, filterKnobSize, modLabelHeight);
+        parentEditor.modFilter2ResonanceLabel.setBounds(resX, lfo2CurrentY, filterKnobSize, modLabelHeight);
+        lfo2CurrentY += modLabelHeight + modLabelGap;
+        parentEditor.modFilter2CutoffSlider.setBounds(filterPairLeft, lfo2CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
+        parentEditor.modFilter2ResonanceSlider.setBounds(resX, lfo2CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
+        lfo2CurrentY += modRotaryTextBoxTotalH + gapValueToNextLabel;
         parentEditor.modFilter2ModeLabel.setBounds(lfo2CentreX - filterComboW / 2, lfo2CurrentY, filterComboW, 12);
         lfo2CurrentY += 14;
         parentEditor.modFilter2ModeCombo.setBounds(lfo2CentreX - filterComboW / 2, lfo2CurrentY, filterComboW, filterComboH);
