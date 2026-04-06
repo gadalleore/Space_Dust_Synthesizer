@@ -1773,17 +1773,29 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         }
     }
     
-    //==============================================================================
-    // -- Transient: Scan MIDI for note-on events to trigger drum transient --
     bool transientEnabled = *apvts.getRawParameterValue("transientEnabled") > 0.5f;
     bool transientPostEffect = *apvts.getRawParameterValue("transientPostEffect") > 0.5f;
+
+    //==============================================================================
+    // -- Process MIDI with Mono Mode Support --
+    // Call custom synthesiser methods to handle mono mode
+    synth.processMidiBuffer(midiMessages, numSamples);
+
+    //==============================================================================
+    // -- Transient: trigger from MIDI after mono/legato rewrite --
+    // Legato mode sets nextNoteIsLegato for overlapping note-ons (and return-to-held
+    // note); transient should match envelope retrigger — only on true new notes.
     if (transientEnabled)
     {
+        const bool inLegatoVoiceMode = (synth.getVoiceModeIndex() == 2);
         for (const auto metadata : midiMessages)
         {
             const auto msg = metadata.getMessage();
             if (msg.isNoteOn() && msg.getVelocity() > 0)
             {
+                if (inLegatoVoiceMode && synth.isNextNoteLegato())
+                    continue;
+
                 SpaceDustTransient::Parameters tp;
                 tp.enabled = true;
                 if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"transientType", 1}.getParamID())))
@@ -1801,11 +1813,6 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             }
         }
     }
-
-    //==============================================================================
-    // -- Process MIDI with Mono Mode Support --
-    // Call custom synthesiser methods to handle mono mode
-    synth.processMidiBuffer(midiMessages, numSamples);
 
     // Voice params after mono/legato MIDI rewrite so coarse/detune retune uses currentPitch
     // (see SynthVoice::setOsc* — must align with renderNextBlock base Hz, not stale MIDI note).
