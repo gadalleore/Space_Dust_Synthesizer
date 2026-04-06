@@ -50,7 +50,18 @@ void SexiconReverb::reset()
 
 void SexiconReverb::setDecay(float decayTimeSeconds)
 {
-    const float norm = juce::jlimit(0.0f, 1.0f, (decayTimeSeconds - 0.8f) / 639.2f);
+    const float t = juce::jmax(0.0f, decayTimeSeconds);
+    if (t <= 0.0f)
+    {
+        decay_ = 0.0f;
+        return;
+    }
+    if (t < 0.8f)
+    {
+        decay_ = (t / 0.8f) * 0.55f;
+        return;
+    }
+    const float norm = juce::jlimit(0.0f, 1.0f, (t - 0.8f) / 639.2f);
     decay_ = 0.55f + 0.35f * norm;  // 0.55–0.9 range - 4x longer max decay
 }
 

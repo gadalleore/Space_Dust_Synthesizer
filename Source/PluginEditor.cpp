@@ -1684,8 +1684,6 @@ void EffectsPageComponent::updateGrainDelayFilterVisibility()
 void EffectsPageComponent::updateReverbFilterVisibility()
 {
     bool show = *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("reverbFilterShow") > 0.5f;
-    parentEditor.reverbWetMixLabel.setVisible(show);
-    parentEditor.reverbWetMixSlider.setVisible(show);
     parentEditor.reverbFilterWarmSaturationButton.setVisible(show);
     parentEditor.reverbFilterHPCutoffSlider.setVisible(show);
     parentEditor.reverbFilterHPResonanceSlider.setVisible(show);
@@ -1898,15 +1896,7 @@ void EffectsPageComponent::resized()
     parentEditor.grainDelayMixSlider.setBounds(gCx - gKnobSize/2, gY, gKnobSize, gKnobSize);
     gY += gKnobSize + pad;
 
-    const int grainContentHeight = gY - grainStartY;
-    parentEditor.grainDelayGroup.setBounds(delayColX, grainStartY, colW, grainContentHeight);
-
-    // Bottom Y of Grain Delay as if both left-column filters were off (subtracts filter-only rows).
-    // Stable when toggling Delay / Grain Delay filters so Trance Gate / Flanger heights do not jump.
-    const int delayFilterExtra = filterShow ? (labelH + labelGap + knobSize + gap) : 0;
-    const int grainFilterExtra = grainFilterShow ? (labelH + labelGap + knobSize + gap) : 0;
-    const int grainBottomAlign = (pad + (delayContentHeight - delayFilterExtra) + sectionGap)
-                                  + (grainContentHeight - grainFilterExtra);
+    const int grainNaturalContentHeight = gY - grainStartY;
 
     // ---- Reverb section (center column) - On button upper-left, Mix lowest ----
     int rCx = reverbColX + colW / 2;
@@ -1966,14 +1956,14 @@ void EffectsPageComponent::resized()
         parentEditor.reverbFilterLPCutoffSlider.setBounds(rFilterLeft + 2*(rKnobSize + rFGap), rY, rKnobSize, rKnobSize);
         parentEditor.reverbFilterLPResonanceSlider.setBounds(rFilterLeft + 3*(rKnobSize + rFGap), rY, rKnobSize, rKnobSize);
         rY += rKnobSize + gap;
-
-        // Mix is the lowest knob only when the reverb filter section is expanded
-        parentEditor.reverbWetMixLabel.setBounds(rCx - rKnobSize/2, rY, rKnobSize, labelH);
-        rY += labelH + labelGap;
-        parentEditor.reverbWetMixSlider.setBounds(rCx - rKnobSize/2, rY, rKnobSize, rKnobSize);
-        rY += rKnobSize + pad;
     }
-    
+
+    // Mix always at bottom (same pattern as Grain Delay)
+    parentEditor.reverbWetMixLabel.setBounds(rCx - rKnobSize/2, rY, rKnobSize, labelH);
+    rY += labelH + labelGap;
+    parentEditor.reverbWetMixSlider.setBounds(rCx - rKnobSize/2, rY, rKnobSize, rKnobSize);
+    rY += rKnobSize + pad;
+
     const int reverbContentHeight = rY;
     parentEditor.reverbGroup.setBounds(reverbColX, pad, colW, reverbContentHeight);
 
@@ -2076,11 +2066,7 @@ void EffectsPageComponent::resized()
     tY += tLabelH + labelGap;
     parentEditor.tranceGateMixSlider.setBounds(tCx - tKnobSize/2, tY, tKnobSize, tKnobSize);
     tY += tKnobSize + pad;
-
-    const int gateContentHeight = tY - gateStartY;
-    const int tranceH = reverbFilterShow ? gateContentHeight
-                                         : juce::jmax(gateContentHeight, grainBottomAlign - gateStartY);
-    parentEditor.tranceGateGroup.setBounds(reverbColX, gateStartY, colW, tranceH);
+    const int tranceNaturalContentHeight = tY - gateStartY;
 
     // ---- Phaser section (right column, top) ----
     int pCx = grainColX + colW / 2;
@@ -2183,9 +2169,26 @@ void EffectsPageComponent::resized()
     parentEditor.flangerWidthSlider.setBounds(fPairLeft, fY, fKnobSize, fKnobSize);
     parentEditor.flangerMixSlider.setBounds(fPairLeft + fKnobSize + fKg, fY, fKnobSize, fKnobSize);
     fY += fKnobSize + pad;
-    const int flangerContentHeight = fY - flangerStartY;
-    const int flangerH = juce::jmax(flangerContentHeight, grainBottomAlign - flangerStartY);
-    parentEditor.flangerGroup.setBounds(grainColX, flangerStartY, colW, flangerH);
+    const int flangerNaturalContentHeight = fY - flangerStartY;
+
+    // Lower-row alignment uses Delay/Reverb heights *without* their filter rows, so toggling those filters
+    // only resizes Delay/Reverb and moves Grain/Trance — Grain & Flanger group heights stay the same.
+    static constexpr int kEffectsTranceGateReferenceAlignHeight = 352;
+    const int delayFilterRowExtra = filterShow ? (labelH + labelGap + knobSize + gap) : 0;
+    const int reverbFilterRowExtra = reverbFilterShow ? (labelH + labelGap + knobSize + gap) : 0;
+    const int delayContentHeightForAlign = delayContentHeight - delayFilterRowExtra;
+    const int grainStartYBase = pad + delayContentHeightForAlign + sectionGap;
+    const int reverbContentHeightForAlign = reverbContentHeight - reverbFilterRowExtra;
+    const int gateStartYBase = pad + reverbContentHeightForAlign + gateSectionGap;
+    const int targetLowerBoxBottomY = gateStartYBase + kEffectsTranceGateReferenceAlignHeight;
+
+    const int grainGroupHeight = juce::jmax(grainNaturalContentHeight, targetLowerBoxBottomY - grainStartYBase);
+    const int tranceGateGroupHeight = juce::jmax(tranceNaturalContentHeight, kEffectsTranceGateReferenceAlignHeight);
+    const int flangerGroupHeight = juce::jmax(flangerNaturalContentHeight, targetLowerBoxBottomY - flangerStartY);
+
+    parentEditor.grainDelayGroup.setBounds(delayColX, grainStartY, colW, grainGroupHeight);
+    parentEditor.tranceGateGroup.setBounds(reverbColX, gateStartY, colW, tranceGateGroupHeight);
+    parentEditor.flangerGroup.setBounds(grainColX, flangerStartY, colW, flangerGroupHeight);
 }
 
 //==============================================================================

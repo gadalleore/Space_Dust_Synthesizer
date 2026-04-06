@@ -743,6 +743,7 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         reverbSpec.numChannels = 2;
         reverb_.prepare(reverbSpec);
         reverb_.reset();
+        lastReverbDecayForBypass_ = -1.0f;
 
         // Initialize grain delay
         grainDelay_.prepare(reverbSpec);
@@ -1978,7 +1979,18 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     }
     delayTimeSamples = juce::jlimit(1.0f, static_cast<float>(maxDelaySamples), delayTimeSamples);
     
-    if (delayEnabled && delayDecay > 0.001f && numSamples > 0 && buffer.getNumChannels() >= 2)
+    // Feedback at or below ~0.1% (knob 0–0.1): clear delay state and bypass — no echo tail.
+    if (delayEnabled && delayDecay <= 0.001f && numSamples > 0 && buffer.getNumChannels() >= 2)
+    {
+        delayLineL.reset();
+        delayLineR.reset();
+        delayFilterHP.reset();
+        delayFilterLP.reset();
+        delayFilterHPFb.reset();
+        delayFilterLPFb.reset();
+        smoothedDelayDecay.setCurrentAndTargetValue(0.0f);
+    }
+    else if (delayEnabled && delayDecay > 0.001f && numSamples > 0 && buffer.getNumChannels() >= 2)
     {
         // Pre-effect drive: 0 dB at mix 0, 3 dB at mix full (compensates amplitude loss)
         float delayDrive = std::pow(10.0f, delayDryWet * 3.0f / 20.0f);
@@ -2123,27 +2135,42 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     //==============================================================================
     // -- Reverb Effect --
     bool reverbEnabled = *apvts.getRawParameterValue("reverbEnabled") > 0.5f;
+    float reverbDecayTime = *apvts.getRawParameterValue("reverbDecayTime");
     if (reverbEnabled && buffer.getNumChannels() >= 2 && numSamples > 0)
     {
-        float reverbWetMix = *apvts.getRawParameterValue("reverbWetMix");
-        float reverbDrive = std::pow(10.0f, reverbWetMix * 3.0f / 20.0f);
-        buffer.applyGain(0, 0, numSamples, reverbDrive);
-        buffer.applyGain(1, 0, numSamples, reverbDrive);
-        SpaceDustReverb::Parameters rp;
-        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"reverbType", 1}.getParamID())))
-            rp.type = p->getIndex();
+        // Decay at minimum: flush reverb once and bypass (Sexicon still diffuses when decay_ == 0).
+        if (reverbDecayTime <= 0.001f)
+        {
+            if (lastReverbDecayForBypass_ > 0.001f || lastReverbDecayForBypass_ < 0.0f)
+                reverb_.reset();
+        }
         else
-            rp.type = 0;
-        rp.wetMix = reverbWetMix;
-        rp.decayTime = *apvts.getRawParameterValue("reverbDecayTime");
-        rp.filterOn = *apvts.getRawParameterValue("reverbFilterShow") > 0.5f;
-        rp.filterWarmSaturation = *apvts.getRawParameterValue("reverbFilterWarmSaturation") > 0.5f;
-        rp.filterHPCutoff = *apvts.getRawParameterValue("reverbFilterHPCutoff");
-        rp.filterHPResonance = *apvts.getRawParameterValue("reverbFilterHPResonance");
-        rp.filterLPCutoff = *apvts.getRawParameterValue("reverbFilterLPCutoff");
-        rp.filterLPResonance = *apvts.getRawParameterValue("reverbFilterLPResonance");
-        reverb_.setParameters(rp);
-        reverb_.process(buffer);
+        {
+            float reverbWetMix = *apvts.getRawParameterValue("reverbWetMix");
+            float reverbDrive = std::pow(10.0f, reverbWetMix * 3.0f / 20.0f);
+            buffer.applyGain(0, 0, numSamples, reverbDrive);
+            buffer.applyGain(1, 0, numSamples, reverbDrive);
+            SpaceDustReverb::Parameters rp;
+            if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"reverbType", 1}.getParamID())))
+                rp.type = p->getIndex();
+            else
+                rp.type = 0;
+            rp.wetMix = reverbWetMix;
+            rp.decayTime = reverbDecayTime;
+            rp.filterOn = *apvts.getRawParameterValue("reverbFilterShow") > 0.5f;
+            rp.filterWarmSaturation = *apvts.getRawParameterValue("reverbFilterWarmSaturation") > 0.5f;
+            rp.filterHPCutoff = *apvts.getRawParameterValue("reverbFilterHPCutoff");
+            rp.filterHPResonance = *apvts.getRawParameterValue("reverbFilterHPResonance");
+            rp.filterLPCutoff = *apvts.getRawParameterValue("reverbFilterLPCutoff");
+            rp.filterLPResonance = *apvts.getRawParameterValue("reverbFilterLPResonance");
+            reverb_.setParameters(rp);
+            reverb_.process(buffer);
+        }
+        lastReverbDecayForBypass_ = reverbDecayTime;
+    }
+    else if (!reverbEnabled)
+    {
+        lastReverbDecayForBypass_ = -1.0f;
     }
 
     //==============================================================================
@@ -3217,7 +3244,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.33f),
         "reverbWetMix");
     
-    juce::NormalisableRange<float> reverbDecayRange(0.8f, 640.0f, 0.01f);
+    juce::NormalisableRange<float> reverbDecayRange(0.0f, 640.0f, 0.01f);
     reverbDecayRange.setSkewForCentre(64.0f);
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(

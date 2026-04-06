@@ -40,7 +40,14 @@ void SpaceDustReverb::setParameters(const Parameters& p)
     smoothedDry_.setTargetValue(1.0f - params_.wetMix);
 
     juce::Reverb::Parameters rp;
-    rp.roomSize = 0.5f + 0.5f * juce::jlimit(0.0f, 1.0f, params_.decayTime / 640.0f);
+    // Match prior 0.8–640 s curve above 0.8 s; ramp room size from 0 at t=0 so minimum decay is inaudible.
+    const float rt = juce::jmax(0.0f, params_.decayTime);
+    if (rt <= 0.0f)
+        rp.roomSize = 0.0f;
+    else if (rt < 0.8f)
+        rp.roomSize = (rt / 0.8f) * 0.5f;
+    else
+        rp.roomSize = 0.5f + 0.5f * juce::jlimit(0.0f, 1.0f, (rt - 0.8f) / (640.0f - 0.8f));
     rp.damping = 0.5f;
     rp.wetLevel = 0.5f;   // Tame level - we do our own mix
     rp.dryLevel = 0.0f;   // Pure reverb output, we add dry ourselves

@@ -183,6 +183,8 @@ private:
     //==============================================================================
     // -- Reverb Effect State --
     SpaceDustReverb reverb_;
+    /** Last reverb decay (seconds) used for edge-detect: reset tail once when hitting minimum, not every block. */
+    float lastReverbDecayForBypass_{ -1.0f };
 
     //==============================================================================
     // -- Grain Delay Effect State --
