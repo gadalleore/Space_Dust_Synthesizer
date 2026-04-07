@@ -78,6 +78,10 @@ Source/
 └── SpaceDustLookAndFeel.*   # Custom UI styling
 ```
 
+## Recent fixes
+
+- **Pink noise generator:** The Voss–McCartney implementation uses 16 filter rows; the row index must stay in range. The counter is now wrapped so it cannot produce an out-of-bounds row (which could cause rare harsh digital glitches after sustained play, for example on long chords with pink noise). Non-finite oscillator frequencies and filter outputs are also clamped or zeroed; developers can read `SpaceDustAudioProcessor::getDspSanitizeEventCount()` if investigating edge cases.
+
 ## Additional documentation
 
 - [docs/FIX_SUMMARY.md](docs/FIX_SUMMARY.md) — internal development notes (assertion fixes, UTF-8 handling)

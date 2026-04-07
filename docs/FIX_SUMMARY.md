@@ -85,6 +85,19 @@
 **Code Locations**:
 - `PluginProcessor.cpp`: Destructor (lines 288-295)
 
+### 6. Pink noise (Voss–McCartney) row index / buffer overrun ✅
+
+**Status**: FIXED
+
+**Issue**: The pink-noise path used a 16-element `pinkState` array but the derived row index could reach 16 once the sample counter passed 65536 (~1.3 s at 48 kHz per voice), writing one element past the array (undefined behavior). Symptoms could include intermittent harsh or “digital” artifacts, often more noticeable with several sustained voices.
+
+**Fix**:
+- Advance a 16-bit–wrapped unsigned counter and avoid the degenerate zero case before isolating the lowest set bit.
+- Clamp the computed row index to `pinkState.size() - 1` as a safeguard.
+- After `jlimit` on oscillator Hz, detect non-finite values and fall back to a safe frequency; zero non-finite post-filter samples. Expose `dspSanitizeEventCount` on the processor for optional diagnostics.
+
+**Code locations**: `SynthVoice.cpp` / `SynthVoice.h` (pink noise loop), `PluginProcessor.h` (atomic counter and getters).
+
 ## Debug Logging
 
 **Status**: COMPREHENSIVE
@@ -110,8 +123,9 @@
 ## Files Modified
 
 1. `PluginProcessor.cpp` - Destructor, releaseResources(), UTF-8 helpers, parameter handling
-2. `PluginProcessor.h` - Atomic parameter storage
+2. `PluginProcessor.h` - Atomic parameter storage; optional `dspSanitizeEventCount` for diagnostics
 3. `PluginEditor.cpp` - Paint/resized safety, timer cleanup
 4. `PluginEditor.h` - Member order (LookAndFeel before Components)
-5. `SynthVoice.cpp` - Logger calls removed
-6. `SpaceDustSynthesiser.cpp` - Safe string helpers
+5. `SynthVoice.cpp` - Logger calls removed; pink-noise index fix and non-finite DSP guards
+6. `SynthVoice.h` - Pink-noise counter type
+7. `SpaceDustSynthesiser.cpp` - Safe string helpers

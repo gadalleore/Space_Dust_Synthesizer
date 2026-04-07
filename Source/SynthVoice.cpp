@@ -3,6 +3,16 @@
 #include "PluginProcessor.h"
 #include <juce_core/juce_core.h>
 #include <cmath>
+#include <cstdint>
+
+namespace
+{
+    inline void reportDspSanitize(SpaceDustAudioProcessor* proc)
+    {
+        if (proc != nullptr)
+            proc->dspSanitizeEventCount.fetch_add(1u, std::memory_order_relaxed);
+    }
+}
 
 // Set to 1 to trace MIDI vs Hz in mono/legato: appends CSV rows to
 // Documents/SpaceDustPitchTrace.csv (and DBG in Debug builds). Set to 0 for release.
@@ -284,7 +294,7 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
         subOscAngle = 0.0;
         pinkState.fill(0.0f);
         pinkSum = 0.0f;
-        pinkIndex = 0;
+        pinkNoiseCounter = 0;
         random.setSeed(static_cast<juce::int64>(reinterpret_cast<uintptr_t>(this)) + juce::Time::getHighResolutionTicks());
         for (auto& val : pinkState)
             val = (random.nextFloat() * 2.0f - 1.0f) * 0.0625f;
@@ -871,10 +881,19 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             osc2Freq *= std::pow(2.0, static_cast<double>(cents2) / 1200.0);
         }
         
-        // CRITICAL: Clamp frequencies to prevent runaway pitch on long holds/legato
-        // (LFO + envelope + bend can accumulate; NaN/Inf from precision loss causes extreme pitch)
+        // CRITICAL: Clamp frequencies to prevent runaway pitch on long holds/legato.
+        // jlimit does not fix NaN/Inf — those would propagate into phase and blow up the output.
         osc1Freq = juce::jlimit(20.0, 20000.0, osc1Freq);
         osc2Freq = juce::jlimit(20.0, 20000.0, osc2Freq);
+        if (!std::isfinite(osc1Freq) || !std::isfinite(osc2Freq))
+        {
+            reportDspSanitize(processor);
+            const int n = getCurrentlyPlayingNote();
+            const double safeHz = juce::jlimit(20.0, 20000.0,
+                                               n >= 0 ? (double) juce::MidiMessage::getMidiNoteInHertz(n) : 440.0);
+            osc1Freq = safeHz;
+            osc2Freq = safeHz;
+        }
 
 #if SPACE_DUST_LOG_MONO_LEGATO_PITCH
         if (i == 0 && pitchTraceSeq != pitchTraceLastRenderLogSeq)
@@ -909,13 +928,20 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         }
         else // Pink
         {
-            // Voss-McCartney update
-            pinkIndex++;
-            int lowestChangedBit = pinkIndex & -pinkIndex;
+            // Voss-McCartney update (16 rows). The row index is the index of the lowest
+            // set bit of a running counter. With only pinkState[0..15], that index must stay ≤15.
+            // The old int counter could reach 65536 → bitPos 16 → out-of-bounds writes and
+            // intermittent digital garbage (often bright/harsh) after ~1.3 s @ 48 kHz per voice.
+            pinkNoiseCounter = (pinkNoiseCounter + 1u) & 0xFFFFu;
+            std::uint32_t p = pinkNoiseCounter;
+            if (p == 0u)
+                p = 1u;
+            const std::uint32_t lowestChangedBitU = p & static_cast<std::uint32_t>(-static_cast<std::int32_t>(p));
             int bitPos = 0;
-            int temp = lowestChangedBit;
-            while ((temp >>= 1) != 0) ++bitPos;
-            
+            for (std::uint32_t t = lowestChangedBitU; (t >>= 1u) != 0u;)
+                ++bitPos;
+            bitPos = juce::jmin(bitPos, static_cast<int>(pinkState.size()) - 1);
+
             float newVal = (random.nextFloat() * 2.0f - 1.0f) * 0.0625f;
             pinkSum -= pinkState[bitPos];
             pinkSum += newVal;
@@ -1065,6 +1091,12 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         
         float outL = juce::jlimit(-1.0f, 1.0f, voiceSingleSampleBuffer.getSample(0, 0));
         float outR = juce::jlimit(-1.0f, 1.0f, voiceSingleSampleBuffer.getSample(1, 0));
+        if (!std::isfinite(outL) || !std::isfinite(outR))
+        {
+            reportDspSanitize(processor);
+            outL = 0.0f;
+            outR = 0.0f;
+        }
 
         // Voice fade: linear gain ramp to zero, then full cleanup.
         // This protects against ALL hard-stop clicks (allNotesOff, voice

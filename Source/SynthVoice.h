@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include "SynthSound.h"
@@ -228,10 +229,11 @@ private:
     juce::AudioBuffer<float> voiceTempBuffer;
     juce::AudioBuffer<float> voiceSingleSampleBuffer;
     
-    // -- Pink Noise State (Voss-McCartney algorithm) --
+    // -- Pink Noise State (Voss-McCartney algorithm, 16 rows) --
     std::array<float, 16> pinkState{};
     float pinkSum = 0.0f;
-    int pinkIndex = 0;
+    /** 1..65535 wrapped — keeps lowest-set-bit index in 0..15 (see SynthVoice.cpp). */
+    std::uint32_t pinkNoiseCounter = 0;
     juce::Random random{static_cast<juce::int64>(reinterpret_cast<uintptr_t>(this))};  // Random number generator for noise (seeded with voice address)
     
     // Analog Drift: emulates hardware component tolerance and slow oscillator/filter drift

@@ -2,6 +2,9 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
+#include <atomic>
+#include <cstdint>
+
 #include "SynthVoice.h"
 #include "SynthSound.h"
 #include "SpaceDustSynthesiser.h"
@@ -108,6 +111,9 @@ public:
     double lfo1PrevPhase{-1.0};  // For beat-phase wrap detection
     double lfo2PrevPhase{-1.0};
 
+    /** Incremented on the audio thread when a voice replaces non-finite osc freq or sample output. */
+    std::atomic<std::uint32_t> dspSanitizeEventCount { 0 };
+
     // Pitch bend snap-back: smooth linear ramp over 0.05s (editor triggers, processor ramps)
     std::atomic<bool> pitchBendSnapActive{false};
     std::atomic<float> pitchBendSnapStartValue{0.0f};
@@ -118,6 +124,10 @@ public:
     // Noise type getter/setter (UI-only control)
     void setNoiseType(int type) { noiseType = type; updateVoicesWithParameters(); }
     int getNoiseType() const { return noiseType; }
+
+    /** Debug/diagnostics: times voices had to fix NaN/Inf (e.g. after investigating glitches). */
+    std::uint32_t getDspSanitizeEventCount() const noexcept { return dspSanitizeEventCount.load(std::memory_order_relaxed); }
+    void resetDspSanitizeEventCount() noexcept { dspSanitizeEventCount.store(0u, std::memory_order_relaxed); }
     
     // Stereo level meter getters (thread-safe atomic reads)
     float getLeftPeakLevel() const;
