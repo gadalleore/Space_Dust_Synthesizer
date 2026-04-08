@@ -80,6 +80,7 @@ Source/
 
 ## Recent fixes
 
+- **Host automation vs. Link to Master (filter):** When LFO filter sections follow the main filter, the editor previously mixed normalized APVTS values with `convertTo0to1` as if they were Hz, and called `setValueNotifyingHost` on the master when mod-filter parameters changed (including from host automation). That could corrupt cutoff and fight automation on the main filter. Link toggles now copy master→mod using normalized `getValue()`; while linked, the mod page mirrors the main filter visually without extra host notifications, and user edits on the mod page update the master through normal control gestures.
 - **Pink noise generator:** The Voss–McCartney implementation uses 16 filter rows; the row index must stay in range. The counter is now wrapped so it cannot produce an out-of-bounds row (which could cause rare harsh digital glitches after sustained play, for example on long chords with pink noise). Non-finite oscillator frequencies and filter outputs are also clamped or zeroed; developers can read `SpaceDustAudioProcessor::getDspSanitizeEventCount()` if investigating edge cases.
 
 ## Additional documentation

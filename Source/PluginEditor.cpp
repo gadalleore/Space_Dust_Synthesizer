@@ -3496,7 +3496,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo1SyncRateListener = std::make_unique<SyncRateComboListener>(&lfo1FreeRateSlider);
     lfo1SyncRateCombo.addListener(lfo1SyncRateListener.get());
     // Sync combo from parameter (restores saved value when editor reopens)
-    lfo1SyncRateCombo.setSelectedId(juce::jlimit(1, 13, static_cast<int>(std::round(lfo1FreeRateSlider.getValue())) + 1));
+    lfo1SyncRateCombo.setSelectedId(juce::jlimit(1, 13, static_cast<int>(std::round(lfo1FreeRateSlider.getValue())) + 1),
+                                    juce::dontSendNotification);
     // Always show the knob, hide the combo box
     lfo1FreeRateSlider.setVisible(true);
     lfo1SyncRateCombo.setVisible(false);
@@ -3611,7 +3612,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo2SyncRateListener = std::make_unique<SyncRateComboListener>(&lfo2FreeRateSlider);
     lfo2SyncRateCombo.addListener(lfo2SyncRateListener.get());
     // Sync combo from parameter (restores saved value when editor reopens)
-    lfo2SyncRateCombo.setSelectedId(juce::jlimit(1, 13, static_cast<int>(std::round(lfo2FreeRateSlider.getValue())) + 1));
+    lfo2SyncRateCombo.setSelectedId(juce::jlimit(1, 13, static_cast<int>(std::round(lfo2FreeRateSlider.getValue())) + 1),
+                                    juce::dontSendNotification);
     // Always show the knob, hide the combo box
     lfo2FreeRateSlider.setVisible(true);
     lfo2SyncRateCombo.setVisible(false);
@@ -3713,6 +3715,30 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter2ResonanceLabel.setJustificationType(juce::Justification::centred);
     modFilter2ResonanceLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     modFilter2ResonanceLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+
+    // While linked, user edits on the mod page must update the master filter. We intentionally do not
+    // use APVTS parameter listeners on the mod parameters: host automation on those IDs was pushing
+    // back onto the master via setValueNotifyingHost and fighting main-filter automation.
+    modFilter1ModeCombo.onChange = [this]()
+    {
+        if (isSyncingFilterParams) return;
+        if (*audioProcessor.getValueTreeState().getRawParameterValue("modFilter1LinkToMaster") <= 0.5f) return;
+        const int id = modFilter1ModeCombo.getSelectedId();
+        if (id > 0 && filterModeCombo.getSelectedId() != id)
+            filterModeCombo.setSelectedId(id, juce::sendNotificationSync);
+    };
+    modFilter2ModeCombo.onChange = [this]()
+    {
+        if (isSyncingFilterParams) return;
+        if (*audioProcessor.getValueTreeState().getRawParameterValue("modFilter2LinkToMaster") <= 0.5f) return;
+        const int id = modFilter2ModeCombo.getSelectedId();
+        if (id > 0 && filterModeCombo.getSelectedId() != id)
+            filterModeCombo.setSelectedId(id, juce::sendNotificationSync);
+    };
+    modFilter1CutoffSlider.addListener(this);
+    modFilter1ResonanceSlider.addListener(this);
+    modFilter2CutoffSlider.addListener(this);
+    modFilter2ResonanceSlider.addListener(this);
     
     // LFO2 Retrigger button
     lfo2RetriggerButton.setButtonText(safeString("Retrigger"));
@@ -3780,7 +3806,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     delaySyncRateCombo.addItem(safeString("128/1"), 13);
     delaySyncRateListener = std::make_unique<SyncRateComboListener>(&delayFreeRateSlider);
     delaySyncRateCombo.addListener(delaySyncRateListener.get());
-    delaySyncRateCombo.setSelectedId(juce::jlimit(1, 13, static_cast<int>(std::round(delayFreeRateSlider.getValue())) + 1));
+    delaySyncRateCombo.setSelectedId(juce::jlimit(1, 13, static_cast<int>(std::round(delayFreeRateSlider.getValue())) + 1),
+                                      juce::dontSendNotification);
     delayFreeRateSlider.setVisible(true);
     delaySyncRateCombo.setVisible(false);
     delayRateValueLabel.setVisible(true);
@@ -4942,15 +4969,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         vts.addParameterListener("filterResonance", this);
         vts.addParameterListener("warmSaturationMaster", this);
         vts.addParameterListener("modFilter1LinkToMaster", this);
-        vts.addParameterListener("modFilter1Mode", this);
-        vts.addParameterListener("modFilter1Cutoff", this);
-        vts.addParameterListener("modFilter1Resonance", this);
-        vts.addParameterListener("warmSaturationMod1", this);
         vts.addParameterListener("modFilter2LinkToMaster", this);
-        vts.addParameterListener("modFilter2Mode", this);
-        vts.addParameterListener("modFilter2Cutoff", this);
-        vts.addParameterListener("modFilter2Resonance", this);
-        vts.addParameterListener("warmSaturationMod2", this);
     }
 
     //==============================================================================
@@ -4996,15 +5015,7 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
         vts.removeParameterListener("filterResonance", this);
         vts.removeParameterListener("warmSaturationMaster", this);
         vts.removeParameterListener("modFilter1LinkToMaster", this);
-        vts.removeParameterListener("modFilter1Mode", this);
-        vts.removeParameterListener("modFilter1Cutoff", this);
-        vts.removeParameterListener("modFilter1Resonance", this);
-        vts.removeParameterListener("warmSaturationMod1", this);
         vts.removeParameterListener("modFilter2LinkToMaster", this);
-        vts.removeParameterListener("modFilter2Mode", this);
-        vts.removeParameterListener("modFilter2Cutoff", this);
-        vts.removeParameterListener("modFilter2Resonance", this);
-        vts.removeParameterListener("warmSaturationMod2", this);
     }
 
     // Remove all listeners first
@@ -5023,6 +5034,10 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
     lfo2EnabledButton.removeListener(this);
     finalEQEnabledButton.removeListener(this);
     pitchBendSlider.removeListener(this);
+    modFilter1CutoffSlider.removeListener(this);
+    modFilter1ResonanceSlider.removeListener(this);
+    modFilter2CutoffSlider.removeListener(this);
+    modFilter2ResonanceSlider.removeListener(this);
     if (lfo1SyncRateListener)
         lfo1SyncRateCombo.removeListener(lfo1SyncRateListener.get());
     if (lfo2SyncRateListener)
@@ -5121,7 +5136,7 @@ void SpaceDustAudioProcessorEditor::showSavePresetDialog()
 }
 
 //==============================================================================
-// -- APVTS Listener: Bidirectional Filter Parameter Sync --
+// -- APVTS Listener: master / mod filter "Link to Master" (host-safe sync) --
 
 void SpaceDustAudioProcessorEditor::parameterChanged(const juce::String& parameterID, float newValue)
 {
@@ -5133,24 +5148,32 @@ void SpaceDustAudioProcessorEditor::parameterChanged(const juce::String& paramet
     });
 }
 
-void SpaceDustAudioProcessorEditor::syncLinkedFilterParams(const juce::String& parameterID, float newValue)
+void SpaceDustAudioProcessorEditor::mirrorMasterFilterWidgetsToLinkedModPages(bool link1, bool link2)
+{
+    if (link1)
+    {
+        modFilter1ModeCombo.setSelectedId(filterModeCombo.getSelectedId(), juce::dontSendNotification);
+        modFilter1CutoffSlider.setValue(filterCutoffSlider.getValue(), juce::dontSendNotification);
+        modFilter1ResonanceSlider.setValue(filterResonanceSlider.getValue(), juce::dontSendNotification);
+        warmSaturationMod1Button.setToggleState(warmSaturationMasterButton.getToggleState(), juce::dontSendNotification);
+    }
+    if (link2)
+    {
+        modFilter2ModeCombo.setSelectedId(filterModeCombo.getSelectedId(), juce::dontSendNotification);
+        modFilter2CutoffSlider.setValue(filterCutoffSlider.getValue(), juce::dontSendNotification);
+        modFilter2ResonanceSlider.setValue(filterResonanceSlider.getValue(), juce::dontSendNotification);
+        warmSaturationMod2Button.setToggleState(warmSaturationMasterButton.getToggleState(), juce::dontSendNotification);
+    }
+}
+
+void SpaceDustAudioProcessorEditor::syncLinkedFilterParams(const juce::String& parameterID, float /*newValue*/)
 {
     if (isSyncingFilterParams) return;
     isSyncingFilterParams = true;
 
     auto& apvts = audioProcessor.getValueTreeState();
-    bool link1 = *apvts.getRawParameterValue("modFilter1LinkToMaster") > 0.5f;
-    bool link2 = *apvts.getRawParameterValue("modFilter2LinkToMaster") > 0.5f;
-
-    auto syncParam = [&](const juce::String& sourceParam, const juce::String& targetParam)
-    {
-        auto* target = apvts.getParameter(targetParam);
-        if (!target) return;
-        float srcRaw = *apvts.getRawParameterValue(sourceParam);
-        float targetNorm = target->convertTo0to1(srcRaw);
-        if (std::abs(target->getValue() - targetNorm) > 0.0001f)
-            target->setValueNotifyingHost(targetNorm);
-    };
+    const bool link1 = *apvts.getRawParameterValue("modFilter1LinkToMaster") > 0.5f;
+    const bool link2 = *apvts.getRawParameterValue("modFilter2LinkToMaster") > 0.5f;
 
     struct ParamMapping { const char* master; const char* mod1; const char* mod2; };
     static const ParamMapping mappings[] = {
@@ -5160,55 +5183,84 @@ void SpaceDustAudioProcessorEditor::syncLinkedFilterParams(const juce::String& p
         { "warmSaturationMaster",   "warmSaturationMod1",  "warmSaturationMod2" },
     };
 
-    auto findMapping = [&](const juce::String& pid) -> const ParamMapping*
+    auto syncNormalizedMasterToTarget = [&](const juce::String& masterId, const juce::String& targetId)
     {
-        for (auto& m : mappings)
-            if (pid == m.master || pid == m.mod1 || pid == m.mod2)
-                return &m;
-        return nullptr;
+        auto* src = apvts.getParameter(masterId);
+        auto* tgt = apvts.getParameter(targetId);
+        if (src == nullptr || tgt == nullptr) return;
+        const float n = src->getValue();
+        if (std::abs(tgt->getValue() - n) > 1.0e-5f)
+            tgt->setValueNotifyingHost(n);
     };
 
-    if (parameterID == "modFilter1LinkToMaster" && newValue > 0.5f)
+    if (parameterID == "modFilter1LinkToMaster")
     {
         for (auto& m : mappings)
-            syncParam(m.master, m.mod1);
+            syncNormalizedMasterToTarget(m.master, m.mod1);
     }
-    else if (parameterID == "modFilter2LinkToMaster" && newValue > 0.5f)
+    else if (parameterID == "modFilter2LinkToMaster")
     {
         for (auto& m : mappings)
-            syncParam(m.master, m.mod2);
+            syncNormalizedMasterToTarget(m.master, m.mod2);
     }
-    else if (auto* m = findMapping(parameterID))
+    else if (parameterID == "filterMode" || parameterID == "filterCutoff" || parameterID == "filterResonance"
+             || parameterID == "warmSaturationMaster")
     {
-        bool isMaster = (parameterID == m->master);
-        bool isMod1   = (parameterID == m->mod1);
-        bool isMod2   = (parameterID == m->mod2);
-
-        if (isMaster)
-        {
-            if (link1) syncParam(m->master, m->mod1);
-            if (link2) syncParam(m->master, m->mod2);
-        }
-        else if (isMod1 && link1)
-        {
-            syncParam(m->mod1, m->master);
-            if (link2) syncParam(m->mod1, m->mod2);
-        }
-        else if (isMod2 && link2)
-        {
-            syncParam(m->mod2, m->master);
-            if (link1) syncParam(m->mod2, m->mod1);
-        }
+        if (link1 || link2)
+            mirrorMasterFilterWidgetsToLinkedModPages(link1, link2);
     }
 
     isSyncingFilterParams = false;
 }
 
 //==============================================================================
-// -- Slider Listener (pitch bend snap-back) --
+// -- Slider Listener (linked mod filter -> master, pitch bend snap-back) --
+
+void SpaceDustAudioProcessorEditor::sliderDragStarted(juce::Slider* slider)
+{
+    linkedModFilterDragSource = nullptr;
+    auto& apvts = audioProcessor.getValueTreeState();
+
+    if (slider == &modFilter1CutoffSlider || slider == &modFilter1ResonanceSlider)
+    {
+        if (*apvts.getRawParameterValue("modFilter1LinkToMaster") > 0.5f)
+            linkedModFilterDragSource = slider;
+    }
+    else if (slider == &modFilter2CutoffSlider || slider == &modFilter2ResonanceSlider)
+    {
+        if (*apvts.getRawParameterValue("modFilter2LinkToMaster") > 0.5f)
+            linkedModFilterDragSource = slider;
+    }
+}
+
+void SpaceDustAudioProcessorEditor::sliderValueChanged(juce::Slider* slider)
+{
+    if (isBeingDestroyed.load() || isSyncingFilterParams) return;
+    if (slider != linkedModFilterDragSource) return;
+
+    auto& apvts = audioProcessor.getValueTreeState();
+
+    auto pushModToMaster = [&](const char* masterId, const char* modId)
+    {
+        auto* m = apvts.getParameter(masterId);
+        auto* r = apvts.getParameter(modId);
+        if (m == nullptr || r == nullptr) return;
+        const float n = r->getValue();
+        if (std::abs(m->getValue() - n) > 1.0e-5f)
+            m->setValueNotifyingHost(n);
+    };
+
+    if (slider == &modFilter1CutoffSlider)       pushModToMaster("filterCutoff", "modFilter1Cutoff");
+    else if (slider == &modFilter1ResonanceSlider) pushModToMaster("filterResonance", "modFilter1Resonance");
+    else if (slider == &modFilter2CutoffSlider)    pushModToMaster("filterCutoff", "modFilter2Cutoff");
+    else if (slider == &modFilter2ResonanceSlider) pushModToMaster("filterResonance", "modFilter2Resonance");
+}
 
 void SpaceDustAudioProcessorEditor::sliderDragEnded(juce::Slider* slider)
 {
+    if (slider == linkedModFilterDragSource)
+        linkedModFilterDragSource = nullptr;
+
     if (slider == &pitchBendSlider)
     {
         // Trigger processor-based ramp: smooth linear return to 0 over 0.05s (no stepped sound)
@@ -5236,6 +5288,27 @@ void SpaceDustAudioProcessorEditor::buttonStateChanged(juce::Button* button)
 {
     if (isBeingDestroyed.load() || button == nullptr)
         return;
+
+    auto& apvts = audioProcessor.getValueTreeState();
+    auto pushModWarmSatToMaster = [&](juce::Button& modBtn, const char* modId, bool link)
+    {
+        if (isSyncingFilterParams || !link || button != &modBtn) return;
+        auto* m = apvts.getParameter("warmSaturationMaster");
+        auto* mod = apvts.getParameter(modId);
+        if (m == nullptr || mod == nullptr) return;
+        const float want = mod->getValue();
+        if (std::abs(m->getValue() - want) > 1.0e-5f)
+        {
+            m->beginChangeGesture();
+            m->setValueNotifyingHost(want);
+            m->endChangeGesture();
+        }
+    };
+    pushModWarmSatToMaster(warmSaturationMod1Button, "warmSaturationMod1",
+                           *apvts.getRawParameterValue("modFilter1LinkToMaster") > 0.5f);
+    pushModWarmSatToMaster(warmSaturationMod2Button, "warmSaturationMod2",
+                           *apvts.getRawParameterValue("modFilter2LinkToMaster") > 0.5f);
+
     auto sync = [](juce::ToggleButton& btn, juce::GroupComponent& grp) {
         grp.getProperties().set("isActive", btn.getToggleState());
         grp.repaint();

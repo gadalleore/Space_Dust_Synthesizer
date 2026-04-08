@@ -240,7 +240,8 @@ public:
     ~SpaceDustAudioProcessorEditor() override;
     
     void timerCallback() override;
-    void sliderValueChanged(juce::Slider* slider) override {}
+    void sliderDragStarted(juce::Slider* slider) override;
+    void sliderValueChanged(juce::Slider* slider) override;
     void sliderDragEnded(juce::Slider* slider) override;
     void buttonClicked(juce::Button* button) override {}
     void buttonStateChanged(juce::Button* button) override;
@@ -263,9 +264,11 @@ private:
     // Flag to prevent timerCallback from accessing components during destruction
     std::atomic<bool> isBeingDestroyed{false};
 
-    // Bidirectional filter parameter sync when "Link to Master" is enabled
+    // Master / mod filter "Link to Master": sync state without fighting host automation
     bool isSyncingFilterParams = false;
     void syncLinkedFilterParams(const juce::String& parameterID, float newValue);
+    void mirrorMasterFilterWidgetsToLinkedModPages(bool link1, bool link2);
+    juce::Slider* linkedModFilterDragSource = nullptr;
 
     // Pitch bend snap-back: poll processor ramp and sync display
     bool pitchBendSnapActive{false};
