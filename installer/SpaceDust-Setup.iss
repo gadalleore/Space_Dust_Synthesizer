@@ -1,0 +1,256 @@
+; =============================================================================
+; Space Dust Synthesizer — Windows installer (Inno Setup 6)
+; =============================================================================
+; Staging layout (next to this .iss file):
+;   Files\VST3\Space Dust.vst3\   ← full VST3 bundle (folder with .vst3 extension)
+;   License-MIT.txt               ← MIT text for the license wizard page
+;   Support\README-Presets.txt    ← copied into the preset folder as README.txt
+;
+; The plug-in reads presetFolder from config.xml (see PresetManager.cpp).
+; =============================================================================
+
+#define MyAppName       "Space Dust Synthesizer"
+#define MyAppVersion    "1.0"
+#define MyPublisher     "gadalleore"
+#define MyAppCopyright  "Copyright (c) 2026 gadalleore"
+; Stable AppId keeps upgrade/uninstall registration consistent across releases.
+#define MyAppId         "{{E4B2C9A1-7F3D-4E8B-9C2A-1D5E6F708192}"
+
+[Setup]
+; --- Identity & version -------------------------------------------------------
+AppId={#MyAppId}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppPublisher={#MyPublisher}
+AppCopyright={#MyAppCopyright}
+VersionInfoVersion=1.0.0.0
+DefaultDirName={autopf64}\{#MyAppName}
+; We only use {app} for Inno's uninstall records; VST3 path is chosen separately.
+DisableDirPage=yes
+DisableProgramGroupPage=yes
+; --- Modern look (Inno Setup 6+) ------------------------------------------------
+WizardStyle=modern
+WizardSizePercent=120,150
+; --- 64-bit VST3 --------------------------------------------------------------
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64
+; --- Install scope -----------------------------------------------------------
+; Per-machine paths ({commoncf64}, ProgramData) require elevation.
+PrivilegesRequired=admin
+PrivilegesRequiredOverridesAllowed=dialog
+; --- Wizard copy --------------------------------------------------------------
+LicenseFile=License-MIT.txt
+InfoBeforeFile=
+InfoAfterFile=
+OutputDir=Output
+OutputBaseFilename=SpaceDust-Synthesizer-{#MyAppVersion}-Setup
+SetupIconFile=
+UninstallDisplayIcon={sys}\imageres.dll,196
+Compression=lzma2/max
+SolidCompression=yes
+LZMAUseSeparateProcess=yes
+; --- Shell --------------------------------------------------------------------
+MinVersion=10.0
+CloseApplications=no
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+; (Reserved) Add Start Menu items here if you ship a standalone editor later.
+
+[Dirs]
+; Create the preset directory the user chose (user data — keep on uninstall).
+Name: "{code:GetPresetsDir}"; Flags: uninsneveruninstall
+
+[Files]
+; Entire VST3 bundle: recursive copy preserving inner layout.
+Source: "Files\VST3\Space Dust.vst3\*"; DestDir: "{code:GetVST3Dir}\Space Dust.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Documentation placed inside the preset folder.
+Source: "Support\README-Presets.txt"; DestDir: "{code:GetPresetsDir}"; DestFile: "README.txt"; Flags: ignoreversion confirmoverwrite
+
+[Icons]
+; Optional: uncomment to add an uninstall shortcut on the desktop or Start Menu.
+; Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
+
+[Run]
+; Silent install — no post-install programs required for a VST3.
+
+[UninstallDelete]
+; config.xml is written from script — remove on uninstall.
+Type: files; Name: "{commonappdata}\Space Dust\config.xml"
+; Remove empty config directory if nothing else remains (ignore errors).
+Type: dirifempty; Name: "{commonappdata}\Space Dust"
+
+[Code]
+var
+  VST3DirPage: TInputDirWizardPage;
+  PresetsDirPage: TInputDirWizardPage;
+  PresetsAllUsersCheck: TNewCheckBox;
+
+(* Recursively create a directory tree (single-level CreateDir is not enough). *)
+function ForceDirectories(Dir: string): Boolean;
+var
+  Parent: string;
+begin
+  Result := True;
+  if Dir = '' then Exit;
+  if DirExists(Dir) then Exit;
+  Parent := ExtractFileDir(Dir);
+  if (CompareText(Parent, Dir) <> 0) and (Parent <> '') then
+    Result := ForceDirectories(Parent);
+  if not Result then Exit;
+  Result := CreateDir(Dir);
+end;
+
+(* Escape attribute text for a minimal XML file (preset paths are unlikely to contain markup). *)
+function XmlAttrEscape(const S: string): string;
+var
+  R: string;
+begin
+  R := S;
+  StringChangeEx(R, '&', '&amp;', True);
+  StringChangeEx(R, '"', '&quot;', True);
+  StringChangeEx(R, '<', '&lt;', True);
+  Result := R;
+end;
+
+(* Wizard page: VST3 destination (standard default = Common Files x64\VST3). *)
+procedure InitVST3Page;
+begin
+  VST3DirPage := CreateInputDirPage(wpLicense,
+    'VST3 Plug-in Location',
+    'Where should the installer place the Space Dust VST3 bundle?',
+    'Select the folder that should contain Space Dust.vst3 (your DAW''s VST3 scan path).',
+    False, '');
+  VST3DirPage.Add('VST3 folder:');
+  VST3DirPage.Values[0] := ExpandConstant('{commoncf64}\VST3');
+end;
+
+(* Wizard page: presets + “all users” checkbox (default under Documents). *)
+procedure InitPresetsPage;
+var
+  EditTop: Integer;
+begin
+  PresetsDirPage := CreateInputDirPage(VST3DirPage.ID,
+    'Space Dust Presets Location',
+    'Choose where preset files will be stored on disk.',
+    'Factory and user presets are loaded from this folder. You can change it later by reinstalling or editing config.xml.',
+    False, '');
+  PresetsDirPage.Add('Presets folder:');
+  PresetsDirPage.Values[0] := ExpandConstant('{userdocs}\Space Dust\Presets');
+
+  PresetsAllUsersCheck := TNewCheckBox.Create(PresetsDirPage);
+  PresetsAllUsersCheck.Parent := PresetsDirPage.Surface;
+  PresetsAllUsersCheck.Caption :=
+    'Use this folder and make it the default for all users of this PC';
+  PresetsAllUsersCheck.Checked := False;
+
+  (* Position the checkbox under the directory edit supplied by the dir page. *)
+  if GetArrayLength(PresetsDirPage.Edits) > 0 then
+  begin
+    EditTop := PresetsDirPage.Edits[0].Top;
+    PresetsAllUsersCheck.Top := EditTop + ScaleY(44);
+    PresetsAllUsersCheck.Left := PresetsDirPage.Edits[0].Left;
+    PresetsAllUsersCheck.Width := PresetsDirPage.SurfaceWidth - PresetsDirPage.Edits[0].Left * 2;
+    PresetsAllUsersCheck.Height := ScaleY(36);
+    PresetsAllUsersCheck.Anchors := [akLeft, akRight, akTop];
+  end;
+end;
+
+procedure InitializeWizard;
+begin
+  InitVST3Page;
+  InitPresetsPage;
+end;
+
+(* Inno calls these when expanding {code:...} constants in [Files] / [Dirs]. *)
+function GetVST3Dir(Param: string): string;
+begin
+  Result := Trim(VST3DirPage.Values[0]);
+end;
+
+function GetPresetsDir(Param: string): string;
+begin
+  Result := Trim(PresetsDirPage.Values[0]);
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+var
+  D: string;
+begin
+  Result := True;
+
+  if CurPageID = VST3DirPage.ID then
+  begin
+    D := Trim(VST3DirPage.Values[0]);
+    if D = '' then
+    begin
+      MsgBox('Please choose a folder for the VST3 plug-in.', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+  end;
+
+  if CurPageID = PresetsDirPage.ID then
+  begin
+    D := Trim(PresetsDirPage.Values[0]);
+    if D = '' then
+    begin
+      MsgBox('Please choose a folder for Space Dust presets.', mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+  end;
+end;
+
+(* Appended when “all users” checkbox is checked — runs after README.txt is installed. *)
+procedure AppendPresetsReadmeAllUsersNote(const PresetFolder: string);
+var
+  ReadmePath: string;
+  Content: string;
+begin
+  ReadmePath := PresetFolder + '\README.txt';
+  if not FileExists(ReadmePath) then
+    Exit;
+  if not LoadStringFromFile(ReadmePath, Content) then
+    Exit;
+  SaveStringToFile(ReadmePath, Content + #13#10 + #13#10 +
+    '---' + #13#10 +
+    'Installer: This folder was set as the default preset location for all users of this PC.' + #13#10,
+    True);
+end;
+
+(* After files are in place: write plug-in config matching JUCE XmlElement output. *)
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ConfigDir: string;
+  ConfigPath: string;
+  PresetPath: string;
+  Xml: string;
+begin
+  if CurStep <> ssPostInstall then
+    Exit;
+
+  (* Folder selected on the “Space Dust Presets Location” page *)
+  PresetPath := Trim(PresetsDirPage.Values[0]);
+
+  (* %ProgramData%\Space Dust\config.xml — must match PresetManager::getConfigFile on Windows. *)
+  ConfigPath := ExpandConstant('{commonappdata}\Space Dust\config.xml');
+
+  ConfigDir := ExtractFileDir(ConfigPath);
+  if not ForceDirectories(ConfigDir) then
+    RaiseException('Could not create directory: ' + ConfigDir);
+
+  (* Same shape as PresetManager::savePresetFolderConfig — root tag + attribute. *)
+  Xml :=
+    '<?xml version="1.0" encoding="UTF-8"?>' + #13#10 + #13#10 +
+    '<SpaceDustConfig presetFolder="' + XmlAttrEscape(PresetPath) + '"/>' + #13#10;
+
+  if not SaveStringToFile(ConfigPath, Xml, True) then
+    RaiseException('Could not write configuration file: ' + ConfigPath);
+
+  (* Optional note in README when the user chose a machine-wide default *)
+  if PresetsAllUsersCheck.Checked then
+    AppendPresetsReadmeAllUsersNote(PresetPath);
+end;

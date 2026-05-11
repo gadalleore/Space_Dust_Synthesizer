@@ -73,5 +73,9 @@ install_vst_admin.bat
 # MCP servers (development tooling)
 mcp-servers-jos/
 
+# Inno Setup installer staging and output (binaries, never commit)
+installer/Files/
+installer/Output/
+
 # Scratch files
 Untitled

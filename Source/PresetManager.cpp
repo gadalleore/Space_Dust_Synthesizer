@@ -104,9 +104,16 @@ juce::File PresetManager::getDefaultPresetFolder() const
 
 juce::File PresetManager::getConfigFile() const
 {
+#if JUCE_WINDOWS
+    // Matches Windows installer: %ProgramData%\Space Dust\config.xml
+    return juce::File::getSpecialLocation(juce::File::commonApplicationDataDirectory)
+        .getChildFile("Space Dust")
+        .getChildFile("config.xml");
+#else
     return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
         .getChildFile("Space Dust")
         .getChildFile("config.xml");
+#endif
 }
 
 void PresetManager::savePresetFolderConfig() const
