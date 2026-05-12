@@ -11,8 +11,8 @@
 
 #define MyAppName       "Space Dust Synthesizer"
 #define MyAppVersion    "1.0"
-#define MyPublisher     "gadalleore"
-#define MyAppCopyright  "Copyright (c) 2026 gadalleore"
+#define MyPublisher     "Shades"
+#define MyAppCopyright  "Copyright (c) 2026 Shades"
 ; Stable AppId keeps upgrade/uninstall registration consistent across releases.
 #define MyAppId         "{{E4B2C9A1-7F3D-4E8B-9C2A-1D5E6F708192}"
 
@@ -24,6 +24,11 @@ AppVersion={#MyAppVersion}
 AppPublisher={#MyPublisher}
 AppCopyright={#MyAppCopyright}
 VersionInfoVersion=1.0.0.0
+VersionInfoCompany={#MyPublisher}
+VersionInfoProductName={#MyAppName}
+VersionInfoProductVersion=1.0.0.0
+VersionInfoDescription={#MyAppName} Setup
+VersionInfoCopyright={#MyAppCopyright}
 DefaultDirName={autopf64}\{#MyAppName}
 ; We only use {app} for Inno's uninstall records; VST3 path is chosen separately.
 DisableDirPage=yes
