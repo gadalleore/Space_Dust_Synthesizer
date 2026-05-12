@@ -73,9 +73,13 @@ install_vst_admin.bat
 # MCP servers (development tooling)
 mcp-servers-jos/
 
-# Inno Setup installer staging and output (binaries, never commit)
-installer/Files/
+# Inno Setup installer output (built .exe) - never commit
 installer/Output/
+
+# Inno Setup installer VST3 staging (binaries dropped here by build script) - never commit.
+# Other subfolders of installer/Files/ (e.g. Presets/) ARE tracked because they
+# contain factory content that ships with the installer.
+installer/Files/VST3/
 
 # Scratch files
 Untitled

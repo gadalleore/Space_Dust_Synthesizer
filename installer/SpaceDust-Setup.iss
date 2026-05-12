@@ -71,6 +71,11 @@ Name: "{code:GetPresetsDir}"; Flags: uninsneveruninstall
 [Files]
 ; Entire VST3 bundle: recursive copy preserving inner layout.
 Source: "Files\VST3\Space Dust.vst3\*"; DestDir: "{code:GetVST3Dir}\Space Dust.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Factory presets — copied into the user's chosen preset folder.
+;   onlyifdoesntexist: never overwrite a user's modified copy on reinstall/upgrade.
+;   skipifsourcedoesntexist: don't fail the compile when the staging folder is empty
+;     (lets the installer build before any factory presets exist).
+Source: "Files\Presets\*.xml"; DestDir: "{code:GetPresetsDir}"; Flags: ignoreversion onlyifdoesntexist skipifsourcedoesntexist
 ; Documentation placed inside the preset folder.
 Source: "Support\README-Presets.txt"; DestDir: "{code:GetPresetsDir}"; DestName: "README.txt"; Flags: ignoreversion confirmoverwrite
 

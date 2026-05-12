@@ -51,6 +51,34 @@ cd Space_Dust_Synthesizer
 
 3. **Plugin output**: `build\SpaceDust_artefacts\Release\VST3\Space Dust.vst3`
 
+## Building the Windows installer
+
+A signed-and-sealed Inno Setup script ships in [`installer/SpaceDust-Setup.iss`](installer/SpaceDust-Setup.iss).
+
+1. Install [Inno Setup 6](https://jrsoftware.org/isdl.php) (one time).
+2. Save the factory presets you want to ship from inside the plug-in UI. They land in
+   `%USERPROFILE%\Documents\Space Dust\Presets\` (or wherever you configured via the
+   installer wizard / `%ProgramData%\Space Dust\config.xml`).
+3. Run the packaging script:
+   ```powershell
+   .\package-installer.ps1
+   # Skip the VST3 rebuild for fast iteration on installer-only tweaks:
+   .\package-installer.ps1 -SkipBuild
+   ```
+   The script rebuilds the Release VST3, syncs your `*.xml` presets into
+   `installer/Files/Presets/`, and compiles
+   `installer/Output/SpaceDust-Synthesizer-1.0-Setup.exe`.
+4. Test the produced `.exe`. Customer-side, the installer:
+   - Prompts for a VST3 folder and a presets folder.
+   - Writes `%ProgramData%\Space Dust\config.xml` so the plug-in finds the chosen
+     presets folder on first run.
+   - Ships the factory presets with `onlyifdoesntexist`, so re-installing or
+     upgrading **never overwrites** a user's modified copies.
+
+The installer's UAC prompt shows "Publisher: Unknown" because the `.exe` isn't
+code-signed; that's expected for indie distributions. See
+`installer/Files/Presets/README.md` for more on the preset workflow.
+
 ## Project Structure
 
 ```
