@@ -33,7 +33,7 @@ WizardStyle=modern
 WizardSizePercent=120,150
 ; --- 64-bit VST3 --------------------------------------------------------------
 ArchitecturesAllowed=x64compatible
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesInstallIn64BitMode=x64compatible
 ; --- Install scope -----------------------------------------------------------
 ; Per-machine paths ({commoncf64}, ProgramData) require elevation.
 PrivilegesRequired=admin
@@ -67,7 +67,7 @@ Name: "{code:GetPresetsDir}"; Flags: uninsneveruninstall
 ; Entire VST3 bundle: recursive copy preserving inner layout.
 Source: "Files\VST3\Space Dust.vst3\*"; DestDir: "{code:GetVST3Dir}\Space Dust.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
 ; Documentation placed inside the preset folder.
-Source: "Support\README-Presets.txt"; DestDir: "{code:GetPresetsDir}"; DestFile: "README.txt"; Flags: ignoreversion confirmoverwrite
+Source: "Support\README-Presets.txt"; DestDir: "{code:GetPresetsDir}"; DestName: "README.txt"; Flags: ignoreversion confirmoverwrite
 
 [Icons]
 ; Optional: uncomment to add an uninstall shortcut on the desktop or Start Menu.
@@ -146,16 +146,14 @@ begin
     'Use this folder and make it the default for all users of this PC';
   PresetsAllUsersCheck.Checked := False;
 
-  (* Position the checkbox under the directory edit supplied by the dir page. *)
-  if GetArrayLength(PresetsDirPage.Edits) > 0 then
-  begin
-    EditTop := PresetsDirPage.Edits[0].Top;
-    PresetsAllUsersCheck.Top := EditTop + ScaleY(44);
-    PresetsAllUsersCheck.Left := PresetsDirPage.Edits[0].Left;
-    PresetsAllUsersCheck.Width := PresetsDirPage.SurfaceWidth - PresetsDirPage.Edits[0].Left * 2;
-    PresetsAllUsersCheck.Height := ScaleY(36);
-    PresetsAllUsersCheck.Anchors := [akLeft, akRight, akTop];
-  end;
+  (* Position the checkbox under the directory edit supplied by the dir page.
+     Edits[0] always exists because InitPresetsPage always calls .Add() once. *)
+  EditTop := PresetsDirPage.Edits[0].Top;
+  PresetsAllUsersCheck.Top := EditTop + ScaleY(44);
+  PresetsAllUsersCheck.Left := PresetsDirPage.Edits[0].Left;
+  PresetsAllUsersCheck.Width := PresetsDirPage.SurfaceWidth - PresetsDirPage.Edits[0].Left * 2;
+  PresetsAllUsersCheck.Height := ScaleY(36);
+  PresetsAllUsersCheck.Anchors := [akLeft, akRight, akTop];
 end;
 
 procedure InitializeWizard;
@@ -204,21 +202,23 @@ begin
   end;
 end;
 
-(* Appended when “all users” checkbox is checked — runs after README.txt is installed. *)
+(* Appended when “all users” checkbox is checked — runs after README.txt is installed.
+   Uses SaveStringsToFile (line-array, native String type) with Append=True so we
+   don't have to deal with AnsiString/UnicodeString conversion of LoadStringFromFile. *)
 procedure AppendPresetsReadmeAllUsersNote(const PresetFolder: string);
 var
   ReadmePath: string;
-  Content: string;
+  Lines: TArrayOfString;
 begin
   ReadmePath := PresetFolder + '\README.txt';
   if not FileExists(ReadmePath) then
     Exit;
-  if not LoadStringFromFile(ReadmePath, Content) then
-    Exit;
-  SaveStringToFile(ReadmePath, Content + #13#10 + #13#10 +
-    '---' + #13#10 +
-    'Installer: This folder was set as the default preset location for all users of this PC.' + #13#10,
-    True);
+  SetArrayLength(Lines, 4);
+  Lines[0] := '';
+  Lines[1] := '---';
+  Lines[2] := 'Installer: This folder was set as the default preset location for all users of this PC.';
+  Lines[3] := '';
+  SaveStringsToFile(ReadmePath, Lines, True);
 end;
 
 (* After files are in place: write plug-in config matching JUCE XmlElement output. *)
