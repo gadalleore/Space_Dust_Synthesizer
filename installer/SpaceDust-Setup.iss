@@ -75,7 +75,9 @@ Source: "Files\VST3\Space Dust.vst3\*"; DestDir: "{code:GetVST3Dir}\Space Dust.v
 ;   onlyifdoesntexist: never overwrite a user's modified copy on reinstall/upgrade.
 ;   skipifsourcedoesntexist: don't fail the compile when the staging folder is empty
 ;     (lets the installer build before any factory presets exist).
-Source: "Files\Presets\*.xml"; DestDir: "{code:GetPresetsDir}"; Flags: ignoreversion onlyifdoesntexist skipifsourcedoesntexist
+; Extension must match PresetManager::presetExtension (".sdpreset"). DO NOT change
+; without also updating PresetManager.h.
+Source: "Files\Presets\*.sdpreset"; DestDir: "{code:GetPresetsDir}"; Flags: ignoreversion onlyifdoesntexist skipifsourcedoesntexist
 ; Documentation placed inside the preset folder.
 Source: "Support\README-Presets.txt"; DestDir: "{code:GetPresetsDir}"; DestName: "README.txt"; Flags: ignoreversion confirmoverwrite
 

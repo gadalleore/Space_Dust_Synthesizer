@@ -73,14 +73,18 @@ if (-not $SkipPresets) {
     $presetDst = "installer\Files\Presets"
     New-Item -ItemType Directory -Force -Path $presetDst | Out-Null
 
+    # Preset file extension must match PresetManager::presetExtension. Keep in sync
+    # with Source/PresetManager.h if it ever changes.
+    $presetExt = ".sdpreset"
+
     if (Test-Path $PresetsSource) {
-        # Wipe previously staged .xml files so renames/deletions in the source
+        # Wipe previously staged preset files so renames/deletions in the source
         # are reflected exactly. README.md (this folder's doc) is preserved.
-        Get-ChildItem $presetDst -Filter "*.xml" -File -ErrorAction SilentlyContinue |
+        Get-ChildItem $presetDst -Filter "*$presetExt" -File -ErrorAction SilentlyContinue |
             Remove-Item -Force
 
         $copied = 0
-        Get-ChildItem $PresetsSource -Filter "*.xml" -File -ErrorAction SilentlyContinue |
+        Get-ChildItem $PresetsSource -Filter "*$presetExt" -File -ErrorAction SilentlyContinue |
             ForEach-Object {
                 Copy-Item $_.FullName -Destination $presetDst -Force
                 $copied++
@@ -89,12 +93,12 @@ if (-not $SkipPresets) {
             Write-Host "[Package] Synced $copied factory preset(s) from:" -ForegroundColor Green
             Write-Host "          $PresetsSource"
         } else {
-            Write-Host "[Package] No .xml presets found in $PresetsSource (skipping)." -ForegroundColor Yellow
+            Write-Host "[Package] No $presetExt presets found in $PresetsSource (skipping)." -ForegroundColor Yellow
             Write-Host "          Save some presets from Space Dust first, then re-run." -ForegroundColor Yellow
         }
     } else {
         Write-Host "[Package] Preset source folder not found: $PresetsSource" -ForegroundColor Yellow
-        Write-Host "          (Installer will ship with whatever .xml is already in $presetDst.)" -ForegroundColor Yellow
+        Write-Host "          (Installer will ship with whatever $presetExt files are already in $presetDst.)" -ForegroundColor Yellow
     }
 } else {
     Write-Host "[Package] -SkipPresets: leaving installer\Files\Presets\ untouched." -ForegroundColor Gray
