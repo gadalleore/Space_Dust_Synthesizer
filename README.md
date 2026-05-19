@@ -16,9 +16,37 @@ cd Space_Dust_Synthesizer
 - **Effects chain** – Reverb, delay (with filter), phaser, flanger, trance gate (post-effect), grain delay, parametric EQ, bitcrusher, soft clipper, compressor, transient shaper, lo-fi (with **Analog Drift**: subtle per-note pitch/filter variation and slow wander when Lo-Fi is enabled)
 - **Modulation** – Two LFOs with On toggles; LFO1 targets filter, LFO2 targets pitch (25% depth default)
 - **Master volume** – 0–2.0 range for headroom
-- **MIDI input** – Full MIDI note and control support
+- **MIDI input** – Full MIDI note and control support, including **MPE** (per-note pitch bend, pressure, and timbre via Lower Zone or Legacy modes — see [MPE Support](#mpe-support))
 - **Custom UI** – SpaceDust look and feel with compact tabbed layout (Main, Modulation, Effects, Saturation Color, Spectral) and meter-linked glow
 - **Real-time safe** – Parameter updates without allocations in the audio thread
+
+## MPE Support
+
+Space Dust is a fully MPE-aware synth: per-note pitch bend goes to the oscillators, channel pressure / aftertouch modulates amplitude, and CC74 / slide ("timbre") sweeps the filter cutoff. The MPE controls live on the Modulation tab (Mode: Legacy / Lower Zone, Bend Range, Pressure depth, Timbre depth).
+
+**Important:** No DAW currently auto-enables MPE for third-party VST3 instruments — you have to flip a per-track toggle once per project. The plugin handles the rest.
+
+### Ableton Live 11 / 12
+
+1. Right-click the **Space Dust** title bar in the device chain → **Enable MPE Mode**. The header will show **"MPE"** on the right side once enabled.
+2. (Optional) Right-click again → **MPE Channel Settings** to configure zone (Lower / Upper) and member-channel count.
+3. In Space Dust's **Modulation tab → MPE strip**, set **Mode = Lower Zone** for the standard MPE spec, or leave on **Legacy** for non-MPE keyboards / classic pitch-wheel + aftertouch.
+4. Drive it from a Seaboard/LinnStrument, the **Attila Magyar MPE Emulator** VST3 (MIDI effect placed *before* Space Dust on the track), or Live's per-clip MPE envelopes ("E" button → category **MPE** → Pitch / Pressure / Slide).
+
+### Bitwig Studio
+
+1. Click the Space Dust device's small triangle → **Enable Note Expressions** (or use the per-track MPE toggle on the track header).
+2. In Space Dust set **Mode = Lower Zone**.
+3. Per-note PB/AT/timbre from a Seaboard/LinnStrument or Bitwig's note expression editor will flow through.
+
+### Cubase / Studio One
+
+- External MPE controllers (Seaboard, LinnStrument, Sensel, etc.) plug in and work out of the box — Space Dust accepts MIDI on all 16 channels and routes per-note expression internally.
+- Cubase's native "Note Expression" inspector does not surface per-note curves for Space Dust because the plugin does not expose `INoteExpressionController` (a separate VST3 interface, not the same as MPE-over-MIDI). Hardware MPE controllers and MPE-emulator plugins still work fully.
+
+### Verifying it's working
+
+Hold a note and move your controller's pitch wheel — pitch should glide; move pressure / aftertouch — amplitude should swell; move CC74 / slide — the filter should brighten or darken. Lower / raise the **Pressure** and **Timbre** knobs in the Modulation tab to confirm the attenuation.
 
 ## Prerequisites
 
