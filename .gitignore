@@ -83,3 +83,15 @@ installer/Files/VST3/
 
 # Scratch files
 Untitled
+
+# QA tooling downloads (pluginval is fetched by download-pluginval.ps1)
+tools/
+
+# QA monitor outputs (CSV samples, soak baselines, pluginval logs)
+runtime-monitor.csv
+pluginval-report.log
+soak-test-baseline.json
+
+# Crash dumps (configured to land in C:\CrashDumps but ignore if any land here)
+CrashDumps/
+*.dmp

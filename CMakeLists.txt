@@ -25,7 +25,7 @@ juce_add_plugin(SpaceDust
     PLUGIN_NAME "Space Dust"
     PLUGIN_MANUFACTURER_CODE YcPl
     PLUGIN_CODE SpDs
-    FORMATS VST3
+    FORMATS VST3 Standalone
     PRODUCT_NAME "Space Dust"
     DESCRIPTION "Cosmic particles of sound"
     VERSION 1.0.0
@@ -101,6 +101,59 @@ target_sources(SpaceDust PRIVATE
 target_compile_definitions(SpaceDust
     PRIVATE
         JUCE_VST3_CAN_REPLACE_VST2=0
+)
+
+#==============================================================================
+# Visual Leak Detector (VLD) — optional, OFF by default
+# Configure with: cmake -B build -DENABLE_VLD=ON -DCMAKE_BUILD_TYPE=Debug
+# Reports memory leaks with call stacks when the host process exits.
+# WARNING: Debug-only. Never enable for Release builds shipped to users.
+# After build, copy "<VLD_DIR>/bin/Win64/vld_x64.dll" + "dbghelp.dll" into
+# the same folder as the host executable, or into Windows PATH.
+#==============================================================================
+option(ENABLE_VLD "Link Visual Leak Detector (Debug builds only)" OFF)
+if(ENABLE_VLD)
+    set(VLD_DIR "C:/Program Files (x86)/Visual Leak Detector" CACHE PATH "VLD install root")
+    if(NOT EXISTS "${VLD_DIR}/include/vld.h")
+        message(FATAL_ERROR "ENABLE_VLD=ON but vld.h not found at ${VLD_DIR}/include/. Install VLD from https://github.com/KindDragon/vld/releases or set -DVLD_DIR=...")
+    endif()
+    target_include_directories(SpaceDust PRIVATE "${VLD_DIR}/include")
+    target_link_libraries(SpaceDust PRIVATE "${VLD_DIR}/lib/Win64/vld.lib")
+    target_compile_definitions(SpaceDust PRIVATE VLD_ENABLED=1)
+    message(STATUS "VLD enabled. Headers: ${VLD_DIR}/include   Lib: ${VLD_DIR}/lib/Win64/vld.lib")
+    message(STATUS "Reminder: copy vld_x64.dll + dbghelp.dll from ${VLD_DIR}/bin/Win64/ next to the host exe.")
+endif()
+
+#==============================================================================
+# AddressSanitizer (ASan) — optional, OFF by default. MSVC ASan since VS 16.9.
+# Configure with: cmake -B build-asan -DENABLE_ASAN=ON
+# Detects heap/stack overflows, use-after-free, double-free at runtime.
+# WARNING: Significant runtime overhead; never ship.
+#==============================================================================
+option(ENABLE_ASAN "Build with AddressSanitizer (MSVC /fsanitize=address)" OFF)
+if(ENABLE_ASAN)
+    if(MSVC)
+        target_compile_options(SpaceDust PRIVATE /fsanitize=address /Zi)
+        # ASan in MSVC requires disabling /RTC* and /INCREMENTAL; CMake handles RTC.
+        target_link_options(SpaceDust PRIVATE /INCREMENTAL:NO)
+        target_compile_definitions(SpaceDust PRIVATE SPACEDUST_ASAN=1)
+        message(STATUS "AddressSanitizer ENABLED for SpaceDust target.")
+    else()
+        message(WARNING "ENABLE_ASAN currently only wired up for MSVC; ignored.")
+    endif()
+endif()
+
+#==============================================================================
+# qa-test custom target — runs the full QA suite via run-full-qa.ps1.
+# Usage: cmake --build build --target qa-test
+#==============================================================================
+add_custom_target(qa-test
+    COMMAND powershell.exe -NoProfile -ExecutionPolicy Bypass
+            -File "${CMAKE_SOURCE_DIR}/run-full-qa.ps1"
+            -BuildDir "${CMAKE_BINARY_DIR}"
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    COMMENT "Running Space Dust full QA suite (pluginval + installer + diagnostics)"
+    VERBATIM
 )
 
 # Add JUCE modules

@@ -1094,6 +1094,17 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     addAndMakeVisible(parentEditor.modFilter2ModeLabel);
     addAndMakeVisible(parentEditor.modFilter2CutoffLabel);
     addAndMakeVisible(parentEditor.modFilter2ResonanceLabel);
+
+    // MPE controls
+    addAndMakeVisible(parentEditor.mpeGroup);
+    addAndMakeVisible(parentEditor.mpeModeCombo);
+    addAndMakeVisible(parentEditor.mpeModeLabel);
+    addAndMakeVisible(parentEditor.mpePitchBendRangeSlider);
+    addAndMakeVisible(parentEditor.mpePitchBendRangeLabel);
+    addAndMakeVisible(parentEditor.mpePressureDepthSlider);
+    addAndMakeVisible(parentEditor.mpePressureDepthLabel);
+    addAndMakeVisible(parentEditor.mpeTimbreDepthSlider);
+    addAndMakeVisible(parentEditor.mpeTimbreDepthLabel);
 }
 
 ModulationPageComponent::~ModulationPageComponent()
@@ -1129,18 +1140,83 @@ void ModulationPageComponent::paint(juce::Graphics& g)
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
     drawGlows(g, baseAlpha, meterLinkedGroupGlowHue(parentEditor.clippingHoldTicks > 0),
         { &parentEditor.modulationGroup, &parentEditor.lfo1Group, &parentEditor.lfo2Group,
-          &parentEditor.modFilter1Group, &parentEditor.modFilter2Group });
+          &parentEditor.modFilter1Group, &parentEditor.modFilter2Group, &parentEditor.mpeGroup });
 }
 
 void ModulationPageComponent::resized()
 {
-    // Modulation page layout: LFO1 and LFO2 only (compact)
+    // Modulation page layout: MPE strip at top, then LFO1 and LFO2 below
     const int outerMargin = 8;
+    const int mpeStripH = 110; // MPE controls strip at top (fits rotary + text box like LFO knobs)
+    const int mpeGap = 6;
+
+    //==============================================================================
+    // -- MPE Section (horizontal strip at top of Modulation tab) --
+    {
+        // Match LFO 2's right edge: same trim that LFO layout below applies via lfoGapToRight.
+        const int mpeBaseWidth = getWidth() - 2 * outerMargin - 12;
+        const int mpeRightTrim = static_cast<int>((mpeBaseWidth / 1.1) * 0.05);
+        int mpeX = outerMargin;
+        int mpeY = 8;
+        int mpeW = mpeBaseWidth - mpeRightTrim;
+        parentEditor.mpeGroup.setText("MPE");
+        parentEditor.mpeGroup.setBounds(mpeX, mpeY, mpeW, mpeStripH);
+        parentEditor.mpeGroup.setVisible(true);
+
+        // Inner content area (clear the group title)
+        auto mc = parentEditor.mpeGroup.getBounds().reduced(10, 24);
+        int cy = mc.getY();
+        int slotW = mc.getWidth() / 4;
+
+        // Slot 1: MPE Mode combo
+        const int comboW = 100;
+        const int comboH = 22;
+        const int lblH = 14;
+        const int knobSz = 38;                 // Rotary diameter (matches LFO modRateKnobSize)
+        const int knobTextH = 18;              // TextBoxBelow height (matches LFO modTextBoxH)
+        const int knobGap = 2;                 // Gap between rotary and text box
+        const int knobTotalH = knobSz + knobGap + knobTextH; // Full slider area incl. text box
+        int sx = mc.getX();
+        int cx = sx + slotW / 2;
+        parentEditor.mpeModeLabel.setBounds(cx - comboW / 2, cy, comboW, lblH);
+        parentEditor.mpeModeCombo.setBounds(cx - comboW / 2, cy + lblH + 2, comboW, comboH);
+        parentEditor.mpeModeLabel.setVisible(true);
+        parentEditor.mpeModeCombo.setVisible(true);
+
+        // Label width is wider than the knob so multi-word labels fit
+        const int knobLabelW = 90;
+
+        // Slot 2: Bend Range knob
+        sx += slotW;
+        cx = sx + slotW / 2;
+        parentEditor.mpePitchBendRangeLabel.setBounds(cx - knobLabelW / 2, cy, knobLabelW, lblH);
+        parentEditor.mpePitchBendRangeSlider.setBounds(cx - knobSz / 2, cy + lblH + 2, knobSz, knobTotalH);
+        parentEditor.mpePitchBendRangeLabel.setVisible(true);
+        parentEditor.mpePitchBendRangeSlider.setVisible(true);
+
+        // Slot 3: Pressure Depth knob
+        sx += slotW;
+        cx = sx + slotW / 2;
+        parentEditor.mpePressureDepthLabel.setBounds(cx - knobLabelW / 2, cy, knobLabelW, lblH);
+        parentEditor.mpePressureDepthSlider.setBounds(cx - knobSz / 2, cy + lblH + 2, knobSz, knobTotalH);
+        parentEditor.mpePressureDepthLabel.setVisible(true);
+        parentEditor.mpePressureDepthSlider.setVisible(true);
+
+        // Slot 4: Timbre Depth knob
+        sx += slotW;
+        cx = sx + slotW / 2;
+        parentEditor.mpeTimbreDepthLabel.setBounds(cx - knobLabelW / 2, cy, knobLabelW, lblH);
+        parentEditor.mpeTimbreDepthSlider.setBounds(cx - knobSz / 2, cy + lblH + 2, knobSz, knobTotalH);
+        parentEditor.mpeTimbreDepthLabel.setVisible(true);
+        parentEditor.mpeTimbreDepthSlider.setVisible(true);
+    }
+
+    // LFO content area starts below the MPE strip
     auto modulationContent = juce::Rectangle<int>(
         outerMargin,
-        8,
+        8 + mpeStripH + mpeGap,
         getWidth() - 2 * outerMargin - 12,
-        getHeight() - 24
+        getHeight() - 24 - mpeStripH - mpeGap
     );
     
     // Larger gap between LFO columns so boxes do not intersect
@@ -1473,6 +1549,7 @@ void ModulationPageComponent::resized()
     parentEditor.modFilter1Group.setVisible(false);
     parentEditor.modFilter2Group.setVisible(false);
     parentEditor.modFilterShowLabel.setVisible(false);
+
 }
 
 //==============================================================================
@@ -2666,6 +2743,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // -- DEBUG: Editor Constructor Start --
     DBG("Space Dust: Editor ctor START - initializer list completed");
     
+    #if JUCE_DEBUG
     try
     {
         juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -2679,6 +2757,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         }
     }
     catch (...) {}
+    #endif
     
     //==============================================================================
     // -- CRITICAL: LookAndFeel Setup (FIRST, before any component operations) --
@@ -2690,6 +2769,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         // LookAndFeel is already created (member variable), just set it
         DBG("Space Dust: Editor ctor - Setting L&F...");
         setLookAndFeel(&customLookAndFeel);
+        #if JUCE_DEBUG
         try
         {
             juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -2703,6 +2783,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             }
         }
         catch (...) {}
+        #endif
         DBG("Space Dust: Editor ctor - LookAndFeel set successfully");
     }
     catch (const std::exception& e)
@@ -2720,6 +2801,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // -- Disable Accessibility (Performance Optimization) --
     // Disable accessibility for all components to improve performance and stability
     // This is safe for audio plugins that don't require screen reader support
+    #if JUCE_DEBUG
     try
     {
         juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -2733,6 +2815,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         }
     }
     catch (...) {}
+    #endif
     
     setAccessible(false);
 
@@ -2747,6 +2830,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo2Group.getProperties().set("viewportGlow", true);
     modFilter1Group.getProperties().set("viewportGlow", true);
     modFilter2Group.getProperties().set("viewportGlow", true);
+    mpeGroup.getProperties().set("viewportGlow", true);
     delayGroup.getProperties().set("viewportGlow", true);
     reverbGroup.getProperties().set("viewportGlow", true);
     grainDelayGroup.getProperties().set("viewportGlow", true);
@@ -2763,6 +2847,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // TooltipWindow: required for setTooltip() to display (e.g. Pan labels)
     tooltipWindow = std::make_unique<juce::TooltipWindow>(this, 500);
     
+    #if JUCE_DEBUG
     try
     {
         juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -2776,6 +2861,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         }
     }
     catch (...) {}
+    #endif
     
     //==============================================================================
     // -- Preset Manager Setup --
@@ -2836,6 +2922,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
 
     //==============================================================================
     // -- Oscillators Section Setup --
+    #if JUCE_DEBUG
     try
     {
         juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -2849,12 +2936,14 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         }
     }
     catch (...) {}
+    #endif
 
     DBG("Space Dust: Setting up Oscillators section");
     
     // Note: Components will be added to page components, not directly to editor
     
     // Oscillator 1
+    #if JUCE_DEBUG
     try
     {
         juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -2868,6 +2957,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         }
     }
     catch (...) {}
+    #endif
     
     osc1WaveformCombo.addItem(safeString("Sine"), 1);
     osc1WaveformCombo.addItem(safeString("Triangle"), 2);
@@ -2875,6 +2965,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     osc1WaveformCombo.addItem(safeString("Square"), 4);
     osc1WaveformCombo.setSelectedId(2);  // Default to Triangle
     
+    #if JUCE_DEBUG
     try
     {
         juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -2888,9 +2979,11 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         }
     }
     catch (...) {}
+    #endif
     
     // CRITICAL: Verify parameter exists before creating attachment
     // This prevents crashes if parameter ID doesn't match
+    #if JUCE_DEBUG
     try
     {
         juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -2904,6 +2997,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         }
     }
     catch (...) {}
+    #endif
     
     osc1WaveformAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getValueTreeState(), "osc1Waveform", osc1WaveformCombo);
@@ -3394,10 +3488,67 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     legatoGlideLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     legatoGlideLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
+    //==============================================================================
+    // -- MPE Controls (shown on Modulation tab) --
+
+    // Tooltip applied to every MPE child — JUCE's TooltipWindow only consults the
+    // component directly under the cursor, so the group-level tooltip alone is
+    // unreachable while hovering knobs/labels/combo.
+    const juce::String mpeHostTip ("NOTE: Only useable with an MPE compatible DAW or an MPE emulator");
+    mpeGroup.setTooltip(mpeHostTip);
+    mpeModeLabel.setTooltip(mpeHostTip);
+    mpeModeCombo.setTooltip(mpeHostTip);
+    mpePitchBendRangeLabel.setTooltip(mpeHostTip);
+    mpePitchBendRangeSlider.setTooltip(mpeHostTip);
+    mpePressureDepthLabel.setTooltip(mpeHostTip);
+    mpePressureDepthSlider.setTooltip(mpeHostTip);
+    mpeTimbreDepthLabel.setTooltip(mpeHostTip);
+    mpeTimbreDepthSlider.setTooltip(mpeHostTip);
+
+    mpeModeCombo.addItem(safeString("Legacy"), 1);
+    mpeModeCombo.addItem(safeString("Lower Zone"), 2);
+    mpeModeCombo.setSelectedId(1);
+    mpeModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.getValueTreeState(), "mpeMode", mpeModeCombo);
+    mpeModeLabel.setText(safeString("MPE Mode"), juce::dontSendNotification);
+    mpeModeLabel.setJustificationType(juce::Justification::centred);
+    mpeModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    mpeModeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+
+    mpePitchBendRangeSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    mpePitchBendRangeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
+    mpePitchBendRangeSlider.setTextValueSuffix(" st");
+    mpePitchBendRangeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "mpePitchBendRange", mpePitchBendRangeSlider);
+    mpePitchBendRangeLabel.setText(safeString("Bend Range"), juce::dontSendNotification);
+    mpePitchBendRangeLabel.setJustificationType(juce::Justification::centred);
+    mpePitchBendRangeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    mpePitchBendRangeLabel.setFont(customLookAndFeel.getBodyFont(11.0f, true));
+
+    mpePressureDepthSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    mpePressureDepthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
+    mpePressureDepthSlider.setTextValueSuffix(" %");
+    mpePressureDepthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "mpePressureDepth", mpePressureDepthSlider);
+    mpePressureDepthLabel.setText(safeString("Pressure"), juce::dontSendNotification);
+    mpePressureDepthLabel.setJustificationType(juce::Justification::centred);
+    mpePressureDepthLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    mpePressureDepthLabel.setFont(customLookAndFeel.getBodyFont(11.0f, true));
+
+    mpeTimbreDepthSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    mpeTimbreDepthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
+    mpeTimbreDepthSlider.setTextValueSuffix(" %");
+    mpeTimbreDepthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "mpeTimbreDepth", mpeTimbreDepthSlider);
+    mpeTimbreDepthLabel.setText(safeString("Timbre"), juce::dontSendNotification);
+    mpeTimbreDepthLabel.setJustificationType(juce::Justification::centred);
+    mpeTimbreDepthLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    mpeTimbreDepthLabel.setFont(customLookAndFeel.getBodyFont(11.0f, true));
+
     // Stereo Level Meters: Create at bottom of Master box
     stereoLevelMeter = std::make_unique<StereoLevelMeterComponent>(audioProcessor);
     stereoLevelMeter->setAccessible(false);
-    
+
     //==============================================================================
     // -- Modulation Section Setup --
     
@@ -4797,6 +4948,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // which may access LookAndFeel or components before the constructor completes.
     // Solution: Defer setSize() until after constructor returns, using a timer callback.
     // This ensures the constructor completes before any callbacks fire.
+    #if JUCE_DEBUG
     try
     {
         juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -4810,12 +4962,14 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         }
     }
     catch (...) {}
+    #endif
     
     // Defer setSize() until after constructor completes using a one-shot timer
     // This prevents resized()/paint() from firing during construction
     DBG("Space Dust: Editor ctor - Scheduling setSize() via timer");
     juce::Timer::callAfterDelay(10, [this]() {
         DBG("Space Dust: Timer callback - About to set window size");
+        #if JUCE_DEBUG
         try
         {
             juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -4829,10 +4983,12 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             }
         }
         catch (...) {}
+        #endif
         
         if (isBeingDestroyed.load())
         {
             DBG("Space Dust: Timer callback - isBeingDestroyed=true, skipping setSize");
+            #if JUCE_DEBUG
             try
             {
                 juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -4846,10 +5002,12 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
                 }
             }
             catch (...) {}
+            #endif
             return;
         }
         
         DBG("Space Dust: Timer callback - isBeingDestroyed=false, proceeding with setSize");
+        #if JUCE_DEBUG
         try
         {
             juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -4863,6 +5021,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             }
         }
         catch (...) {}
+        #endif
         
         // Calculate the correct window height for tabbed interface
         // Effects tab needs extra height when Delay/Grain Delay filter is toggled on (controls must stay visible)
@@ -4880,6 +5039,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             setTransform(juce::AffineTransform::scale(0.95f));
 
             DBG("Space Dust: Timer callback - setSize() completed");
+            #if JUCE_DEBUG
             try
             {
                 juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -4893,10 +5053,12 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
                 }
             }
             catch (...) {}
+            #endif
         }
         catch (const std::exception& e)
         {
             DBG("Space Dust: Exception in setSize(): " + juce::String(e.what()));
+            #if JUCE_DEBUG
             try
             {
                 juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -4910,10 +5072,12 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
                 }
             }
             catch (...) {}
+            #endif
         }
         catch (...)
         {
             DBG("Space Dust: Unknown exception in setSize()");
+            #if JUCE_DEBUG
             try
             {
                 juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -4927,6 +5091,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
                 }
             }
             catch (...) {}
+            #endif
         }
         
         DBG("Space Dust: Timer callback - Calling setResizable(false, false)");
@@ -4945,6 +5110,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         }
         
         DBG("Space Dust: Timer callback - Window size set successfully");
+        #if JUCE_DEBUG
         try
         {
             juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -4958,6 +5124,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             }
         }
         catch (...) {}
+        #endif
     });
     
     //==============================================================================
@@ -5761,6 +5928,7 @@ void SpaceDustAudioProcessorEditor::resized()
     if (firstResized)
     {
         DBG("Space Dust: First resized() called");
+        #if JUCE_DEBUG
         try
         {
             juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -5774,6 +5942,7 @@ void SpaceDustAudioProcessorEditor::resized()
             }
         }
         catch (...) {}
+        #endif
         firstResized = false;
     }
     
@@ -5784,6 +5953,7 @@ void SpaceDustAudioProcessorEditor::resized()
         DBG("Space Dust: resized() - Starting layout (width=" + juce::String(getWidth()) + ", height=" + juce::String(getHeight()) + ")");
         
         // Write to log file for debugging
+        #if JUCE_DEBUG
         try
         {
             juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -5797,6 +5967,7 @@ void SpaceDustAudioProcessorEditor::resized()
             }
         }
         catch (...) {}
+        #endif
     
     //==============================================================================
     // -- Preset Controls Layout (Top Header Bar) --
@@ -5968,6 +6139,7 @@ void SpaceDustAudioProcessorEditor::resized()
     catch (const std::exception& e)
     {
         DBG("Space Dust: Exception in resized(): " + juce::String(e.what()));
+        #if JUCE_DEBUG
         try
         {
             juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -5981,10 +6153,12 @@ void SpaceDustAudioProcessorEditor::resized()
             }
         }
         catch (...) {}
+        #endif
     }
     catch (...)
     {
         DBG("Space Dust: Unknown exception in resized()");
+        #if JUCE_DEBUG
         try
         {
             juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -5998,6 +6172,7 @@ void SpaceDustAudioProcessorEditor::resized()
             }
         }
         catch (...) {}
+        #endif
     }
 }
 

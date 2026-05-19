@@ -25,6 +25,7 @@ int SpaceDustSynthesiser::getVoiceModeIndex() const
 double SpaceDustSynthesiser::getMaxCurrentPitch() const
 {
     double mx = 0.0;
+    // MPESynthesiser stores its voices in the same `voices` array; iterate via getVoice().
     for (int i = 0; i < getNumVoices(); ++i)
     {
         if (auto* v = dynamic_cast<SynthVoice*>(getVoice(i)))
@@ -38,52 +39,85 @@ double SpaceDustSynthesiser::getMaxCurrentPitch() const
 }
 
 //==============================================================================
-void SpaceDustSynthesiser::noteOn(int midiChannel, int midiNoteNumber, float velocity)
+// -- MPE noteAdded (replaces juce::Synthesiser::noteOn override) --
+//
+// MPESynthesiser drives voice allocation through this callback (called from
+// MPEInstrument when a note-on arrives).  In Mono/Legato modes we forcibly
+// reuse the same voice (lastMonoVoiceIndex) to prevent click-prone voice
+// allocation switching across the note transition.
+//
+// In Poly mode we delegate to the base implementation, which uses
+// findFreeVoice() + startVoice() (and findVoiceToSteal() when stealing).
+void SpaceDustSynthesiser::noteAdded(juce::MPENote newNote)
 {
     const int mode = getVoiceModeIndex();
 
-    // Mono & Legato: always reuse the same voice to prevent click from voice stealing.
-    // stopNote preserves ADSR/filter/oscillator state; startNote either retriggers
-    // ADSR (mono) or continues the envelope (legato), without resetting oscillator
-    // phases — keeping sine/triangle waveforms continuous.
+    // Mono & Legato: reuse the same voice to prevent click from voice stealing.
+    // noteStopped preserves ADSR/filter/oscillator state when isPreservingVoice()
+    // or isNextNoteLegato() returns true, and noteStarted either retriggers ADSR
+    // (mono) or continues the envelope (legato) — without resetting oscillator
+    // phases, so sine/triangle waveforms remain continuous.
     if (mode != 0 && lastMonoVoiceIndex >= 0 && lastMonoVoiceIndex < getNumVoices())
     {
-        auto* voice = getVoice(lastMonoVoiceIndex);
-        if (voice != nullptr)
+        if (auto* voice = getVoice(lastMonoVoiceIndex))
         {
             nextNotePreservesVoice.store(true);
-            for (int s = 0; s < getNumSounds(); ++s)
-            {
-                auto sound = getSound(s);
-                if (sound != nullptr
-                    && sound->appliesToNote(midiNoteNumber)
-                    && sound->appliesToChannel(midiChannel))
-                {
-                    startVoice(voice, sound.get(), midiChannel, midiNoteNumber, velocity);
-                    nextNotePreservesVoice.store(false); // CRITICAL: clear after use
-                    return;
-                }
-            }
-            nextNotePreservesVoice.store(false); // clear if no matching sound found
+
+            // MPESynthesiser::startVoice() simply assigns the new MPENote to the
+            // voice (voice->currentlyPlayingNote = newNote) and then calls
+            // voice->noteStarted().  It does NOT call noteStopped() on the
+            // previous note, so there is no hard stop to guard against (unlike
+            // juce::Synthesiser::startVoice).  This is exactly what we want for
+            // mono/legato handoff.
+            startVoice(voice, newNote);
+
+            nextNotePreservesVoice.store(false);
+            return;
         }
     }
 
-    // Default JUCE voice allocation (poly, mono fresh voice, or legato fallback).
-    juce::Synthesiser::noteOn(midiChannel, midiNoteNumber, velocity);
+    // Default JUCE MPE voice allocation (Poly mode or mono fallback when
+    // lastMonoVoiceIndex is invalid).
+    juce::MPESynthesiser::noteAdded(newNote);
 
-    // Track which voice was allocated for legato voice reuse.
+    // Track which voice was allocated so subsequent mono/legato note transitions
+    // can reuse it.  isCurrentlyPlayingNote() compares by noteID so this is exact.
     if (mode != 0)
     {
         for (int i = 0; i < getNumVoices(); ++i)
         {
-            if (getVoice(i)->getCurrentlyPlayingNote() == midiNoteNumber
-                && getVoice(i)->isPlayingChannel(midiChannel))
+            if (auto* v = getVoice(i))
             {
-                lastMonoVoiceIndex = i;
-                break;
+                if (v->isCurrentlyPlayingNote(newNote))
+                {
+                    lastMonoVoiceIndex = i;
+                    break;
+                }
             }
         }
     }
+}
+
+//==============================================================================
+void SpaceDustSynthesiser::setMpeZoneLayoutLower(int memberChannels,
+                                                int notePitchBendRange,
+                                                int masterPitchBendRange)
+{
+    // Build a Lower-Zone layout: ch1 master + memberChannels (default 14) member channels.
+    // setLowerZone signature: (numMemberChannels, perNotePitchbendRange, masterPitchbendRange).
+    juce::MPEZoneLayout layout;
+    layout.setLowerZone(juce::jlimit(0, 15, memberChannels),
+                        juce::jlimit(0, 96, notePitchBendRange),
+                        juce::jlimit(0, 96, masterPitchBendRange));
+
+    // setZoneLayout() implicitly disables legacy mode.  Any currently playing
+    // notes will be released by JUCE before the new layout takes effect.
+    setZoneLayout(layout);
+}
+
+void SpaceDustSynthesiser::setLegacyModeWithPitchBendRange(int semitones)
+{
+    enableLegacyMode(juce::jlimit(0, 96, semitones), juce::Range<int>(1, 17));
 }
 
 //==============================================================================
@@ -95,6 +129,9 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
     if (mode == 0)
     {
         // Poly mode: pass MIDI through unchanged for full polyphony (chords, etc.)
+        // MPESynthesiser will pick up the messages itself in renderNextBlock and
+        // route them to MPEInstrument — including any MPE-specific pressure / CC74
+        // / pitch-bend per-note expression coming from an MPE controller.
         for (const auto metadata : midiMessages)
         {
             auto message = metadata.getMessage();
@@ -113,7 +150,11 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
     // Mono (1) and Legato (2) modes:
     //
     // Implement a simple *monophonic, last-note priority* note stack with proper legato
-    // behaviour:
+    // behaviour.  This is custom non-MPE logic that runs BEFORE MPESynthesiser sees the
+    // MIDI buffer — the rewritten note-on / note-off messages are then handed to MPE
+    // as if they were normal MIDI, and MPESynthesiser's noteAdded / noteReleased route
+    // them to our SynthVoice instances via our overridden noteAdded() (which forces
+    // voice reuse via lastMonoVoiceIndex).
     //
     //  - Note stack keeps track of all currently held notes (oldest → newest).
     //  - currentNote is always the last (most recent) note in the stack.
@@ -127,11 +168,6 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
     //      * Releasing the newest note while others are still held returns to the
     //        previous note with the SAME legato behaviour (no ADSR retrigger).
     //
-    // We achieve this by rewriting the MIDI buffer:
-    //  - For legato transitions we set nextNoteIsLegato=true, send a note-off for
-    //    the old note, then a note-on for the new note. SynthVoice::startNote/stopNote
-    //    read this flag to keep the envelope running and only update pitch.
-    //
     juce::MidiBuffer out;
     bool addedNoteOnThisBuffer = false;  // True if we've already added a note-on in this buffer
 
@@ -144,17 +180,6 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
         {
             const int newNote = message.getNoteNumber();
             const int channel = message.getChannel();
-
-            //==========================================================================
-            // Mono/Legato non-overlapping case:
-            // If no keys are currently held (empty noteStack), any voices still
-            // sounding are in their natural ADSR release phase.  We let them fade
-            // out naturally rather than hard-cutting with allNotesOff (which causes
-            // an audible pop by jumping the amplitude to 0 instantly).
-            // The new note will start on a free voice; the brief overlap of the
-            // release tail and the new attack is standard analog mono-synth
-            // behaviour and sounds clean.  If all 8 voices are busy (unlikely),
-            // JUCE voice-stealing reuses the oldest/quietest voice automatically.
 
             // Remove any existing instance of this note in the stack, then push as most recent.
             noteStack.erase(std::remove(noteStack.begin(), noteStack.end(), newNote), noteStack.end());
@@ -173,8 +198,8 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
             }
             else if (mode == 1)
             {
-                // Mono: just send the noteOn. The noteOn override reuses the same
-                // voice (no voice stealing), and startNote retriggers ADSR from its
+                // Mono: just send the noteOn.  noteAdded() reuses the same voice
+                // (no voice stealing), and noteStarted() retriggers ADSR from its
                 // current value without resetting oscillator phases.
                 juce::MidiBuffer filtered;
                 for (const auto meta : out)
@@ -193,7 +218,8 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
                 {
                     // Two note-ons in SAME buffer = simultaneous key press (accidental double-hit).
                     // Use hard cut to prevent stuck notes from legato handoff confusion.
-                    allNotesOff(channel, false);
+                    // turnOffAllVoices replaces juce::Synthesiser::allNotesOff for MPE.
+                    turnOffAllVoices(false);
                     nextNoteIsLegato.store(false);
                     out.clear();
                     out.addEvent(message, pos);
@@ -215,7 +241,6 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
 
             const bool wasTop = (!noteStack.empty() && releasedNote == currentNote);
 
-            // Remove the released note from the stack.
             noteStack.erase(std::remove(noteStack.begin(), noteStack.end(), releasedNote), noteStack.end());
             activeNoteCount.store((int)noteStack.size());
 
@@ -234,12 +259,11 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
             {
                 // No notes left: release the envelope normally.
                 nextNoteIsLegato.store(false);
-                out.addEvent(message, pos); // pass through the original note-off
+                out.addEvent(message, pos);
             }
             else if (mode == 1)
             {
                 // Mono: return to previous held note with full ADSR retrigger.
-                // Same voice is reused via noteOn override.
                 nextNoteIsLegato.store(false);
                 out.addEvent(juce::MidiMessage::noteOn(channel, newTop, (juce::uint8)127), pos);
             }
@@ -254,15 +278,19 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
         }
         else
         {
-            // Pass through non-note events unchanged (pitch bend, CC, etc.)
+            // Pass through non-note events unchanged (pitch bend, CC, channel pressure,
+            // CC74 timbre, etc.).  Critical: MPE expression messages MUST flow through
+            // to MPEInstrument so per-note pressure/timbre/pitchbend continue to work
+            // even in Mono/Legato modes.
             out.addEvent(message, pos);
         }
     }
 
-    // JUCE Synthesiser::processNextBlock renders samples *before* each MIDI event when
-    // samplePosition > 0, so the voice keeps the previous pitch until that offset.
-    // Mono/legato stack rewriting often inherits the host's non-zero position; force
-    // note-on/note-off to sample 0 so pitch updates apply before any audio in the block.
+    // JUCE MPESynthesiser::renderNextBlock chops the audio buffer at MIDI event
+    // boundaries.  Note-on/note-off events with samplePosition > 0 cause the voice
+    // to render the previous pitch until that offset.  Mono/legato stack rewriting
+    // often inherits the host's non-zero position; force note-on/note-off to
+    // sample 0 so pitch updates apply before any audio in the block.
     {
         juce::MidiBuffer coalesced;
         for (const auto metadata : out)
@@ -278,11 +306,3 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
 
     midiMessages.swapWith(out);
 }
-
-
-
-
-
-
-
-

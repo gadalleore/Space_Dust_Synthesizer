@@ -72,13 +72,36 @@ namespace
 }
 
 //==============================================================================
-// -- Note On/Off --
+// -- MPE Note Callbacks --
+//
+// noteStarted() / noteStopped() / notePressureChanged() / notePitchbendChanged() /
+// noteTimbreChanged() / noteKeyStateChanged() replace the old SynthesiserVoice
+// methods startNote / stopNote / pitchWheelMoved / controllerMoved.  All info
+// about the current note is available via the inherited `currentlyPlayingNote`
+// MPENote member.
 
-void SynthVoice::startNote(int midiNoteNumber, float velocity,
-                           juce::SynthesiserSound* sound,
-                           int currentPitchWheelPosition)
+void SynthVoice::noteStarted()
 {
-    juce::ignoreUnused(sound);
+    // -- Read MPE note state --
+    // currentlyPlayingNote is set by MPESynthesiser::startVoice() before this call.
+    //   initialNote                       : MIDI note number 0..127
+    //   noteOnVelocity.asUnsignedFloat()  : 0..1 velocity
+    //   totalPitchbendInSemitones         : signed double — combined master +
+    //                                       per-note pitch bend in semitones,
+    //                                       already weighted by the active zone
+    //                                       (or legacy-mode) bend range.
+    //   pressure / timbre                 : MPEValues, asUnsignedFloat() in 0..1
+    const auto& note = currentlyPlayingNote;
+    const int   midiNoteNumber = static_cast<int>(note.initialNote);
+    const float velocity       = note.noteOnVelocity.asUnsignedFloat();
+
+    // Pull current MPE expression state up-front so the very first sample of
+    // this note already reflects the controller's actual pressure / timbre /
+    // bend values (not the zeroed defaults).  These members are also written
+    // to from the MPE callbacks below as the controller moves.
+    mpeBendSemitones = note.totalPitchbendInSemitones;
+    mpePressure01    = note.pressure.asUnsignedFloat();
+    mpeTimbre01      = note.timbre.asUnsignedFloat();
 
     // ALWAYS cancel any pending voice fade so the voice is at full amplitude
     // immediately.  This is critical for fast note repetition in mono mode —
@@ -97,15 +120,13 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
 
     const int voiceMode = (synthesiser != nullptr) ? synthesiser->getVoiceModeIndex() : 0;
 
-    // Initialize MIDI pitch wheel from note-on when starting fresh (synth may not have sent pitchWheelMoved yet).
-    // Mono/legato: skip — startNote's wheel argument is often center (8192) for synthesized stack note-ons,
-    // which would wipe lastPitchWheelNormalized from pitchWheelMoved until the next wheel MIDI (wrong pitch).
-    const bool skipPitchWheelFromNoteOnArg = (voiceMode != 0 && wasVoiceActive) || isLegatoNote;
-    if (!skipPitchWheelFromNoteOnArg)
-    {
-        lastPitchWheelNormalized = (static_cast<float>(currentPitchWheelPosition) - 8192.0f) / 8192.0f;
-        lastPitchWheelNormalized = juce::jlimit(-1.0f, 1.0f, lastPitchWheelNormalized);
-    }
+    // MPE: pitch wheel is no longer fed via a separate startNote() argument.
+    // mpeBendSemitones (set above from currentlyPlayingNote.totalPitchbendInSemitones)
+    // is the single source of truth for both the master pitch wheel AND the per-note
+    // MPE bend.  For mono/legato voice handoff we deliberately KEEP the existing
+    // mpeBendSemitones value (don't reset to 0) so the wheel doesn't snap on legato
+    // overlaps — MPESynthesiser will fire notePitchbendChanged() if it actually
+    // changed.
 
     // Target pitch: MIDI note frequency (base frequency, tuning applied in renderNextBlock)
     auto baseFrequency = juce::MidiMessage::getMidiNoteInHertz(midiNoteNumber);
@@ -329,15 +350,17 @@ void SynthVoice::startNote(int midiNoteNumber, float velocity,
     }
 }
 
-void SynthVoice::stopNote(float velocity, bool allowTailOff)
+void SynthVoice::noteStopped(bool allowTailOff)
 {
-    juce::ignoreUnused(velocity);
+    // MPE replacement for juce::SynthesiserVoice::stopNote(velocity, allowTailOff).
+    // The semantics are identical: allowTailOff=true → release the envelope normally;
+    // allowTailOff=false → hard stop (we apply a short voice fade to avoid clicks).
 
-    // Preserving-voice / legato handoff: startNote follows immediately inside
-    // startVoice.  Do NOT start a fade or touch ADSR — just clear the JUCE note
-    // assignment so startVoice can reassign.  The voice keeps producing audio
-    // with all DSP state intact (oscillator phases, ADSR level, filter).
-    // This is the standard JUCE mono/legato approach (Gin synth, forum consensus).
+    // Preserving-voice / legato handoff: noteStarted follows immediately inside
+    // MPESynthesiser::startVoice.  Do NOT start a fade or touch ADSR — just
+    // clear the currentlyPlayingNote so the synth can reassign.  The voice keeps
+    // producing audio with all DSP state intact (oscillator phases, ADSR level,
+    // filter).  This is the standard JUCE mono/legato approach.
     if (synthesiser != nullptr
         && (synthesiser->isPreservingVoice() || synthesiser->isNextNoteLegato()))
     {
@@ -354,13 +377,48 @@ void SynthVoice::stopNote(float velocity, bool allowTailOff)
     }
     else
     {
-        // Hard stop (allNotesOff, voice stealing, etc.): start a short linear
+        // Hard stop (turnOffAllVoices, voice stealing, etc.): start a short linear
         // fade-out instead of instantly killing the signal.  The voice keeps
         // running with all DSP intact while voiceFade ramps 1→0.  Only when
         // it reaches zero does renderNextBlock do the full cleanup.
         voiceFade = 1.0f;
         voiceFadeSamplesRemaining = kVoiceFadeLength;
     }
+}
+
+//==============================================================================
+// -- MPE Expression Callbacks --
+//
+// Fired from MPESynthesiser when the controller updates pressure / pitch-bend /
+// timbre / key state for this voice's currently playing MPENote.  These are
+// real-time safe (called in the audio rendering callback by MPEInstrument),
+// so we keep them lock-free — just cache the new value, the audio thread will
+// pick it up in the next renderNextBlock sample loop.
+
+void SynthVoice::notePressureChanged()
+{
+    // pressure is 0..1; we apply it as multiplicative amplitude boost in renderNextBlock.
+    mpePressure01 = currentlyPlayingNote.pressure.asUnsignedFloat();
+}
+
+void SynthVoice::notePitchbendChanged()
+{
+    // totalPitchbendInSemitones combines master + per-note bend and is already
+    // weighted by the active zone's bend range (or legacy-mode bend range).
+    // Replaces the old pitchWheelMoved logic.
+    mpeBendSemitones = currentlyPlayingNote.totalPitchbendInSemitones;
+}
+
+void SynthVoice::noteTimbreChanged()
+{
+    // timbre (CC74 / Z) is 0..1; mapped to filter cutoff offset in renderNextBlock.
+    mpeTimbre01 = currentlyPlayingNote.timbre.asUnsignedFloat();
+}
+
+void SynthVoice::noteKeyStateChanged()
+{
+    // No-op: sustain/sostenuto pedal state changes don't require any audio-side
+    // action here — the ADSR is already in its sustain/release stage as appropriate.
 }
 
 void SynthVoice::debugLogPitchAfterStartNote(int midiNoteNumber)
@@ -371,7 +429,8 @@ void SynthVoice::debugLogPitchAfterStartNote(int midiNoteNumber)
     ++pitchTraceSeq;
     const int mode = synthesiser->getVoiceModeIndex();
     const double midiHz = juce::MidiMessage::getMidiNoteInHertz(midiNoteNumber);
-    const int jn = getCurrentlyPlayingNote();
+    // MPE: getCurrentlyPlayingNote() now returns MPENote (not int).
+    const int jn = currentlyPlayingNote.isValid() ? static_cast<int>(currentlyPlayingNote.initialNote) : -1;
     juce::String extra;
     if (std::abs(targetPitch - midiHz) > 0.5)
         extra += "target_neq_midiHz;";
@@ -399,12 +458,14 @@ void SynthVoice::debugLogPitchRenderSample0(double osc1HzFinal, double baseHzAft
 #if SPACE_DUST_LOG_MONO_LEGATO_PITCH
     if (synthesiser == nullptr || synthesiser->getVoiceModeIndex() == 0)
         return;
-    const int n = getCurrentlyPlayingNote();
+    const int n = currentlyPlayingNote.isValid() ? static_cast<int>(currentlyPlayingNote.initialNote) : -1;
     const double midiHz = (n >= 0 ? juce::MidiMessage::getMidiNoteInHertz(n) : 0.0);
-    const float totalBendNorm = juce::jlimit(-1.0f, 1.0f, lastPitchWheelNormalized + pitchBend);
-    const float bendSt = totalBendNorm * pitchBendAmountFloat;
-    const double bendRatio = std::pow(2.0, static_cast<double>(bendSt) / 12.0);
-    juce::String extra = "bendNorm=" + juce::String((double)totalBendNorm, 4) + ";bendSt=" + juce::String((double)bendSt, 4);
+    // MPE bend = mpeBendSemitones (from controller / wheel) + manual UI bend.
+    const float manualBendSt = juce::jlimit(-1.0f, 1.0f, pitchBend) * pitchBendAmountFloat;
+    const double bendSt = mpeBendSemitones + static_cast<double>(manualBendSt);
+    const double bendRatio = std::pow(2.0, bendSt / 12.0);
+    juce::String extra = "mpeBendSt=" + juce::String(mpeBendSemitones, 4)
+                       + ";manualBendSt=" + juce::String((double)manualBendSt, 4);
 
     appendSpaceDustPitchCsvRow(
         juce::String("RENDER,") + juce::String((int)pitchTraceSeq) + "," + juce::String(n) + ","
@@ -424,19 +485,13 @@ void SynthVoice::debugLogPitchRenderSample0(double osc1HzFinal, double baseHzAft
 
 //==============================================================================
 // -- MIDI Controllers --
-
-void SynthVoice::controllerMoved(int controllerNumber, int newControllerValue)
-{
-    juce::ignoreUnused(controllerNumber, newControllerValue);
-    // Could implement MIDI CC control here if needed
-}
-
-void SynthVoice::pitchWheelMoved(int newPitchWheelValue)
-{
-    // MIDI pitch wheel: 0-16383, center at 8192. Normalize to -1..+1
-    lastPitchWheelNormalized = (static_cast<float>(newPitchWheelValue) - 8192.0f) / 8192.0f;
-    lastPitchWheelNormalized = juce::jlimit(-1.0f, 1.0f, lastPitchWheelNormalized);
-}
+//
+// MPESynthesiser routes all expression (pitch bend, channel pressure, CC74 timbre)
+// through the MPENote dimensions, surfaced via the notePitchbendChanged /
+// notePressureChanged / noteTimbreChanged callbacks above.  We therefore no
+// longer need controllerMoved() or pitchWheelMoved() overrides — they belonged
+// to the old juce::SynthesiserVoice API.  Generic non-MPE MIDI CCs would arrive
+// at SpaceDustSynthesiser::handleController if we ever choose to override it.
 
 //==============================================================================
 // -- Waveform Generation --
@@ -794,12 +849,25 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             pitchEnvSamplesElapsed += 1.0f;
         
         //==============================================================================
-        // -- PITCH BEND (separate from pitch envelope) --
-        // MIDI wheel + manual slider, scaled by bend range. Applied to pitch-for-oscillators.
-        // Bend amount is in semitones (0-24); full wheel = ±amount semitones.
-        float totalBendNorm = juce::jlimit(-1.0f, 1.0f, lastPitchWheelNormalized + pitchBend);
-        float bendSemitones = totalBendNorm * pitchBendAmountFloat;  // Direct: 2 st = 2 semitones
-        double bendRatio = std::pow(2.0, static_cast<double>(bendSemitones) / 12.0);
+        // -- PITCH BEND (MPE-aware, separate from pitch envelope) --
+        //
+        // Total pitch bend = MPE bend (master wheel + per-note bend, in semitones)
+        //                  + manual UI slider (pitchBend in -1..+1, scaled by
+        //                    pitchBendAmountFloat semitones).
+        //
+        // mpeBendSemitones is populated by notePitchbendChanged() AND by noteStarted()
+        // — it's already in semitones, already correctly weighted by the active
+        // zone's per-note bend range (or the legacy-mode pitchbend range).  For a
+        // Seaboard sending per-note pitch CC on its own channel this captures the
+        // smooth glissando perfectly; for a regular keyboard sending master pitch
+        // bend on channel 1, the legacy-mode bend range applies (48 semitones by
+        // default — see SpaceDustSynthesiser).
+        //
+        // The manual UI bend slider is still useful for users who want a software
+        // pitch bend independent of any hardware wheel.
+        const float manualBendSt = juce::jlimit(-1.0f, 1.0f, pitchBend) * pitchBendAmountFloat;
+        const double totalBendSt = mpeBendSemitones + static_cast<double>(manualBendSt);
+        double bendRatio = std::pow(2.0, totalBendSt / 12.0);
         double osc1Freq = pitchForOscillators * bendRatio;
         double osc2Freq = pitchForOscillators * bendRatio;
         
@@ -888,7 +956,10 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         if (!std::isfinite(osc1Freq) || !std::isfinite(osc2Freq))
         {
             reportDspSanitize(processor);
-            const int n = getCurrentlyPlayingNote();
+            // MPE: getCurrentlyPlayingNote() returns MPENote — use initialNote when valid.
+            const int n = currentlyPlayingNote.isValid()
+                             ? static_cast<int>(currentlyPlayingNote.initialNote)
+                             : -1;
             const double safeHz = juce::jlimit(20.0, 20000.0,
                                                n >= 0 ? (double) juce::MidiMessage::getMidiNoteInHertz(n) : 440.0);
             osc1Freq = safeHz;
@@ -988,6 +1059,19 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         smoothedEnvelope += envSmoothCoeff * (rawEnvelope - smoothedEnvelope);
         float envelope = smoothedEnvelope;
         float filterEnvOutput = filterAdsr.getNextSample();
+
+        //==============================================================================
+        // -- MPE PRESSURE → AMPLITUDE MODULATION --
+        // Pressure (Y-axis on a Seaboard / channel aftertouch on a normal keyboard) is
+        // 0..1.  Map it to a smooth multiplicative amplitude boost (1.0 .. 2.0): at
+        // rest the pressure is 0 → no change, at full pressure the envelope is
+        // doubled.  This is real-time safe (single mul) and feels natural on Roli /
+        // Sensel / Linnstrument controllers without any extra parameter wiring.
+        //
+        // For non-MPE controllers that don't send channel pressure, mpePressure01
+        // stays at 0 → no effect, full backward compatibility.
+        // mpePressureDepth (0..1) scales the modulation: 0 = pressure ignored, 1 = full boost.
+        envelope *= juce::jlimit(0.0f, 2.0f, 1.0f + mpePressure01 * mpePressureDepth);
         
         // Modulate filter cutoff with filter envelope and LFO.
         // Amount blends unmodulated cutoff (0%) with full-range envelope sweep (100%):
@@ -1014,7 +1098,23 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
 
         const float lfoFilterScale = 0.5f;
         float lfoFactor = juce::jmax(0.0f, 1.0f + filterMod * lfoFilterScale);
-        float modulatedCutoff = std::exp(juce::jlimit(logMin, logMax, logModulated)) * lfoFactor;
+
+        //==============================================================================
+        // -- MPE TIMBRE → FILTER CUTOFF MODULATION --
+        // Timbre (Z-axis / CC74 / Seaboard slide) is 0..1.  Centre (no slide) = 0.5.
+        // We map (timbre - 0.5) * 2 → -1..+1 and treat it as a log-frequency offset of
+        // up to ±2 octaves (4 octaves total range) on the filter cutoff.  Adding it
+        // *after* the env+drift logKnob computation in log-space means it sweeps the
+        // filter cleanly across octaves regardless of where the cutoff knob sits.
+        //
+        // For non-MPE controllers that don't send CC74, mpeTimbre01 stays at 0.5 →
+        // zero offset, full backward compatibility.
+        // mpeTimbreDepth (0..1) scales the modulation: 0 = slide ignored, 1 = full ±2 octaves.
+        const float timbreBipolar = juce::jlimit(-1.0f, 1.0f, (mpeTimbre01 - 0.5f) * 2.0f) * mpeTimbreDepth;
+        // ±2 octaves = ±ln(4) ≈ ±1.386 in natural-log units.
+        const float timbreLogOffset = timbreBipolar * static_cast<float>(std::log(4.0));
+
+        float modulatedCutoff = std::exp(juce::jlimit(logMin, logMax, logModulated + timbreLogOffset)) * lfoFactor;
         modulatedCutoff = juce::jlimit(20.0f, 20000.0f, modulatedCutoff);
         smoothedFilterCutoffHz += filterCutoffSmoothCoeff * (modulatedCutoff - smoothedFilterCutoffHz);
         filter.setCutoffFrequency(smoothedFilterCutoffHz);
@@ -1312,25 +1412,24 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
 //==============================================================================
 // -- Sample Rate Setup --
 
-void SynthVoice::setCurrentPlaybackSampleRate(double newRate)
+void SynthVoice::setCurrentSampleRate(double newRate)
 {
     //==============================================================================
     // -- CRITICAL: Safe Sample Rate Update --
-    // 
-    // This method is called by juce::Synthesiser:
-    // 1. Automatically when voices are added (with sampleRate=0) ← This is the problem!
+    //
+    // MPE: replaces juce::SynthesiserVoice::setCurrentPlaybackSampleRate().
+    // juce::MPESynthesiserVoice exposes this as a virtual method, called by
+    // MPESynthesiser whenever its setCurrentPlaybackSampleRate() runs.
+    //
+    // This method is called:
+    // 1. Automatically when voices are added (with sampleRate=0) ← we must ignore!
     // 2. When synth.setCurrentPlaybackSampleRate() is called explicitly
-    // 
+    //
     // IMPORTANT: DSP initialization happens in prepareToPlay(), NOT here.
     // This method should only update the stored sample rate if it's valid.
-    //
-    // Why we need special handling:
-    // - JUCE calls this automatically when voices are added (sampleRate=0)
-    // - We must ignore invalid sample rates (0 or negative)
-    // - If DSP is already initialized via prepareToPlay(), we only update the rate
-    // - If sample rate changes later, we re-initialize DSP
-    
-    SynthesiserVoice::setCurrentPlaybackSampleRate(newRate);
+
+    // Let the base class store the new rate in its currentSampleRate member.
+    juce::MPESynthesiserVoice::setCurrentSampleRate(newRate);
     
     // CRITICAL: Ignore invalid sample rates (especially 0 when voices are first added)
     // JUCE automatically calls this with 0 when voices are added, before we can
@@ -1400,7 +1499,10 @@ void SynthVoice::setOsc1CoarseTune(float semitones)
     // block because updateVoicesWithParameters runs before MIDI is applied in renderNextBlock.
     if (isActive)
     {
-        const int n = getCurrentlyPlayingNote();
+        // MPE: currentlyPlayingNote is an MPENote; pull initialNote when valid.
+        const int n = currentlyPlayingNote.isValid()
+                          ? static_cast<int>(currentlyPlayingNote.initialNote)
+                          : -1;
         const double baseHz = (currentPitch > 0.0)
                                   ? juce::jlimit(20.0, 20000.0, currentPitch)
                                   : (n >= 0 ? juce::MidiMessage::getMidiNoteInHertz(n) : 440.0);
@@ -1413,7 +1515,9 @@ void SynthVoice::setOsc1Detune(float cents)
     osc1Detune = juce::jlimit(-50.0f, 50.0f, cents);
     if (isActive)
     {
-        const int n = getCurrentlyPlayingNote();
+        const int n = currentlyPlayingNote.isValid()
+                          ? static_cast<int>(currentlyPlayingNote.initialNote)
+                          : -1;
         const double baseHz = (currentPitch > 0.0)
                                   ? juce::jlimit(20.0, 20000.0, currentPitch)
                                   : (n >= 0 ? juce::MidiMessage::getMidiNoteInHertz(n) : 440.0);
@@ -1426,7 +1530,9 @@ void SynthVoice::setOsc2CoarseTune(float semitones)
     osc2CoarseTune = juce::jlimit(-24.0f, 24.0f, semitones);
     if (isActive)
     {
-        const int n = getCurrentlyPlayingNote();
+        const int n = currentlyPlayingNote.isValid()
+                          ? static_cast<int>(currentlyPlayingNote.initialNote)
+                          : -1;
         const double baseHz = (currentPitch > 0.0)
                                   ? juce::jlimit(20.0, 20000.0, currentPitch)
                                   : (n >= 0 ? juce::MidiMessage::getMidiNoteInHertz(n) : 440.0);
@@ -1439,7 +1545,9 @@ void SynthVoice::setOsc2Detune(float cents)
     osc2Detune = juce::jlimit(-50.0f, 50.0f, cents);
     if (isActive)
     {
-        const int n = getCurrentlyPlayingNote();
+        const int n = currentlyPlayingNote.isValid()
+                          ? static_cast<int>(currentlyPlayingNote.initialNote)
+                          : -1;
         const double baseHz = (currentPitch > 0.0)
                                   ? juce::jlimit(20.0, 20000.0, currentPitch)
                                   : (n >= 0 ? juce::MidiMessage::getMidiNoteInHertz(n) : 440.0);

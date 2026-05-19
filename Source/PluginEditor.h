@@ -395,6 +395,21 @@ private:
     juce::Label glideTimeLabel;
     
     //==============================================================================
+    // -- GUI Components: MPE Section (Modulation tab) --
+
+    // GroupComponent with tooltip support (juce::GroupComponent has no setTooltip by default)
+    struct TooltipGroupComponent : public juce::GroupComponent, public juce::SettableTooltipClient {};
+    TooltipGroupComponent mpeGroup;
+    juce::ComboBox mpeModeCombo;
+    juce::Label mpeModeLabel;
+    juce::Slider mpePitchBendRangeSlider;
+    juce::Label mpePitchBendRangeLabel;
+    juce::Slider mpePressureDepthSlider;
+    juce::Label mpePressureDepthLabel;
+    juce::Slider mpeTimbreDepthSlider;
+    juce::Label mpeTimbreDepthLabel;
+
+    //==============================================================================
     // -- GUI Components: Envelope Section --
     
     juce::GroupComponent envelopeGroup;
@@ -985,6 +1000,12 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep14Attachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep15Attachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateStep16Attachment;
+
+    // MPE Attachments (Modulation tab)
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> mpeModeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mpePitchBendRangeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mpePressureDepthAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mpeTimbreDepthAttachment;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpaceDustAudioProcessorEditor)
 };

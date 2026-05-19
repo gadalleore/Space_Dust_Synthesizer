@@ -1,9 +1,10 @@
 #pragma once
 
 #include <cstdint>
+// MPE support: juce_audio_basics provides MPESynthesiserVoice, MPENote, MPEValue
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
-#include "SynthSound.h"
+#include "SynthSound.h"   // Kept for build compatibility (some headers still include it indirectly)
 #include <array>
 #include <numeric>
 
@@ -12,26 +13,44 @@ class SpaceDustAudioProcessor;
 
 //==============================================================================
 /**
-    SpaceDust Synthesiser Voice
-    
+    SpaceDust Synthesiser Voice (MPE-aware)
+
     A polyphonic voice with dual oscillators, multimode filter, and ADSR envelope.
     This voice generates cosmic subtractive synthesis tones with real-time safe processing.
-    
+
+    MPE migration notes:
+    - Inherits from juce::MPESynthesiserVoice (was juce::SynthesiserVoice).
+    - Replaces startNote / stopNote with MPE callbacks:
+        noteStarted()             — equivalent of startNote; read currentlyPlayingNote
+                                    (an MPENote) for note number, velocity, initial bend/timbre.
+        noteStopped(bool tailOff) — equivalent of stopNote.
+        notePressureChanged()     — MPE Y-axis (channel pressure / aftertouch).
+        notePitchbendChanged()    — MPE pitch bend (master OR per-note); we read
+                                    currentlyPlayingNote.totalPitchbendInSemitones.
+        noteTimbreChanged()       — MPE Z-axis / CC74 (Seaboard slide).
+        noteKeyStateChanged()     — sustain pedal etc; left empty by default.
+    - juce::MPESynthesiserVoice exposes currentSampleRate (double) and the
+      `currentlyPlayingNote` MPENote member.  We override setCurrentSampleRate()
+      so that DSP can update if the host changes sample rate at runtime.
+    - canPlaySound / controllerMoved / pitchWheelMoved are gone — MPE handles
+      all of that through the MPEInstrument internally.
+
     Signal Path: Osc1 (with detune) + Osc2 (with detune) → Mix → Filter → ADSR Envelope → Output
-    
+
     Real-time Safety: All processing is allocation-free and uses smooth parameter updates.
-    
-    ADSR Envelope:
-    - Proper 4-stage envelope: Attack → Decay → Sustain → Release
-    - Linear amplitude ramping for real-time safety
-    - Long cosmic tails supported (release up to 20 seconds)
-    
+
+    MPE expression mapping (applied during renderNextBlock):
+    - Pressure (Y)       → multiplicative amplitude modulation (1 + mpePressure01)
+    - Pitch bend         → totalPitchbendInSemitones is added to the existing
+                           pitch bend semitones (manual UI slider + this value).
+    - Timbre (CC74 / Z)  → multiplicative filter cutoff modulation in log-frequency space.
+
     Detuning:
     - Independent detune for each oscillator (coarse + fine)
     - Applied directly to oscillator pitch before phase calculation
     - Creates shimmering, unison-like effects
 */
-class SynthVoice : public juce::SynthesiserVoice
+class SynthVoice : public juce::MPESynthesiserVoice
 {
 public:
     //==============================================================================
@@ -52,26 +71,46 @@ public:
     };
 
     //==============================================================================
-    // SynthesiserVoice overrides
-    bool canPlaySound(juce::SynthesiserSound* sound) override
-    {
-        return dynamic_cast<SynthSound*>(sound) != nullptr;
-    }
+    // -- MPESynthesiserVoice overrides --
+    // These are the MPE-equivalents of startNote/stopNote/controllerMoved/pitchWheelMoved.
+    // Each must be fast and real-time safe (called from the audio thread).
 
-    void startNote(int midiNoteNumber, float velocity,
-                   juce::SynthesiserSound* sound,
-                   int currentPitchWheelPosition) override;
+    /** Called by MPESynthesiser when a new note has started on this voice.
+        Equivalent to juce::SynthesiserVoice::startNote.  Read note info via the
+        inherited `currentlyPlayingNote` MPENote member. */
+    void noteStarted() override;
 
-    void stopNote(float velocity, bool allowTailOff) override;
+    /** Called by MPESynthesiser when this voice's note has stopped.
+        Equivalent to juce::SynthesiserVoice::stopNote.  If allowTailOff is false,
+        we still apply a short linear voice fade to avoid clicks. */
+    void noteStopped (bool allowTailOff) override;
 
-    void controllerMoved(int controllerNumber, int newControllerValue) override;
+    /** Called when the MPE pressure ("Y" axis / channel pressure) dimension changes.
+        We map this to a multiplicative amplitude boost (0..+100%). */
+    void notePressureChanged() override;
 
-    void pitchWheelMoved(int newPitchWheelValue) override;
+    /** Called when the MPE pitch-bend dimension changes (master OR per-note).
+        currentlyPlayingNote.totalPitchbendInSemitones already accounts for both
+        the per-note bend value and the appropriate bend range from the active
+        zone (or legacy-mode range). */
+    void notePitchbendChanged() override;
 
+    /** Called when the MPE timbre ("Z" axis / CC74) dimension changes.
+        Mapped to a filter cutoff modulation in log-frequency space. */
+    void noteTimbreChanged() override;
+
+    /** Called when the key state changes (e.g. sustain pedal toggled while the key
+        is up).  No special handling here. */
+    void noteKeyStateChanged() override;
+
+    /** Renders this voice into the supplied buffer.  Same signature as the
+        regular SynthesiserVoice override; called by MPESynthesiser. */
     void renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                          int startSample, int numSamples) override;
 
-    void setCurrentPlaybackSampleRate(double newRate) override;
+    /** Updates the voice's internal sample rate.  Called from the MPESynthesiser
+        whenever setCurrentPlaybackSampleRate() is called on the parent synth. */
+    void setCurrentSampleRate(double newRate) override;
     
     /**
         Prepare voice DSP with valid sample rate and block size.
@@ -166,6 +205,11 @@ public:
     void setLfoTargets(int lfo1Target, int lfo2Target);  // 0=Pitch, 1=Filter, 2=MasterVol, 3=Osc1, 4=Osc2, 5=Noise
     // Analog Drift: emulates hardware component tolerance and slow oscillator/filter drift
     void setAnalogDrift(float amount) { analogDriftAmount = juce::jlimit(0.0f, 1.0f, amount); }
+
+    // MPE expression depth controls (0.0 = off, 1.0 = full).
+    // These scale the raw per-note MPE values before they modulate the voice.
+    void setMpePressureDepth(float depth01) { mpePressureDepth = juce::jlimit(0.0f, 1.0f, depth01); }
+    void setMpeTimbreDepth(float depth01)   { mpeTimbreDepth   = juce::jlimit(0.0f, 1.0f, depth01); }
     void setSynthesiser(SpaceDustSynthesiser* s) { synthesiser = s; }
     void setProcessor(SpaceDustAudioProcessor* p) { processor = p; }
     
@@ -366,10 +410,38 @@ private:
     int lfo1TargetCached = 0;  // 0=Pitch, 1=Filter, 2=MasterVol, 3=Osc1, 4=Osc2, 5=Noise
     int lfo2TargetCached = 1;
     
-    // Pitch bend (from processor, updated every block) - separate from pitch envelope
-    float pitchBendAmountFloat = 0.0f; // 0-24 semitones (range for bend, 0 = no bend)
-    float pitchBend = 0.0f;            // Manual pitch bend (-1 to 1)
-    float lastPitchWheelNormalized = 0.0f;  // MIDI pitch wheel -1 to 1 (from pitchWheelMoved)
+    // Pitch bend (from processor, updated every block) - separate from pitch envelope.
+    // pitchBendAmountFloat is the bend range used by the *manual* UI bend slider
+    // (`pitchBend`).  For MPE / hardware MIDI bend we use `mpeBendSemitones` instead,
+    // which is taken directly from currentlyPlayingNote.totalPitchbendInSemitones
+    // (already in semitones, already weighted by the active zone's bend range or by
+    // legacy-mode bend range).  The two are summed in renderNextBlock.
+    float pitchBendAmountFloat = 0.0f; // 0-24 semitones (range for manual bend slider)
+    float pitchBend = 0.0f;            // Manual pitch bend (-1 to 1) from UI slider
+
+    //==============================================================================
+    // -- MPE per-note expression state --
+    // All three dimensions are populated in the corresponding notePressureChanged /
+    // notePitchbendChanged / noteTimbreChanged callbacks AND inside noteStarted (so
+    // the very first sample of a new note already reflects the controller's current
+    // expression values).  They are read in renderNextBlock to modulate the voice.
+    //
+    // mpeBendSemitones: master + per-note pitch bend in semitones (signed double).
+    //                   For legacy mode this is simply (wheel * legacyBendRange).
+    //                   For MPE this is master_pb_semitones + per_note_pb_semitones.
+    // mpePressure01:    pressure (channel pressure / Y axis), 0.0 .. 1.0 (centre is 0.0
+    //                   under the default trackingMode = "pressureLatest").  We map
+    //                   this to a multiplicative amplitude boost.
+    // mpeTimbre01:      timbre (CC74 / Z axis / slide), 0.0 .. 1.0.  We map this to
+    //                   filter cutoff modulation in log-frequency space.
+    double mpeBendSemitones = 0.0;
+    float  mpePressure01    = 0.0f;
+    float  mpeTimbre01      = 0.5f;
+
+    // MPE expression depth: 0.0 = expression dimension disabled, 1.0 = full range.
+    // Set from the UI via setMpePressureDepth / setMpeTimbreDepth.
+    float  mpePressureDepth = 1.0f;
+    float  mpeTimbreDepth   = 1.0f;
     
     //==============================================================================
     // -- Helper Methods --

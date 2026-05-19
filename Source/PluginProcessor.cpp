@@ -36,6 +36,12 @@
 // Space Dust by [your name] – the cosmic sine machine
 //==============================================================================
 
+// VLD must be the first include for accurate call-stack capture in leak reports.
+// Only active when CMake is configured with -DENABLE_VLD=ON (Debug builds only).
+#if defined(VLD_ENABLED) && VLD_ENABLED && defined(_DEBUG)
+  #include <vld.h>
+#endif
+
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "SpaceDustSynthesiser.h"
@@ -189,6 +195,47 @@ namespace
 
     // Legacy alias
     void appendFilterSyncLog(const juce::String& msg) { logToFile(msg); }
+
+    //==========================================================================
+    // -- Safe parameter read helper --
+    // Returns the parameter's current value, or a fallback if the parameter ID
+    // is missing from the APVTS layout. Direct `*apvts.getRawParameterValue(id)`
+    // dereferences crash if the ID is wrong; this helper turns that into a
+    // recoverable fallback. Use in state-restore and voice-update paths where
+    // a missing param ID should not take the host down.
+    inline float safeGetParam(juce::AudioProcessorValueTreeState& apvts,
+                              const char* id,
+                              float fallback = 0.0f) noexcept
+    {
+        if (auto* atomic = apvts.getRawParameterValue(id))
+            return atomic->load();
+        return fallback;
+    }
+
+    // Overload for runtime-built parameter IDs (e.g. "finalEQB" + n + "Freq").
+    inline float safeGetParam(juce::AudioProcessorValueTreeState& apvts,
+                              const juce::String& id,
+                              float fallback = 0.0f) noexcept
+    {
+        if (auto* atomic = apvts.getRawParameterValue(id))
+            return atomic->load();
+        return fallback;
+    }
+
+    //==========================================================================
+    // -- Crash-safety marker for state restoration --
+    // setStateInformation() writes this marker on entry and deletes it on
+    // successful completion. If the marker is still present on the next entry,
+    // the previous attempt crashed mid-restore — we skip the restore and load
+    // defaults so the host can at least open the project. Breaks crash-on-reload
+    // loops where a corrupted saved state would otherwise kill the host every
+    // time it tries to recover.
+    juce::File getStateRestoreMarker()
+    {
+        return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
+                   .getChildFile("SpaceDust")
+                   .getChildFile("state_restore_in_progress.marker");
+    }
 }
 
 //==============================================================================
@@ -333,7 +380,9 @@ SpaceDustAudioProcessor::SpaceDustAudioProcessor()
         apvts.addParameterListener(juce::ParameterID{"filterEnvAttack", 1}.getParamID(), this);
         apvts.addParameterListener(juce::ParameterID{"filterEnvDecay", 1}.getParamID(), this);
         apvts.addParameterListener(juce::ParameterID{"filterEnvRelease", 1}.getParamID(), this);
-        DBG("Space Dust: Added listeners for LFO retrigger and filter envelope");
+        apvts.addParameterListener(juce::ParameterID{"mpeMode", 1}.getParamID(), this);
+        apvts.addParameterListener(juce::ParameterID{"mpePitchBendRange", 1}.getParamID(), this);
+        DBG("Space Dust: Added listeners for LFO retrigger, filter envelope, and MPE");
     }
     catch (const std::exception& e)
     {
@@ -429,6 +478,8 @@ SpaceDustAudioProcessor::~SpaceDustAudioProcessor()
     apvts.removeParameterListener(juce::ParameterID{"filterEnvAttack", 1}.getParamID(), this);
     apvts.removeParameterListener(juce::ParameterID{"filterEnvDecay", 1}.getParamID(), this);
     apvts.removeParameterListener(juce::ParameterID{"filterEnvRelease", 1}.getParamID(), this);
+    apvts.removeParameterListener(juce::ParameterID{"mpeMode", 1}.getParamID(), this);
+    apvts.removeParameterListener(juce::ParameterID{"mpePitchBendRange", 1}.getParamID(), this);
     DBG("Space Dust: Parameter listeners removed");
     
     //==============================================================================
@@ -450,11 +501,12 @@ SpaceDustAudioProcessor::~SpaceDustAudioProcessor()
     DBG("Space Dust: Clearing voices (count: " + safeStringFromNumber(synth.getNumVoices()) + ")");
     synth.clearVoices();           // Clear all voices (deletes them)
     DBG("Space Dust: Voices cleared");
-    
-    DBG("Space Dust: Clearing sounds (count: " + safeStringFromNumber(synth.getNumSounds()) + ")");
-    synth.clearSounds();           // Clear all sounds (clears ReferenceCountedArray)
-    DBG("Space Dust: Sounds cleared");
-    
+
+    // MPE: juce::MPESynthesiser does NOT use SynthesiserSound, so there is no
+    // clearSounds()/getNumSounds() to call.  The previous Synthesiser-based
+    // implementation needed those to silence LeakedObjectDetector in Ableton; with
+    // MPESynthesiser there is no ReferenceCountedArray<SynthesiserSound> to clear.
+
     synth.setCurrentPlaybackSampleRate(0.0); // Reset sample rate to clean state
     DBG("Space Dust: Sample rate reset");
     
@@ -562,6 +614,7 @@ void SpaceDustAudioProcessor::changeProgramName(int index, const juce::String& n
 void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     logToFile("prepareToPlay START - sr=" + juce::String(sampleRate) + ", block=" + juce::String(samplesPerBlock));
+#if JUCE_DEBUG
     try
     {
         juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -571,10 +624,10 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         juce::FileOutputStream out(logFile);
         if (out.openedOk())
         {
-            out.writeText("Space Dust Debug Log - New session started: " + 
+            out.writeText("Space Dust Debug Log - New session started: " +
                          juce::Time::getCurrentTime().toString(true, true) + "\n", false, false, nullptr);
             out.writeText("Log init: path=" + logFile.getFullPathName() + "\n", false, false, nullptr);
-            out.writeText("Space Dust: prepareToPlay START - sr=" + safeStringFromNumber(sampleRate) + 
+            out.writeText("Space Dust: prepareToPlay START - sr=" + safeStringFromNumber(sampleRate) +
                          ", block=" + safeStringFromNumber(samplesPerBlock) + "\n", false, false, nullptr);
             out.flush();
         }
@@ -584,6 +637,7 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         DBG("Space Dust: Exception initializing log: " + juce::String(e.what()));
     }
     catch (...) {}
+#endif
     
     DBG("Space Dust: prepareToPlay START - sr=" + safeStringFromNumber(sampleRate) + ", block=" + safeStringFromNumber(samplesPerBlock));
     
@@ -627,30 +681,12 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         throw;
     }
     
-    // Step 2: Ensure at least one SynthesiserSound exists
-    DBG("Space Dust: prepareToPlay - Step 2: Adding sound");
-    try
-    {
-        if (synth.getNumSounds() == 0)
-        {
-            synth.addSound(new SynthSound());
-            DBG("Space Dust: prepareToPlay - Step 2: Sound added");
-        }
-        else
-        {
-            DBG("Space Dust: prepareToPlay - Step 2: Sound already exists");
-        }
-    }
-    catch (const std::exception& e)
-    {
-        DBG("Space Dust: Exception adding sound: " + juce::String(e.what()));
-        throw;
-    }
-    catch (...)
-    {
-        DBG("Space Dust: Unknown exception adding sound");
-        throw;
-    }
+    // Step 2: (Formerly: ensure at least one SynthesiserSound exists.)
+    // MPE: juce::MPESynthesiser does NOT use SynthesiserSound — voice/note assignment
+    // is handled entirely by the internal MPEInstrument.  We intentionally skip the
+    // addSound() call here; SynthSound.h remains in the codebase as an unused stub
+    // for preset / state-file backwards compatibility but the synth no longer needs it.
+    DBG("Space Dust: prepareToPlay - Step 2: (MPE - no SynthesiserSound needed)");
     
     // Step 3: Create 8 new synthesizer voices and set synthesiser for legato/mono mode
     DBG("Space Dust: prepareToPlay - Step 3: Creating voices");
@@ -879,53 +915,53 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
 void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, float lfo2Modulation)
 {
     // Get parameter values (real-time safe: reading atomic values)
-    int osc1Wave = (int)*apvts.getRawParameterValue("osc1Waveform");
-    int osc2Wave = (int)*apvts.getRawParameterValue("osc2Waveform");
+    int osc1Wave = (int)safeGetParam(apvts, "osc1Waveform");
+    int osc2Wave = (int)safeGetParam(apvts, "osc2Waveform");
     
     // Oscillator tuning parameters (simple, intuitive system)
-    float osc1CoarseTune = *apvts.getRawParameterValue("osc1CoarseTune");
-    float osc1Detune = *apvts.getRawParameterValue("osc1Detune");
-    float osc2CoarseTune = *apvts.getRawParameterValue("osc2CoarseTune");
-    float osc2Detune = *apvts.getRawParameterValue("osc2Detune");
+    float osc1CoarseTune = safeGetParam(apvts, "osc1CoarseTune");
+    float osc1Detune = safeGetParam(apvts, "osc1Detune");
+    float osc2CoarseTune = safeGetParam(apvts, "osc2CoarseTune");
+    float osc2Detune = safeGetParam(apvts, "osc2Detune");
     
     // LFO modulation is now applied per-sample in renderNextBlock via LFO buffers
     // lfo1Modulation and lfo2Modulation parameters are ignored (kept for API compatibility)
     
     // Independent oscillator and noise level controls
-    float osc1Level = *apvts.getRawParameterValue("osc1Level");
-    float osc2Level = *apvts.getRawParameterValue("osc2Level");
-    float noiseLevel = *apvts.getRawParameterValue("noiseLevel");
+    float osc1Level = safeGetParam(apvts, "osc1Level");
+    float osc2Level = safeGetParam(apvts, "osc2Level");
+    float noiseLevel = safeGetParam(apvts, "noiseLevel");
     
-    int filterMode = (int)*apvts.getRawParameterValue("filterMode");
+    int filterMode = (int)safeGetParam(apvts, "filterMode");
     float filterCutoffHz = 8000.0f;
     if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("filterCutoff")))
         filterCutoffHz = juce::jlimit(20.0f, 20000.0f, p->get());
     // LFO filter modulation is applied per-sample in renderNextBlock
     
-    float filterResonance = *apvts.getRawParameterValue("filterResonance");
+    float filterResonance = safeGetParam(apvts, "filterResonance");
     
     // LFO targets (cache per-block to avoid per-sample APVTS reads in voice - major CPU win)
-    int lfo1Target = static_cast<int>(*apvts.getRawParameterValue("lfo1Target"));
-    int lfo2Target = static_cast<int>(*apvts.getRawParameterValue("lfo2Target"));
+    int lfo1Target = static_cast<int>(safeGetParam(apvts, "lfo1Target"));
+    int lfo2Target = static_cast<int>(safeGetParam(apvts, "lfo2Target"));
     
-    bool modFilter1Show = *apvts.getRawParameterValue("modFilter1Show") > 0.5f;
-    bool modFilter2Show = *apvts.getRawParameterValue("modFilter2Show") > 0.5f;
-    bool modFilter1Link = *apvts.getRawParameterValue("modFilter1LinkToMaster") > 0.5f;
-    bool modFilter2Link = *apvts.getRawParameterValue("modFilter2LinkToMaster") > 0.5f;
-    bool warmSaturationMaster = *apvts.getRawParameterValue("warmSaturationMaster") > 0.5f;
+    bool modFilter1Show = safeGetParam(apvts, "modFilter1Show") > 0.5f;
+    bool modFilter2Show = safeGetParam(apvts, "modFilter2Show") > 0.5f;
+    bool modFilter1Link = safeGetParam(apvts, "modFilter1LinkToMaster") > 0.5f;
+    bool modFilter2Link = safeGetParam(apvts, "modFilter2LinkToMaster") > 0.5f;
+    bool warmSaturationMaster = safeGetParam(apvts, "warmSaturationMaster") > 0.5f;
 
     // When linked, use master filter values directly instead of mod filter values.
     // This avoids calling setValueNotifyingHost for sync, which triggers performEdit
     // in the VST3 wrapper and causes Ableton to grey out automation lanes.
-    int modFilter1Mode = modFilter1Link ? filterMode : (int)*apvts.getRawParameterValue("modFilter1Mode");
-    float modFilter1Cutoff = modFilter1Link ? filterCutoffHz : *apvts.getRawParameterValue("modFilter1Cutoff");
-    float modFilter1Resonance = modFilter1Link ? filterResonance : *apvts.getRawParameterValue("modFilter1Resonance");
-    bool warmSaturationMod1 = modFilter1Link ? warmSaturationMaster : *apvts.getRawParameterValue("warmSaturationMod1") > 0.5f;
+    int modFilter1Mode = modFilter1Link ? filterMode : (int)safeGetParam(apvts, "modFilter1Mode");
+    float modFilter1Cutoff = modFilter1Link ? filterCutoffHz : safeGetParam(apvts, "modFilter1Cutoff");
+    float modFilter1Resonance = modFilter1Link ? filterResonance : safeGetParam(apvts, "modFilter1Resonance");
+    bool warmSaturationMod1 = modFilter1Link ? warmSaturationMaster : safeGetParam(apvts, "warmSaturationMod1") > 0.5f;
 
-    int modFilter2Mode = modFilter2Link ? filterMode : (int)*apvts.getRawParameterValue("modFilter2Mode");
-    float modFilter2Cutoff = modFilter2Link ? filterCutoffHz : *apvts.getRawParameterValue("modFilter2Cutoff");
-    float modFilter2Resonance = modFilter2Link ? filterResonance : *apvts.getRawParameterValue("modFilter2Resonance");
-    bool warmSaturationMod2 = modFilter2Link ? warmSaturationMaster : *apvts.getRawParameterValue("warmSaturationMod2") > 0.5f;
+    int modFilter2Mode = modFilter2Link ? filterMode : (int)safeGetParam(apvts, "modFilter2Mode");
+    float modFilter2Cutoff = modFilter2Link ? filterCutoffHz : safeGetParam(apvts, "modFilter2Cutoff");
+    float modFilter2Resonance = modFilter2Link ? filterResonance : safeGetParam(apvts, "modFilter2Resonance");
+    bool warmSaturationMod2 = modFilter2Link ? warmSaturationMaster : safeGetParam(apvts, "warmSaturationMod2") > 0.5f;
     
     // Filter envelope: read directly from parameters each block (guarantees label matches decay)
     // Uses plain param ID strings to match SliderAttachment; p->get() returns exact displayed value
@@ -959,8 +995,8 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     // Voice mode and glide parameters (convert normalized 0-1 to actual seconds for glide)
     float glideTime = 0.0f;
     if (auto* p = apvts.getParameter("glideTime"))
-        glideTime = p->convertFrom0to1(*apvts.getRawParameterValue("glideTime"));
-    bool legatoGlide = *apvts.getRawParameterValue("legatoGlide") > 0.5f;
+        glideTime = p->convertFrom0to1(safeGetParam(apvts, "glideTime"));
+    bool legatoGlide = safeGetParam(apvts, "legatoGlide") > 0.5f;
     
     // Pitch envelope parameters (use get() for actual value - separate from pitch bend)
     float pitchEnvAmount = 0.0f, pitchEnvTime = 0.0f, pitchEnvPitch = 0.0f;
@@ -990,8 +1026,8 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     }
 
     // Analog Drift lives in the Lo-Fi UI group; only apply when Lo-Fi is enabled
-    float analogDrift = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("analogDrift")->load());
-    if (*apvts.getRawParameterValue("lofiEnabled") <= 0.5f)
+    float analogDrift = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "analogDrift"));
+    if (safeGetParam(apvts, "lofiEnabled") <= 0.5f)
         analogDrift = 0.0f;
     
     // Update all voices with current parameter values
@@ -1007,12 +1043,12 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setOsc2Detune(osc2Detune);
             voice->setOsc1Level(osc1Level);
             voice->setOsc2Level(osc2Level);
-            voice->setOsc1Pan(*apvts.getRawParameterValue("osc1Pan"));
-            voice->setOsc2Pan(*apvts.getRawParameterValue("osc2Pan"));
+            voice->setOsc1Pan(safeGetParam(apvts, "osc1Pan"));
+            voice->setOsc2Pan(safeGetParam(apvts, "osc2Pan"));
             voice->setNoiseLevel(noiseLevel);
             voice->setNoiseType(noiseType.load());  // Get noise type from atomic
-            float lowShelfAmount = *apvts.getRawParameterValue("lowShelfAmount");
-            float highShelfAmount = *apvts.getRawParameterValue("highShelfAmount");
+            float lowShelfAmount = safeGetParam(apvts, "lowShelfAmount");
+            float highShelfAmount = safeGetParam(apvts, "highShelfAmount");
             voice->setLowShelfAmount(lowShelfAmount);
             voice->setHighShelfAmount(highShelfAmount);
             voice->setFilterMode(filterMode);
@@ -1037,14 +1073,18 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setPitchEnvAmount(pitchEnvAmount);
             voice->setPitchEnvTime(pitchEnvTime);
             voice->setPitchEnvPitch(pitchEnvPitch);
-            voice->setSubOscOn(*apvts.getRawParameterValue("subOscOn") > 0.5f);
-            voice->setSubOscWaveform(static_cast<int>(*apvts.getRawParameterValue("subOscWaveform")));
-            voice->setSubOscLevel(*apvts.getRawParameterValue("subOscLevel"));
-            voice->setSubOscCoarse(*apvts.getRawParameterValue("subOscCoarse"));
+            voice->setSubOscOn(safeGetParam(apvts, "subOscOn") > 0.5f);
+            voice->setSubOscWaveform(static_cast<int>(safeGetParam(apvts, "subOscWaveform")));
+            voice->setSubOscLevel(safeGetParam(apvts, "subOscLevel"));
+            voice->setSubOscCoarse(safeGetParam(apvts, "subOscCoarse"));
             voice->setPitchBendAmount(pitchBendAmount);
             voice->setPitchBend(pitchBend);
             voice->setLfoTargets(lfo1Target, lfo2Target);
             voice->setAnalogDrift(analogDrift);
+
+            // MPE expression depth (0-100% → 0.0-1.0)
+            voice->setMpePressureDepth(safeGetParam(apvts, "mpePressureDepth") / 100.0f);
+            voice->setMpeTimbreDepth(safeGetParam(apvts, "mpeTimbreDepth") / 100.0f);
         }
     }
 }
@@ -1113,6 +1153,25 @@ void SpaceDustAudioProcessor::parameterChanged(const juce::String& parameterID, 
         if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(parameterID)))
             currentFilterEnvRelease.store(juce::jlimit(0.01f, 20.0f, p->get()));
     }
+    // -- MPE mode / bend range: reconfigure the synth's MPE layout in real time --
+    else if (parameterID == juce::ParameterID{"mpeMode", 1}.getParamID())
+    {
+        if (newValue > 0.5f)
+            synth.setMpeZoneLayoutLower();   // Lower Zone (proper MPE spec)
+        else
+        {
+            float bendRange = safeGetParam(apvts, "mpePitchBendRange");
+            synth.setLegacyModeWithPitchBendRange(static_cast<int>(bendRange));
+        }
+    }
+    else if (parameterID == juce::ParameterID{"mpePitchBendRange", 1}.getParamID())
+    {
+        // Only applies in Legacy mode — Lower Zone has fixed 48/2 ranges.
+        auto* modeParam = dynamic_cast<juce::AudioParameterChoice*>(
+            apvts.getParameter(juce::ParameterID{"mpeMode", 1}.getParamID()));
+        if (modeParam && modeParam->getIndex() == 0)
+            synth.setLegacyModeWithPitchBendRange(static_cast<int>(newValue));
+    }
     // Filter link params: no sync needed. updateVoicesWithParameters() reads master
     // values directly when linked, bypassing the mod filter parameters entirely.
     // This avoids setValueNotifyingHost which triggers performEdit in the VST3 wrapper,
@@ -1137,9 +1196,9 @@ void SpaceDustAudioProcessor::releaseResources()
     
     //==============================================================================
     // -- CRITICAL: Force All Notes Off Before Cleanup --
-    // CRITICAL: Stop all notes gracefully with tail-off to prevent voice leaks
-    // Use channel 0 to turn off ALL notes (per JUCE Synthesiser docs)
-    synth.allNotesOff(0, true);  // Channel 0 = all channels, allow tail-off
+    // MPE: juce::MPESynthesiser uses turnOffAllVoices(allowTailOff) — the
+    // equivalent of juce::Synthesiser::allNotesOff(0, allowTailOff).
+    synth.turnOffAllVoices(true);  // allowTailOff=true → graceful release
     
     //==============================================================================
     // -- CRITICAL: Complete Resource Cleanup for Safe Unload --
@@ -1166,11 +1225,14 @@ void SpaceDustAudioProcessor::releaseResources()
     // Step 1: Stop all active voices gracefully
     // This ensures voices release any resources before being deleted
     DBG("Space Dust: Stopping active voices (count: " + safeStringFromNumber(synth.getNumVoices()) + ")");
+    // MPE: voices are juce::MPESynthesiserVoice and have noteStopped(bool) instead
+    // of stopNote(float, bool).  We cast to SynthVoice (or use the base virtual) to
+    // hard-stop each one.
     for (int i = 0; i < synth.getNumVoices(); ++i)
     {
         if (auto* voice = synth.getVoice(i))
         {
-            voice->stopNote(0.0f, false);  // Stop without tail-off for immediate cleanup
+            voice->noteStopped(false);  // allowTailOff=false → immediate hard stop
         }
     }
     DBG("Space Dust: All voices stopped");
@@ -1198,13 +1260,8 @@ void SpaceDustAudioProcessor::releaseResources()
     finalEQ_.reset();
     tranceGate_.reset();
     
-    // Step 3: Clear all sounds (ReferenceCountedArray<SynthesiserSound>)
-    // CRITICAL: This prevents ReferenceCountedObject assertion on plugin unload
-    // The ReferenceCountedArray must be cleared to avoid dangling references
-    // when the plugin destructor runs, especially in Ableton Live
-    DBG("Space Dust: Clearing sounds (count: " + safeStringFromNumber(synth.getNumSounds()) + ")");
-    synth.clearSounds();           // clears ReferenceCountedArray<SynthesiserSound>
-    DBG("Space Dust: Sounds cleared");
+    // Step 3: (Formerly cleared SynthesiserSound array.)
+    // MPE: juce::MPESynthesiser has no SynthesiserSound array.  Nothing to clear.
     
     // Step 4: Reset sample rate to ensure clean state
     // This prevents stale sample rate values from being used
@@ -1370,23 +1427,23 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // Generate per-sample LFO values and fill buffers for voice access
     
     // Get LFO parameters
-    bool lfo1Enabled = *apvts.getRawParameterValue("lfo1Enabled") > 0.5f;
-    float lfo1Depth = lfo1Enabled ? (*apvts.getRawParameterValue("lfo1Depth") * 2.0f / 100.0f) : 0.0f;  // 0-2.0 when on
-    bool lfo1Sync = *apvts.getRawParameterValue("lfo1Sync") > 0.5f;
-    float lfo1Rate = *apvts.getRawParameterValue("lfo1Rate");  // 0-12
-    bool lfo1Triplet = *apvts.getRawParameterValue("lfo1TripletEnabled") > 0.5f;
-    bool lfo1All = *apvts.getRawParameterValue("lfo1TripletStraightToggle") > 0.5f;
-    float lfo1PhaseParam = *apvts.getRawParameterValue("lfo1Phase");
-    int lfo1Waveform = (int)*apvts.getRawParameterValue("lfo1Waveform");
+    bool lfo1Enabled = safeGetParam(apvts, "lfo1Enabled") > 0.5f;
+    float lfo1Depth = lfo1Enabled ? (safeGetParam(apvts, "lfo1Depth") * 2.0f / 100.0f) : 0.0f;  // 0-2.0 when on
+    bool lfo1Sync = safeGetParam(apvts, "lfo1Sync") > 0.5f;
+    float lfo1Rate = safeGetParam(apvts, "lfo1Rate");  // 0-12
+    bool lfo1Triplet = safeGetParam(apvts, "lfo1TripletEnabled") > 0.5f;
+    bool lfo1All = safeGetParam(apvts, "lfo1TripletStraightToggle") > 0.5f;
+    float lfo1PhaseParam = safeGetParam(apvts, "lfo1Phase");
+    int lfo1Waveform = (int)safeGetParam(apvts, "lfo1Waveform");
     
-    bool lfo2Enabled = *apvts.getRawParameterValue("lfo2Enabled") > 0.5f;
-    float lfo2Depth = lfo2Enabled ? (*apvts.getRawParameterValue("lfo2Depth") * 2.0f / 100.0f) : 0.0f;  // 0-2.0 when on
-    bool lfo2Sync = *apvts.getRawParameterValue("lfo2Sync") > 0.5f;
-    float lfo2Rate = *apvts.getRawParameterValue("lfo2Rate");  // 0-12
-    bool lfo2Triplet = *apvts.getRawParameterValue("lfo2TripletEnabled") > 0.5f;
-    bool lfo2All = *apvts.getRawParameterValue("lfo2TripletStraightToggle") > 0.5f;
-    float lfo2PhaseParam = *apvts.getRawParameterValue("lfo2Phase");
-    int lfo2Waveform = (int)*apvts.getRawParameterValue("lfo2Waveform");
+    bool lfo2Enabled = safeGetParam(apvts, "lfo2Enabled") > 0.5f;
+    float lfo2Depth = lfo2Enabled ? (safeGetParam(apvts, "lfo2Depth") * 2.0f / 100.0f) : 0.0f;  // 0-2.0 when on
+    bool lfo2Sync = safeGetParam(apvts, "lfo2Sync") > 0.5f;
+    float lfo2Rate = safeGetParam(apvts, "lfo2Rate");  // 0-12
+    bool lfo2Triplet = safeGetParam(apvts, "lfo2TripletEnabled") > 0.5f;
+    bool lfo2All = safeGetParam(apvts, "lfo2TripletStraightToggle") > 0.5f;
+    float lfo2PhaseParam = safeGetParam(apvts, "lfo2Phase");
+    int lfo2Waveform = (int)safeGetParam(apvts, "lfo2Waveform");
     
     // Helper: generate LFO waveform with rounded saw transitions (prevents discontinuity clicks)
     auto generateLfoValue = [](double phase, int waveform) -> float {
@@ -1773,8 +1830,8 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         }
     }
     
-    bool transientEnabled = *apvts.getRawParameterValue("transientEnabled") > 0.5f;
-    bool transientPostEffect = *apvts.getRawParameterValue("transientPostEffect") > 0.5f;
+    bool transientEnabled = safeGetParam(apvts, "transientEnabled") > 0.5f;
+    bool transientPostEffect = safeGetParam(apvts, "transientPostEffect") > 0.5f;
 
     //==============================================================================
     // -- Process MIDI with Mono Mode Support --
@@ -1802,11 +1859,11 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                     tp.type = p->getIndex();
                 else
                     tp.type = 0;
-                tp.mix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientMix")->load());
+                tp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientMix"));
                 tp.postEffect = transientPostEffect;
-                tp.kaDonk = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientKaDonk")->load());
-                tp.coarse = juce::jlimit(-24.0f, 24.0f, apvts.getRawParameterValue("transientCoarse")->load());
-                tp.length = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientLength")->load());
+                tp.kaDonk = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientKaDonk"));
+                tp.coarse = juce::jlimit(-24.0f, 24.0f, safeGetParam(apvts, "transientCoarse"));
+                tp.length = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientLength"));
                 transient_.setParameters(tp);
                 transient_.trigger(msg.getNoteNumber());
                 break;
@@ -1833,7 +1890,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // -- Ka-Donk Delay: delays synth output so transient leads --
     if (transientEnabled)
     {
-        float kaDonkAmount = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientKaDonk")->load());
+        float kaDonkAmount = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientKaDonk"));
         float kaDonkDelaySamples = kaDonkAmount * static_cast<float>(currentSampleRate);
         kaDonkDelaySamples = juce::jlimit(0.0f, static_cast<float>(kaDonkMaxSamples), kaDonkDelaySamples);
         smoothedKaDonkDelay_.setTargetValue(kaDonkDelaySamples);
@@ -1864,11 +1921,11 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         tp.enabled = true;
         if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"transientType", 1}.getParamID())))
             tp.type = p->getIndex();
-        tp.mix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientMix")->load());
+        tp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientMix"));
         tp.postEffect = false;
-        tp.kaDonk = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientKaDonk")->load());
-        tp.coarse = juce::jlimit(-24.0f, 24.0f, apvts.getRawParameterValue("transientCoarse")->load());
-        tp.length = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientLength")->load());
+        tp.kaDonk = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientKaDonk"));
+        tp.coarse = juce::jlimit(-24.0f, 24.0f, safeGetParam(apvts, "transientCoarse"));
+        tp.length = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientLength"));
         transient_.setParameters(tp);
         transient_.process(buffer);
     }
@@ -1877,10 +1934,10 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // -- Effect order (TG/BC Post Effect toggles) --
     // TG Post OFF: TG first. BC Post OFF: BC before all effects (second, after TG). BC Post ON: BC late.
     // TG Post ON:  TG last.  BC Post OFF: BC before all effects (first). BC Post ON: BC late (after Flanger).
-    bool tranceGateEnabled = *apvts.getRawParameterValue("tranceGateEnabled") > 0.5f;
-    bool tranceGatePostEffect = *apvts.getRawParameterValue("tranceGatePostEffect") > 0.5f;
-    bool bitCrusherEnabled = *apvts.getRawParameterValue("bitCrusherEnabled") > 0.5f;
-    bool bitCrusherPostEffect = *apvts.getRawParameterValue("bitCrusherPostEffect") > 0.5f;
+    bool tranceGateEnabled = safeGetParam(apvts, "tranceGateEnabled") > 0.5f;
+    bool tranceGatePostEffect = safeGetParam(apvts, "tranceGatePostEffect") > 0.5f;
+    bool bitCrusherEnabled = safeGetParam(apvts, "bitCrusherEnabled") > 0.5f;
+    bool bitCrusherPostEffect = safeGetParam(apvts, "bitCrusherPostEffect") > 0.5f;
 
     auto runBitCrusher = [&]()
     {
@@ -1888,9 +1945,9 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         {
             SpaceDustBitCrusher::Parameters bp;
             bp.enabled = true;
-            bp.amount = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("bitCrusherAmount")->load());
-            bp.rate = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("bitCrusherRate")->load());
-            bp.mix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("bitCrusherMix")->load());
+            bp.amount = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherAmount"));
+            bp.rate = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherRate"));
+            bp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherMix"));
             bitCrusher_.setParameters(bp);
             bitCrusher_.process(buffer);
         }
@@ -1906,11 +1963,11 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 tp.numSteps = (p->getIndex() == 0) ? 4 : (p->getIndex() == 1) ? 8 : 16;
             else
                 tp.numSteps = 8;
-            tp.sync = *apvts.getRawParameterValue("tranceGateSync") > 0.5f;
-            tp.rate = *apvts.getRawParameterValue("tranceGateRate");
-            tp.attackMs = *apvts.getRawParameterValue("tranceGateAttack");
-            tp.releaseMs = *apvts.getRawParameterValue("tranceGateRelease");
-            tp.mix = *apvts.getRawParameterValue("tranceGateMix");
+            tp.sync = safeGetParam(apvts, "tranceGateSync") > 0.5f;
+            tp.rate = safeGetParam(apvts, "tranceGateRate");
+            tp.attackMs = safeGetParam(apvts, "tranceGateAttack");
+            tp.releaseMs = safeGetParam(apvts, "tranceGateRelease");
+            tp.mix = safeGetParam(apvts, "tranceGateMix");
             for (int s = 0; s < 16; ++s)
             {
                 juce::String stepId = "tranceGateStep" + juce::String(s + 1);
@@ -1932,12 +1989,12 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
     //==============================================================================
     // -- Delay Effect --
-    bool delayEnabled = *apvts.getRawParameterValue("delayEnabled") > 0.5f;
-    float delayDecay = *apvts.getRawParameterValue("delayDecay") * 0.01f;  // 0-1
-    float delayDryWet = *apvts.getRawParameterValue("delayDryWet") * 0.01f;  // 0-1
-    float delayRate = *apvts.getRawParameterValue("delayRate");
-    bool delaySync = *apvts.getRawParameterValue("delaySync") > 0.5f;
-    bool delayPingPong = *apvts.getRawParameterValue("delayPingPong") > 0.5f;
+    bool delayEnabled = safeGetParam(apvts, "delayEnabled") > 0.5f;
+    float delayDecay = safeGetParam(apvts, "delayDecay") * 0.01f;  // 0-1
+    float delayDryWet = safeGetParam(apvts, "delayDryWet") * 0.01f;  // 0-1
+    float delayRate = safeGetParam(apvts, "delayRate");
+    bool delaySync = safeGetParam(apvts, "delaySync") > 0.5f;
+    bool delayPingPong = safeGetParam(apvts, "delayPingPong") > 0.5f;
     
     // Inverted: knob 0 = long delay (low freq), knob 12 = short delay (high freq)
     float delayRateClamped = juce::jlimit(0.0f, 12.0f, delayRate);
@@ -2008,15 +2065,15 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         smoothedDelayDecay.setTargetValue(delayDecay);
         smoothedDelayDryWet.setTargetValue(delayDryWet);
         
-        bool delayFilterOn = *apvts.getRawParameterValue("delayFilterShow") > 0.5f;
-        float delayHPCutoff = juce::jlimit(20.0f, 20000.0f, apvts.getRawParameterValue("delayFilterHPCutoff")->load());
-        float delayLPCutoff = juce::jlimit(20.0f, 20000.0f, apvts.getRawParameterValue("delayFilterLPCutoff")->load());
+        bool delayFilterOn = safeGetParam(apvts, "delayFilterShow") > 0.5f;
+        float delayHPCutoff = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "delayFilterHPCutoff"));
+        float delayLPCutoff = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "delayFilterLPCutoff"));
         // Clamp Q to 0.1-5.0 to prevent resonance runaway (was 0.1-20, caused instability)
-        float delayHPRes = apvts.getRawParameterValue("delayFilterHPResonance")->load();
-        float delayLPRes = apvts.getRawParameterValue("delayFilterLPResonance")->load();
+        float delayHPRes = safeGetParam(apvts, "delayFilterHPResonance");
+        float delayLPRes = safeGetParam(apvts, "delayFilterLPResonance");
         float hpQ = juce::jlimit(0.1f, 5.0f, 0.1f + delayHPRes * 4.9f);
         float lpQ = juce::jlimit(0.1f, 5.0f, 0.1f + delayLPRes * 4.9f);
-        bool delayWarmSat = *apvts.getRawParameterValue("delayFilterWarmSaturation") > 0.5f;
+        bool delayWarmSat = safeGetParam(apvts, "delayFilterWarmSaturation") > 0.5f;
         
         smoothedDelayHPCutoff.setTargetValue(delayHPCutoff);
         smoothedDelayLPCutoff.setTargetValue(delayLPCutoff);
@@ -2141,8 +2198,8 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     
     //==============================================================================
     // -- Reverb Effect --
-    bool reverbEnabled = *apvts.getRawParameterValue("reverbEnabled") > 0.5f;
-    float reverbDecayTime = *apvts.getRawParameterValue("reverbDecayTime");
+    bool reverbEnabled = safeGetParam(apvts, "reverbEnabled") > 0.5f;
+    float reverbDecayTime = safeGetParam(apvts, "reverbDecayTime");
     if (reverbEnabled && buffer.getNumChannels() >= 2 && numSamples > 0)
     {
         // Decay at minimum: flush reverb once and bypass (Sexicon still diffuses when decay_ == 0).
@@ -2153,7 +2210,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         }
         else
         {
-            float reverbWetMix = *apvts.getRawParameterValue("reverbWetMix");
+            float reverbWetMix = safeGetParam(apvts, "reverbWetMix");
             float reverbDrive = std::pow(10.0f, reverbWetMix * 3.0f / 20.0f);
             buffer.applyGain(0, 0, numSamples, reverbDrive);
             buffer.applyGain(1, 0, numSamples, reverbDrive);
@@ -2164,12 +2221,12 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 rp.type = 0;
             rp.wetMix = reverbWetMix;
             rp.decayTime = reverbDecayTime;
-            rp.filterOn = *apvts.getRawParameterValue("reverbFilterShow") > 0.5f;
-            rp.filterWarmSaturation = *apvts.getRawParameterValue("reverbFilterWarmSaturation") > 0.5f;
-            rp.filterHPCutoff = *apvts.getRawParameterValue("reverbFilterHPCutoff");
-            rp.filterHPResonance = *apvts.getRawParameterValue("reverbFilterHPResonance");
-            rp.filterLPCutoff = *apvts.getRawParameterValue("reverbFilterLPCutoff");
-            rp.filterLPResonance = *apvts.getRawParameterValue("reverbFilterLPResonance");
+            rp.filterOn = safeGetParam(apvts, "reverbFilterShow") > 0.5f;
+            rp.filterWarmSaturation = safeGetParam(apvts, "reverbFilterWarmSaturation") > 0.5f;
+            rp.filterHPCutoff = safeGetParam(apvts, "reverbFilterHPCutoff");
+            rp.filterHPResonance = safeGetParam(apvts, "reverbFilterHPResonance");
+            rp.filterLPCutoff = safeGetParam(apvts, "reverbFilterLPCutoff");
+            rp.filterLPResonance = safeGetParam(apvts, "reverbFilterLPResonance");
             reverb_.setParameters(rp);
             reverb_.process(buffer);
         }
@@ -2182,79 +2239,79 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
     //==============================================================================
     // -- Grain Delay Effect --
-    bool grainDelayEnabled = *apvts.getRawParameterValue("grainDelayEnabled") > 0.5f;
+    bool grainDelayEnabled = safeGetParam(apvts, "grainDelayEnabled") > 0.5f;
     if (grainDelayEnabled && buffer.getNumChannels() >= 2 && numSamples > 0)
     {
-        float grainMix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("grainDelayMix")->load() * 0.01f);
+        float grainMix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "grainDelayMix") * 0.01f);
         float grainDrive = std::pow(10.0f, grainMix * 3.0f / 20.0f);
         buffer.applyGain(0, 0, numSamples, grainDrive);
         buffer.applyGain(1, 0, numSamples, grainDrive);
         SpaceDustGrainDelay::Parameters gp;
         gp.enabled = true;
-        gp.delayMs = juce::jlimit(20.0f, 2000.0f, apvts.getRawParameterValue("grainDelayTime")->load());
-        gp.grainSizeMs = juce::jlimit(10.0f, 500.0f, apvts.getRawParameterValue("grainDelaySize")->load());
-        gp.pitchSemitones = juce::jlimit(-12.0f, 12.0f, apvts.getRawParameterValue("grainDelayPitch")->load());
+        gp.delayMs = juce::jlimit(20.0f, 2000.0f, safeGetParam(apvts, "grainDelayTime"));
+        gp.grainSizeMs = juce::jlimit(10.0f, 500.0f, safeGetParam(apvts, "grainDelaySize"));
+        gp.pitchSemitones = juce::jlimit(-12.0f, 12.0f, safeGetParam(apvts, "grainDelayPitch"));
         gp.mix = grainMix;
         // Decay is 0–150% in the APVTS; getRawParameterValue is normalized — must use get() for real percent.
         float grainDecayPct = 0.0f;
         if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("grainDelayDecay")))
             grainDecayPct = p->get();
         gp.decay = juce::jlimit(0.0f, 1.0f, grainDecayPct / 150.0f);
-        gp.density = juce::jlimit(1.0f, 8.0f, apvts.getRawParameterValue("grainDelayDensity")->load());
-        gp.jitter = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("grainDelayJitter")->load() * 0.01f);
-        gp.pingPong = *apvts.getRawParameterValue("grainDelayPingPong") > 0.5f;
-        gp.filterOn = *apvts.getRawParameterValue("grainDelayFilterShow") > 0.5f;
-        gp.hpCutoffHz = juce::jlimit(20.0f, 20000.0f, apvts.getRawParameterValue("grainDelayFilterHPCutoff")->load());
-        gp.lpCutoffHz = juce::jlimit(20.0f, 20000.0f, apvts.getRawParameterValue("grainDelayFilterLPCutoff")->load());
-        gp.hpRes = apvts.getRawParameterValue("grainDelayFilterHPResonance")->load();
-        gp.lpRes = apvts.getRawParameterValue("grainDelayFilterLPResonance")->load();
-        gp.warmSaturation = *apvts.getRawParameterValue("grainDelayFilterWarmSaturation") > 0.5f;
+        gp.density = juce::jlimit(1.0f, 8.0f, safeGetParam(apvts, "grainDelayDensity"));
+        gp.jitter = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "grainDelayJitter") * 0.01f);
+        gp.pingPong = safeGetParam(apvts, "grainDelayPingPong") > 0.5f;
+        gp.filterOn = safeGetParam(apvts, "grainDelayFilterShow") > 0.5f;
+        gp.hpCutoffHz = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "grainDelayFilterHPCutoff"));
+        gp.lpCutoffHz = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "grainDelayFilterLPCutoff"));
+        gp.hpRes = safeGetParam(apvts, "grainDelayFilterHPResonance");
+        gp.lpRes = safeGetParam(apvts, "grainDelayFilterLPResonance");
+        gp.warmSaturation = safeGetParam(apvts, "grainDelayFilterWarmSaturation") > 0.5f;
         grainDelay_.setParameters(gp);
         grainDelay_.process(buffer);
     }
 
     //==============================================================================
     // -- Phaser Effect --
-    bool phaserEnabled = *apvts.getRawParameterValue("phaserEnabled") > 0.5f;
+    bool phaserEnabled = safeGetParam(apvts, "phaserEnabled") > 0.5f;
     if (phaserEnabled && buffer.getNumChannels() >= 2 && numSamples > 0)
     {
-        float phaserMix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("phaserMix")->load());
+        float phaserMix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "phaserMix"));
         float phaserDrive = std::pow(10.0f, phaserMix * 3.0f / 20.0f);
         buffer.applyGain(0, 0, numSamples, phaserDrive);
         buffer.applyGain(1, 0, numSamples, phaserDrive);
         SpaceDustPhaser::Parameters pp;
         pp.enabled = true;
-        pp.rateHz = juce::jlimit(0.05f, 200.0f, apvts.getRawParameterValue("phaserRate")->load());
-        pp.depth = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("phaserDepth")->load());
-        pp.feedback = juce::jlimit(-1.0f, 1.0f, apvts.getRawParameterValue("phaserFeedback")->load());
-        pp.scriptMode = *apvts.getRawParameterValue("phaserScriptMode") > 0.5f;
+        pp.rateHz = juce::jlimit(0.05f, 200.0f, safeGetParam(apvts, "phaserRate"));
+        pp.depth = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "phaserDepth"));
+        pp.feedback = juce::jlimit(-1.0f, 1.0f, safeGetParam(apvts, "phaserFeedback"));
+        pp.scriptMode = safeGetParam(apvts, "phaserScriptMode") > 0.5f;
         pp.mix = phaserMix;
-        pp.centreHz = juce::jlimit(50.0f, 2000.0f, apvts.getRawParameterValue("phaserCentre")->load());
+        pp.centreHz = juce::jlimit(50.0f, 2000.0f, safeGetParam(apvts, "phaserCentre"));
         if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"phaserStages", 1}.getParamID())))
             pp.numStages = (p->getIndex() == 0) ? 4 : 6;
         else
             pp.numStages = 4;
-        pp.stereoOffset = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("phaserStereoOffset")->load());
-        pp.vintageMode = *apvts.getRawParameterValue("phaserVintageMode") > 0.5f;
+        pp.stereoOffset = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "phaserStereoOffset"));
+        pp.vintageMode = safeGetParam(apvts, "phaserVintageMode") > 0.5f;
         phaser_.setParameters(pp);
         phaser_.process(buffer);
     }
 
     //==============================================================================
     // -- Flanger Effect --
-    bool flangerEnabled = *apvts.getRawParameterValue("flangerEnabled") > 0.5f;
+    bool flangerEnabled = safeGetParam(apvts, "flangerEnabled") > 0.5f;
     if (flangerEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
     {
-        float flangerMix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("flangerMix")->load());
+        float flangerMix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "flangerMix"));
         float flangerDrive = std::pow(10.0f, flangerMix * 3.0f / 20.0f);
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
             buffer.applyGain(ch, 0, numSamples, flangerDrive);
         SpaceDustFlanger::Parameters fp;
         fp.enabled = true;
-        fp.rateHz = juce::jlimit(0.05f, 200.0f, apvts.getRawParameterValue("flangerRate")->load());
-        fp.depth = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("flangerDepth")->load());
-        fp.feedback = juce::jlimit(-1.0f, 1.0f, apvts.getRawParameterValue("flangerFeedback")->load());
-        fp.width = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("flangerWidth")->load());
+        fp.rateHz = juce::jlimit(0.05f, 200.0f, safeGetParam(apvts, "flangerRate"));
+        fp.depth = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "flangerDepth"));
+        fp.feedback = juce::jlimit(-1.0f, 1.0f, safeGetParam(apvts, "flangerFeedback"));
+        fp.width = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "flangerWidth"));
         fp.mix = flangerMix;
         flanger_.setParameters(fp);
         flanger_.process(buffer);
@@ -2267,11 +2324,11 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         tp.enabled = true;
         if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"transientType", 1}.getParamID())))
             tp.type = p->getIndex();
-        tp.mix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientMix")->load());
+        tp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientMix"));
         tp.postEffect = true;
-        tp.kaDonk = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientKaDonk")->load());
-        tp.coarse = juce::jlimit(-24.0f, 24.0f, apvts.getRawParameterValue("transientCoarse")->load());
-        tp.length = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("transientLength")->load());
+        tp.kaDonk = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientKaDonk"));
+        tp.coarse = juce::jlimit(-24.0f, 24.0f, safeGetParam(apvts, "transientCoarse"));
+        tp.length = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientLength"));
         transient_.setParameters(tp);
         transient_.process(buffer);
     }
@@ -2286,7 +2343,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
     //==============================================================================
     // -- Compressor (Saturation Color) - after BitCrusher/TranceGate, before Soft Clipper --
-    bool compressorEnabled = *apvts.getRawParameterValue("compressorEnabled") > 0.5f;
+    bool compressorEnabled = safeGetParam(apvts, "compressorEnabled") > 0.5f;
     if (compressorEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
     {
         SpaceDustCompressor::Parameters cp;
@@ -2295,21 +2352,21 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             cp.type = p->getIndex();
         else
             cp.type = 0;
-        cp.thresholdDb = juce::jlimit(-60.0f, 0.0f, apvts.getRawParameterValue("compressorThreshold")->load());
-        cp.ratio = juce::jlimit(1.0f, 20.0f, apvts.getRawParameterValue("compressorRatio")->load());
-        cp.attackMs = juce::jlimit(0.1f, 80.0f, apvts.getRawParameterValue("compressorAttack")->load());
-        cp.releaseMs = juce::jlimit(5.0f, 1200.0f, apvts.getRawParameterValue("compressorRelease")->load());
-        cp.makeupGainDb = juce::jlimit(0.0f, 24.0f, apvts.getRawParameterValue("compressorMakeup")->load());
-        cp.mix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("compressorMix")->load());
-        cp.autoRelease = *apvts.getRawParameterValue("compressorAutoRelease") > 0.5f;
-        cp.softClip = *apvts.getRawParameterValue("compressorSoftClip") > 0.5f;
+        cp.thresholdDb = juce::jlimit(-60.0f, 0.0f, safeGetParam(apvts, "compressorThreshold"));
+        cp.ratio = juce::jlimit(1.0f, 20.0f, safeGetParam(apvts, "compressorRatio"));
+        cp.attackMs = juce::jlimit(0.1f, 80.0f, safeGetParam(apvts, "compressorAttack"));
+        cp.releaseMs = juce::jlimit(5.0f, 1200.0f, safeGetParam(apvts, "compressorRelease"));
+        cp.makeupGainDb = juce::jlimit(0.0f, 24.0f, safeGetParam(apvts, "compressorMakeup"));
+        cp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "compressorMix"));
+        cp.autoRelease = safeGetParam(apvts, "compressorAutoRelease") > 0.5f;
+        cp.softClip = safeGetParam(apvts, "compressorSoftClip") > 0.5f;
         compressor_.setParameters(cp);
         compressor_.process(buffer);
     }
 
     //==============================================================================
     // -- Soft Clipper (Saturation Color) - before master volume --
-    bool softClipperEnabled = *apvts.getRawParameterValue("softClipperEnabled") > 0.5f;
+    bool softClipperEnabled = safeGetParam(apvts, "softClipperEnabled") > 0.5f;
     if (softClipperEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
     {
         SpaceDustSoftClipper::Parameters sp;
@@ -2318,8 +2375,8 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             sp.mode = p->getIndex();
         else
             sp.mode = 0;
-        sp.drive = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("softClipperDrive")->load());
-        sp.knee = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("softClipperKnee")->load());
+        sp.drive = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "softClipperDrive"));
+        sp.knee = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "softClipperKnee"));
         if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"softClipperOversample", 1}.getParamID())))
         {
             const int idx = p->getIndex();
@@ -2327,19 +2384,19 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         }
         else
             sp.oversample = 2;
-        sp.mix = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("softClipperMix")->load());
+        sp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "softClipperMix"));
         softClipper_.setParameters(sp);
         softClipper_.process(buffer);
     }
     
     //==============================================================================
     // -- Lo-Fi (Saturation Color) - end of effects chain, before master volume --
-    bool lofiEnabled = *apvts.getRawParameterValue("lofiEnabled") > 0.5f;
+    bool lofiEnabled = safeGetParam(apvts, "lofiEnabled") > 0.5f;
     if (lofiEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
     {
         SpaceDustLofi::Parameters lp;
         lp.enabled = true;
-        lp.amount = juce::jlimit(0.0f, 1.0f, apvts.getRawParameterValue("lofiAmount")->load());
+        lp.amount = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "lofiAmount"));
         lofi_.setParameters(lp);
         lofi_.process(buffer);
     }
@@ -2347,7 +2404,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     //==============================================================================
     // -- Final EQ (5-band, end of chain, Saturation Color tab) --
     {
-        bool finalEQEnabled = *apvts.getRawParameterValue("finalEQEnabled") > 0.5f;
+        bool finalEQEnabled = safeGetParam(apvts, "finalEQEnabled") > 0.5f;
         if (finalEQEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
         {
             const SpaceDustFinalEQ::BandType bandTypes[5] = {
@@ -2362,9 +2419,9 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             for (int i = 0; i < 5; ++i)
             {
                 juce::String n(i + 1);
-                fep.bands[i].freqHz = juce::jlimit(20.0f, 20000.0f, apvts.getRawParameterValue("finalEQB" + n + "Freq")->load());
-                fep.bands[i].gainDb = juce::jlimit(-15.0f, 15.0f,    apvts.getRawParameterValue("finalEQB" + n + "Gain")->load());
-                fep.bands[i].Q      = juce::jlimit(0.1f, 10.0f,      apvts.getRawParameterValue("finalEQB" + n + "Q")->load());
+                fep.bands[i].freqHz = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "finalEQB" + n + "Freq", 1000.0f));
+                fep.bands[i].gainDb = juce::jlimit(-15.0f, 15.0f,    safeGetParam(apvts, "finalEQB" + n + "Gain"));
+                fep.bands[i].Q      = juce::jlimit(0.1f, 10.0f,      safeGetParam(apvts, "finalEQB" + n + "Q", 1.0f));
                 fep.bands[i].type   = bandTypes[i];
             }
             finalEQ_.setParameters(fep);
@@ -2380,8 +2437,8 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     if (masterVolumeParam != nullptr)
     {
         float masterVol = *masterVolumeParam;
-        int lfo1Target = static_cast<int>(*apvts.getRawParameterValue("lfo1Target"));
-        int lfo2Target = static_cast<int>(*apvts.getRawParameterValue("lfo2Target"));
+        int lfo1Target = static_cast<int>(safeGetParam(apvts, "lfo1Target"));
+        int lfo2Target = static_cast<int>(safeGetParam(apvts, "lfo2Target"));
         bool lfo1Master = (lfo1Target == 2);
         bool lfo2Master = (lfo2Target == 2);
         if (lfo1Master || lfo2Master)
@@ -2468,6 +2525,7 @@ bool SpaceDustAudioProcessor::hasEditor() const
 
 juce::AudioProcessorEditor* SpaceDustAudioProcessor::createEditor()
 {
+    #if JUCE_DEBUG
     try
     {
         juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -2481,6 +2539,7 @@ juce::AudioProcessorEditor* SpaceDustAudioProcessor::createEditor()
         }
     }
     catch (...) {}
+    #endif
     
     DBG("Space Dust: createEditor() called");
     return new SpaceDustAudioProcessorEditor(*this);
@@ -2515,9 +2574,25 @@ void SpaceDustAudioProcessor::setStateInformation(const void* data, int sizeInBy
     // In Ableton Live, setStateInformation may be called with empty data during unload
     if (data == nullptr || sizeInBytes == 0)
         return;
-    
+
+    //==========================================================================
+    // -- Crash-loop breaker --
+    // If a marker from a previous setStateInformation call is still on disk,
+    // that previous attempt crashed before completing. Skip the restore this
+    // time so the host can open the project; saved state will be lost for this
+    // instance but the user keeps the rest of their session.
+    auto marker = getStateRestoreMarker();
+    if (marker.existsAsFile())
+    {
+        DBG("Space Dust: SAFE MODE - previous state restore crashed; loading defaults");
+        marker.deleteFile();
+        return;
+    }
+    marker.getParentDirectory().createDirectory();
+    marker.create();
+
     std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
-    
+
     if (xmlState.get() != nullptr)
     {
         if (xmlState->hasTagName(apvts.state.getType()))
@@ -2530,6 +2605,9 @@ void SpaceDustAudioProcessor::setStateInformation(const void* data, int sizeInBy
             updateVoicesWithParameters();
         }
     }
+
+    // Successful completion — clear marker so next load attempts state restore normally.
+    marker.deleteFile();
 }
 
 //==============================================================================
@@ -2550,6 +2628,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     //==============================================================================
     // -- DEBUG: createParameterLayout Start --
     // CRITICAL: Log to file immediately - this is called in initializer list before constructor body
+    #if JUCE_DEBUG
     try
     {
         juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -2566,6 +2645,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         }
     }
     catch (...) {}
+    #endif
     
     DBG("Space Dust: createParameterLayout() called - creating parameters");
     
@@ -3821,7 +3901,45 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         "tranceGateStep16");
 
     //==============================================================================
+    // -- MPE (MIDI Polyphonic Expression) Parameters --
+    // These controls let the user configure MPE behaviour from the UI.
+    // Default values provide full backward compatibility with non-MPE keyboards.
+
+    // MPE Mode: 0 = Legacy (all channels, single bend range — works with everything),
+    //           1 = Lower Zone (ch1 master + ch2-15 members — proper MPE spec).
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"mpeMode", 1}, "MPE Mode",
+            juce::StringArray{"Legacy", "Lower Zone"}, 0),
+        "mpeMode");
+
+    // MPE Pitch Bend Range (semitones). Only affects Legacy mode — Lower Zone
+    // always uses 48 per-note / 2 master per the MPE spec.
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"mpePitchBendRange", 1}, "MPE Bend Range",
+            juce::NormalisableRange<float>(1.0f, 96.0f, 1.0f), 48.0f),
+        "mpePitchBendRange");
+
+    // MPE Pressure Depth (0-100%). Scales the per-note pressure → amplitude
+    // modulation.  0% = pressure has no effect, 100% = full ±100% amplitude boost.
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"mpePressureDepth", 1}, "MPE Pressure Depth",
+            juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f),
+        "mpePressureDepth");
+
+    // MPE Timbre Depth (0-100%). Scales the per-note timbre (CC74 / slide) →
+    // filter cutoff modulation.  0% = slide has no effect, 100% = full ±2 octaves.
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"mpeTimbreDepth", 1}, "MPE Timbre Depth",
+            juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f),
+        "mpeTimbreDepth");
+
+    //==============================================================================
     // -- DEBUG: createParameterLayout End --
+    #if JUCE_DEBUG
     try
     {
         juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
@@ -3836,6 +3954,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         }
     }
     catch (...) {}
+    #endif
     
     DBG("Space Dust: createParameterLayout() completed - created " + safeStringFromNumber(static_cast<int>(params.size())) + " parameters");
     

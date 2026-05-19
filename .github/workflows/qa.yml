@@ -1,0 +1,97 @@
+name: QA - Space Dust
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  qa-windows:
+    runs-on: windows-latest
+    timeout-minutes: 60
+
+    env:
+      JUCE_REF: 8.0.4   # pin to a known-good JUCE tag
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout JUCE
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          ref: ${{ env.JUCE_REF }}
+          path: JUCE
+
+      - name: Configure CMake
+        shell: pwsh
+        run: |
+          cmake -B build -G "Visual Studio 17 2022" -A x64 `
+                -DJUCE_DIR="${{ github.workspace }}/JUCE" `
+                -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (Release, serial)
+        shell: pwsh
+        run: cmake --build build --config Release -j 1
+
+      - name: Download pluginval
+        shell: pwsh
+        run: ./download-pluginval.ps1
+
+      - name: Run pluginval (strictness 10)
+        shell: pwsh
+        run: ./run-pluginval.ps1 -NoBuild -BuildDir "${{ github.workspace }}/build"
+
+      - name: Run full QA (static checks + crash-marker hygiene)
+        shell: pwsh
+        run: ./run-full-qa.ps1 -SkipBuild -SkipPluginval -SkipInstaller
+
+      - name: Upload VST3 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpaceDust-VST3
+          path: build/SpaceDust_artefacts/Release/VST3/Space Dust.vst3/**
+          if-no-files-found: warn
+
+      - name: Upload pluginval log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pluginval-report
+          path: build/pluginval-report.log
+          if-no-files-found: ignore
+
+  qa-installer:
+    runs-on: windows-latest
+    needs: qa-windows
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Download VST3 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SpaceDust-VST3
+          path: installer/Files/VST3/Space Dust.vst3
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
+          & $iscc installer/SpaceDust-Setup.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpaceDust-Installer
+          path: installer/Output/*.exe
