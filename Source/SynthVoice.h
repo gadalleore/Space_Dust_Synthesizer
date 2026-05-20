@@ -387,6 +387,12 @@ private:
     double currentPitch = 0.0;         // Current pitch in Hz (slewed toward target)
     double targetPitch = 0.0;          // Target pitch in Hz (from MIDI note + tuning)
     double glideDelta = 0.0;           // Pitch change per sample (calculated from glideTime)
+    // Snapshot of the last meaningful currentPitch BEFORE the voice released to idle.
+    // Used by computeGlideFromPitch() in mono/legato so "Legato Glide OFF / always
+    // glide" works on sequential (non-overlapping) notes after the voice has fully
+    // released. We don't repurpose currentPitch itself because poly mode's
+    // getMaxCurrentPitch() iterates idle voices and would pick up stale values.
+    double lastPlayedPitch = 0.0;
     // Per-note legato state: true when this startNote was triggered as a legato overlap
     // (set from SpaceDustSynthesiser via nextNoteIsLegato flag). This is *not* the same
     // as the global "Legato Glide" parameter – that lives in legatoGlideEnabled.

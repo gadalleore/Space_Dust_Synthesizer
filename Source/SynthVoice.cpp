@@ -1,6 +1,7 @@
 #include "SynthVoice.h"
 #include "SpaceDustSynthesiser.h"
 #include "PluginProcessor.h"
+#include "MemorySafetyLogger.h"
 #include <juce_core/juce_core.h>
 #include <cmath>
 #include <cstdint>
@@ -103,6 +104,11 @@ void SynthVoice::noteStarted()
     mpePressure01    = note.pressure.asUnsignedFloat();
     mpeTimbre01      = note.timbre.asUnsignedFloat();
 
+    // Memory-safety logger: voice start. RT-safe (no allocations).
+    SAFETY_LOG_VOICE_NOTE(note.noteID, this, midiNoteNumber,
+                          (float) note.getFrequencyInHertz(),
+                          "noteStarted");
+
     // ALWAYS cancel any pending voice fade so the voice is at full amplitude
     // immediately.  This is critical for fast note repetition in mono mode —
     // if a fade lingers from a previous hard-stop, the new note must override
@@ -185,15 +191,20 @@ void SynthVoice::noteStarted()
     //
     // Behaviour:
     // - Legato Glide ON  (legatoGlideEnabled = true):
-    //     * In Legato voice mode (mode == 2): glide ONLY on overlapping notes (isLegatoNote == true)
-    //       → classic "fingered glide" / legato portamento
-    //     * In Poly/Mono modes: fall back to always-on glide behaviour (no legato envelopes there)
+    //     * In Mono OR Legato voice mode: glide ONLY on overlapping notes
+    //       (isLegatoNote == true)  → classic "fingered glide" / portamento
+    //     * In Poly mode: always glide when glide time > 0 (no overlap concept)
     // - Legato Glide OFF (legatoGlideEnabled = false):
     //     * Glide applies to every note change whenever glideTimeSeconds > 0
+    //
+    // Envelope retrigger is mode-specific and independent of this gate:
+    //     * Mono   (voiceMode == 1): hard restart envelope on every new note
+    //     * Legato (voiceMode == 2): preserve envelope on overlapping notes
     const bool glideTimeActive = (glideTimeSeconds > 0.0f && sampleRate > 0.0);
     const bool inLegatoMode = (voiceMode == 2);
+    const bool inMonoMode   = (voiceMode == 1);
     // Mono/legato retrigger: same voice is being reused (already active).
-    // We preserve oscillator phases and filter state for click-free transitions.
+    // We preserve oscillator phases for click-free transitions.
     const bool isMonoRetrigger = (voiceMode != 0) && isActive;
     // wasVoiceActive: if the voice was idle, currentPitch must not leak from the previous session
     // (mono + glide would glide from a stale Hz on the next note after stack release / repetition).
@@ -201,7 +212,7 @@ void SynthVoice::noteStarted()
 
     if (glideTimeActive)
     {
-        if (legatoGlideEnabled && inLegatoMode)
+        if (legatoGlideEnabled && (inLegatoMode || inMonoMode))
             shouldGlideForThisNote = isLegatoNote;     // fingered glide: only overlapping notes glide
         else
             shouldGlideForThisNote = true;             // normal glide: every note change glides
@@ -212,11 +223,19 @@ void SynthVoice::noteStarted()
     // and caused random detuning on every note change (regression from aggressive pitch resync).
     const bool allowCrossVoiceGlideFrom = (voiceMode == 0);
 
-    auto computeGlideFromPitch = [this, allowCrossVoiceGlideFrom, wasVoiceActive](double fallBackTarget) -> double
+    auto computeGlideFromPitch = [this, allowCrossVoiceGlideFrom, wasVoiceActive, voiceMode]
+                                  (double fallBackTarget) -> double
     {
         double fromPitch = currentPitch;
-        if (!wasVoiceActive)
+        // Poly mode: don't reuse currentPitch when the voice was idle — that voice
+        // might have last played a completely unrelated note.
+        if (!wasVoiceActive && voiceMode == 0)
             fromPitch = 0.0;
+        // Mono/Legato fallback: render zeroes currentPitch when the ADSR fully
+        // releases. lastPlayedPitch survives that wipe so "Legato Glide OFF /
+        // always glide" can still glide on sequential (non-overlapping) notes.
+        if (fromPitch <= 0.0 && (voiceMode == 1 || voiceMode == 2) && lastPlayedPitch > 0.0)
+            fromPitch = lastPlayedPitch;
         if (fromPitch <= 0.0 && allowCrossVoiceGlideFrom && synthesiser != nullptr)
             fromPitch = synthesiser->getMaxCurrentPitch();
         if (fromPitch <= 0.0)
@@ -337,11 +356,20 @@ void SynthVoice::noteStarted()
     }
     else
     {
-        // Mono/legato retrigger: keep oscillator phases and filter state intact.
-        // Only retrigger the amplitude and filter envelopes from their current values.
-        // JUCE's ADSR::noteOn() continues from the current envelope level (no jump to 0),
-        // and smoothedEnvelope tracks any change with a ~3ms lowpass — fully click-free
-        // even on sine/triangle waveforms.
+        // Mono (voiceMode == 1): HARD restart envelope from 0 on every new note.
+        // This is the defining mono behaviour and matches classic mono synth feel.
+        // Oscillator phases stay continuous, and smoothedEnvelope (~3ms lowpass)
+        // catches the jump so the level transition is click-free.
+        //
+        // Legato (voiceMode == 2, non-overlapping start that still found the voice
+        // active): continue envelope from its current level for smooth re-entry.
+        // Legato OVERLAPS were handled by the early-return above, which preserves
+        // the envelope completely.
+        if (inMonoMode)
+        {
+            adsr.reset();
+            filterAdsr.reset();
+        }
         adsr.noteOn();
         filterAdsr.noteOn();
         inReleasePhase = false;
@@ -356,6 +384,14 @@ void SynthVoice::noteStopped(bool allowTailOff)
     // The semantics are identical: allowTailOff=true → release the envelope normally;
     // allowTailOff=false → hard stop (we apply a short voice fade to avoid clicks).
 
+    // Memory-safety logger: voice stop. WARN level only on hard-stops so they
+    // stand out in the log when scanning for click sources / voice-steal bugs.
+    SAFETY_LOG_VOICE_NOTE(currentlyPlayingNote.noteID, this,
+                          (int) currentlyPlayingNote.initialNote,
+                          allowTailOff ? 1.0f : 0.0f,
+                          allowTailOff ? "noteStopped tailOff"
+                                       : "noteStopped HARD (voice steal/allNotesOff)");
+
     // Preserving-voice / legato handoff: noteStarted follows immediately inside
     // MPESynthesiser::startVoice.  Do NOT start a fade or touch ADSR — just
     // clear the currentlyPlayingNote so the synth can reassign.  The voice keeps
@@ -364,6 +400,8 @@ void SynthVoice::noteStopped(bool allowTailOff)
     if (synthesiser != nullptr
         && (synthesiser->isPreservingVoice() || synthesiser->isNextNoteLegato()))
     {
+        SAFETY_LOG_VOICE(currentlyPlayingNote.noteID, this,
+                         "noteStopped: legato/preserve handoff (DSP state kept)");
         clearCurrentNote();
         return;
     }
@@ -784,6 +822,13 @@ void SynthVoice::updateFilterAdsrParameters()
 void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                                  int startSample, int numSamples)
 {
+    // RT-safe bounds guard: warn if the host ever hands us a slice that
+    // extends past the buffer (would manifest as an out-of-bounds write).
+    SAFETY_CHECK_BOUNDS(outputBuffer.getReadPointer(0),
+                        startSample + numSamples,
+                        outputBuffer.getNumSamples() + 1,
+                        "SynthVoice::renderNextBlock slice past buffer end");
+
     //==============================================================================
     // -- CRITICAL: Complete Signal Chain --
     // 
@@ -1126,6 +1171,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         {
             inReleasePhase = false;
             clearCurrentNote();
+            // Snapshot last pitch BEFORE zeroing so mono/legato "always glide" can
+            // glide from it on the next sequential note.
+            if (currentPitch > 0.0) lastPlayedPitch = currentPitch;
             currentPitch = 0.0;
             targetPitch = 0.0;
             glideDelta = 0.0;
@@ -1220,6 +1268,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                 modFilter2.reset();
                 inReleasePhase = false;
                 clearCurrentNote();
+                // Snapshot last pitch BEFORE zeroing so mono/legato "always glide"
+                // can glide from it on the next sequential note.
+                if (currentPitch > 0.0) lastPlayedPitch = currentPitch;
                 currentPitch = 0.0;
                 targetPitch = 0.0;
                 glideDelta = 0.0;

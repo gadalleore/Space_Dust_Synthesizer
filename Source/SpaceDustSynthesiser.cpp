@@ -1,4 +1,5 @@
 #include "SpaceDustSynthesiser.h"
+#include "MemorySafetyLogger.h"
 #include <juce_core/juce_core.h>
 #include <vector>
 
@@ -52,6 +53,13 @@ void SpaceDustSynthesiser::noteAdded(juce::MPENote newNote)
 {
     const int mode = getVoiceModeIndex();
 
+    // Memory-safety logger: capture every note-allocation decision so we can
+    // tell mono-reuse from fresh polyphonic allocation when scanning logs.
+    SAFETY_LOG_VOICE_NOTE(newNote.noteID, this, (int) newNote.initialNote,
+                          (float) newNote.getFrequencyInHertz(),
+                          mode == 0 ? "noteAdded POLY"
+                                    : (mode == 1 ? "noteAdded MONO" : "noteAdded LEGATO"));
+
     // Mono & Legato: reuse the same voice to prevent click from voice stealing.
     // noteStopped preserves ADSR/filter/oscillator state when isPreservingVoice()
     // or isNextNoteLegato() returns true, and noteStarted either retriggers ADSR
@@ -61,6 +69,8 @@ void SpaceDustSynthesiser::noteAdded(juce::MPENote newNote)
     {
         if (auto* voice = getVoice(lastMonoVoiceIndex))
         {
+            SAFETY_LOG_VOICE(newNote.noteID, voice,
+                             "voice REUSE (mono/legato handoff)");
             nextNotePreservesVoice.store(true);
 
             // MPESynthesiser::startVoice() simply assigns the new MPENote to the
@@ -199,8 +209,13 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
             else if (mode == 1)
             {
                 // Mono: just send the noteOn.  noteAdded() reuses the same voice
-                // (no voice stealing), and noteStarted() retriggers ADSR from its
-                // current value without resetting oscillator phases.
+                // (no voice stealing). Envelope is HARD retriggered in noteStarted
+                // when voiceMode==1.
+                //
+                // We mark nextNoteIsLegato=true so the Legato Glide toggle can
+                // gate glide in mono too: with Legato Glide ON, glide only happens
+                // on overlapping notes; with it OFF, glide happens every note.
+                // (We're inside the previousNote >= 0 branch, so this IS an overlap.)
                 juce::MidiBuffer filtered;
                 for (const auto meta : out)
                 {
@@ -209,7 +224,7 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
                         filtered.addEvent(m, meta.samplePosition);
                 }
                 out.swapWith(filtered);
-                nextNoteIsLegato.store(false);
+                nextNoteIsLegato.store(true);
                 out.addEvent(message, pos);
             }
             else // mode == 2 (Legato)
@@ -264,7 +279,9 @@ void SpaceDustSynthesiser::processMidiBuffer(juce::MidiBuffer& midiMessages, int
             else if (mode == 1)
             {
                 // Mono: return to previous held note with full ADSR retrigger.
-                nextNoteIsLegato.store(false);
+                // Mark as legato (overlap) so the Legato Glide toggle can gate
+                // glide; envelope still hard-retriggers because voiceMode==1.
+                nextNoteIsLegato.store(true);
                 out.addEvent(juce::MidiMessage::noteOn(channel, newTop, (juce::uint8)127), pos);
             }
             else // mode == 2 (Legato)

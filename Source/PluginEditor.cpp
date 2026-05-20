@@ -5680,20 +5680,20 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     
     if (delaySync)
     {
-        // Unified list: straight, dotted (1/8., 1/4.), and triplets baked in
+        // Unified list: straight, dotted (1/8., 1/4.), and triplets baked in.
+        // Sample directly into 0..17 to match the processor; the previous
+        // 0..12 -> 0..17 round mapping skipped 1/16, 1/8., 2, and 5.
         double normalized = juce::jlimit(0.0, 1.0, delayRateInverted / 12.0);
         double curved = std::pow(normalized, 2.5);
-        int musicalIndex = static_cast<int>(std::round(curved * 12.0));
-        musicalIndex = juce::jlimit(0, 12, musicalIndex);
+        int musicalIndex = static_cast<int>(std::round(curved * 17.0));
+        musicalIndex = juce::jlimit(0, 17, musicalIndex);
         static const juce::String delayLabels[18] = {
             "1/32", "1/24", "1/16", "1/12", "1/8", "1/8.", "1/4", "1/4.",
             "1/2", "3/4", "1", "3/2", "2", "3", "4", "5", "8", "8"
         };
-        int mappedIndex = static_cast<int>(std::round(musicalIndex / 12.0 * 17.0));
-        mappedIndex = juce::jlimit(0, 17, mappedIndex);
         if (!isBeingDestroyed.load())
         {
-            delayRateValueLabel.setText(delayLabels[mappedIndex], juce::dontSendNotification);
+            delayRateValueLabel.setText(delayLabels[musicalIndex], juce::dontSendNotification);
             delayRateValueLabel.setVisible(true);
         }
     }
@@ -5758,8 +5758,11 @@ void SpaceDustAudioProcessorEditor::timerCallback()
         }
     }
     
-    // Update Legato Glide button visibility based on voice mode
-    // Only show when voice mode is "Legato" (index 2)
+    // Update Legato Glide button visibility based on voice mode.
+    // Show in Mono (1) and Legato (2): in both modes the toggle gates whether
+    // glide applies only on legato (overlapping) notes vs. on every note change.
+    // Envelope retrigger behaviour stays mode-specific (Mono always retriggers,
+    // Legato preserves on overlap).
     if (!isBeingDestroyed.load())
     {
         int voiceModeIndex = 0;
@@ -5770,8 +5773,8 @@ void SpaceDustAudioProcessorEditor::timerCallback()
                 voiceModeIndex = choiceParam->getIndex();
             }
         }
-        bool isLegatoMode = (voiceModeIndex == 2);
-        legatoGlideButton.setVisible(isLegatoMode);
+        const bool isMonoOrLegato = (voiceModeIndex == 1 || voiceModeIndex == 2);
+        legatoGlideButton.setVisible(isMonoOrLegato);
     }
 }
 
@@ -6131,8 +6134,8 @@ void SpaceDustAudioProcessorEditor::resized()
     legatoGlideLabel.setBounds(masterKnobX, legatoLabelY, knobDiameter, labelHeight);
     legatoGlideButton.setBounds(masterKnobX + (knobDiameter - 100) / 2, legatoButtonY, 100, legatoBtnH);
     legatoGlideLabel.setVisible(false);
-    bool isLegatoMode = (voiceModeIndex == 2);
-    legatoGlideButton.setVisible(isLegatoMode);
+    const bool isMonoOrLegato = (voiceModeIndex == 1 || voiceModeIndex == 2);
+    legatoGlideButton.setVisible(isMonoOrLegato);
     
     DBG("Space Dust: resized() - Layout complete");
     }

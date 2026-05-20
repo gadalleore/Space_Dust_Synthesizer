@@ -1,6 +1,8 @@
 # Build directories
 build/
 Build/
+build-safety/
+build-release/
 *.build/
 
 # Visual Studio files

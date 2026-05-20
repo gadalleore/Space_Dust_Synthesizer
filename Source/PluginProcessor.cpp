@@ -49,6 +49,7 @@
 #include "SpaceDustGrainDelay.h"
 #include "SpaceDustPhaser.h"
 #include "SpaceDustTranceGate.h"
+#include "MemorySafetyLogger.h"
 #include <juce_core/juce_core.h>
 #include <cstdarg>
 
@@ -259,7 +260,11 @@ SpaceDustAudioProcessor::SpaceDustAudioProcessor()
     // -- DEBUG: Processor Constructor Start --
     // CRITICAL: Minimal logging in constructor - heavy init moved to prepareToPlay
     DBG("Space Dust: Processor ctor START");
-    
+
+    // Memory-safety logger: start background writer + log this processor's birth.
+    SAFETY_LOGGER_START();
+    SAFETY_LOG_OBJECT_CTOR(this, "SpaceDustAudioProcessor ctor");
+
     try
     {
         DBG("Space Dust: Processor ctor - APVTS created");
@@ -462,6 +467,7 @@ SpaceDustAudioProcessor::~SpaceDustAudioProcessor()
 {
     logToFile("Destructor START");
     DBG("Space Dust: Destructor started - cleaning up resources");
+    SAFETY_LOG_OBJECT_DTOR(this, "SpaceDustAudioProcessor dtor");
 
     // Cancel any pending async filter sync before removing listeners.
     // This prevents handleAsyncUpdate() from firing during/after destruction.
@@ -541,6 +547,9 @@ SpaceDustAudioProcessor::~SpaceDustAudioProcessor()
     
     DBG("Space Dust: Destructor cleanup complete - all resources released");
     logToFile("Destructor END - all resources released");
+
+    // Memory-safety logger: drain & flush ring; join writer thread.
+    SAFETY_LOGGER_SHUTDOWN();
 }
 
 //==============================================================================
@@ -1365,6 +1374,10 @@ bool SpaceDustAudioProcessor::isBusesLayoutSupported(const BusesLayout& layouts)
 */
 void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midiMessages)
 {
+    // Tag this OS thread as the audio thread for the safety logger.
+    // Cheap thread-local bool; entries from this thread will carry [RT] in the log.
+    SAFETY_MARK_AUDIO_THREAD();
+
     //==============================================================================
     // -- CRITICAL: Bulletproof Buffer Guard for Ableton/Reaper Compatibility --
     // 
@@ -2016,17 +2029,18 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         double samplesPerBeat = currentSampleRate * 60.0 / tempo;
         double normalized = juce::jlimit(0.0, 1.0, delayRateInverted / 12.0);
         double curved = std::pow(normalized, 2.5);
-        int musicalIndex = static_cast<int>(std::round(curved * 12.0));
-        musicalIndex = juce::jlimit(0, 12, musicalIndex);
+        // Sample directly into the 18-entry table. Previously this mapped 0..12 -> 0..17
+        // via round(musicalIndex/12*17), which skipped indices 2 (1/16), 5 (1/8.), 12 (2)
+        // and 15 (5) — so those divisions were unreachable.
+        int musicalIndex = static_cast<int>(std::round(curved * 17.0));
+        musicalIndex = juce::jlimit(0, 17, musicalIndex);
         static const double delayMultipliers[18] = {
             8.0, 6.0, 4.0, 2.6666666666666665, 2.0, 1.3333333333333333,
             1.0, 0.6666666666666666, 0.5, 0.3333333333333333, 0.25,
             0.16666666666666666, 0.125, 0.08333333333333333, 0.0625,
             0.0510204081632653, 0.03125, 0.03125
         };
-        int mappedIndex = static_cast<int>(std::round(musicalIndex / 12.0 * 17.0));
-        mappedIndex = juce::jlimit(0, 17, mappedIndex);
-        double multiplier = delayMultipliers[mappedIndex];
+        double multiplier = delayMultipliers[musicalIndex];
         double delayBeats = 1.0 / multiplier;
         delayTimeSamples = static_cast<float>(samplesPerBeat * delayBeats);
     }

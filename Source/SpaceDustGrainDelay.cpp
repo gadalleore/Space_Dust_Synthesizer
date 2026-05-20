@@ -1,4 +1,5 @@
 #include "SpaceDustGrainDelay.h"
+#include "MemorySafetyLogger.h"
 
 //==============================================================================
 float SpaceDustGrainDelay::hanningWindow(float phase) const
@@ -15,6 +16,12 @@ float SpaceDustGrainDelay::readBuffer(const juce::AudioBuffer<float>& buf, int c
     if (index < 0.0f) index += size;
     int i0 = static_cast<int>(index) % size;
     int i1 = (i0 + 1) % size;
+    // RT-safe bounds verification — should never fire after the modulo above,
+    // but if it does we know the grain read produced bogus indices.
+    SAFETY_CHECK_BOUNDS(buf.getReadPointer(channel), i0, size,
+                        "GrainDelay::readBuffer i0 OOB");
+    SAFETY_CHECK_BOUNDS(buf.getReadPointer(channel), i1, size,
+                        "GrainDelay::readBuffer i1 OOB");
     float frac = index - std::floor(index);
     const float* data = buf.getReadPointer(channel);
     return data[i0] * (1.0f - frac) + data[i1] * frac;
@@ -62,9 +69,15 @@ void SpaceDustGrainDelay::spawnGrain(int bufSize, float delaySamples, float grai
                 grains_[g].panR = pan;
             }
             grains_[g].active = true;
+            SAFETY_LOG_GRAIN_DETAILED(g, &grains_[g],
+                                      grains_[g].durationSamples,
+                                      grains_[g].pitchRatio,
+                                      "grain SPAWN");
             return;
         }
     }
+    // All slots busy — log once so we can correlate dropped grains with audio glitches.
+    SAFETY_LOG_GRAIN(-1, this, "grain spawn DROPPED (all slots busy)");
 }
 
 void SpaceDustGrainDelay::prepare(const juce::dsp::ProcessSpec& spec)
@@ -105,6 +118,14 @@ void SpaceDustGrainDelay::prepare(const juce::dsp::ProcessSpec& spec)
     spawnCounter_ = 0.0f;
     for (int g = 0; g < kMaxGrains; ++g)
         grains_[g].active = false;
+
+    SAFETY_LOG_BUFFER(bufferL_.getReadPointer(0),
+                      bufferL_.getNumSamples() * (int) sizeof(float),
+                      "GrainDelay::prepare L buffer");
+    SAFETY_LOG_BUFFER(bufferR_.getReadPointer(0),
+                      bufferR_.getNumSamples() * (int) sizeof(float),
+                      "GrainDelay::prepare R buffer");
+    SAFETY_LOG_FILTER(&filterHP_, "GrainDelay::prepare HP/LP filters");
 }
 
 void SpaceDustGrainDelay::reset()
@@ -218,7 +239,10 @@ void SpaceDustGrainDelay::process(juce::AudioBuffer<float>& buffer)
             grains_[g].readIdxR_ += grains_[g].pitchRatio;
 
             if (grains_[g].phase >= 1.0f)
+            {
+                SAFETY_LOG_GRAIN(g, &grains_[g], "grain MATURE/RETIRE");
                 grains_[g].active = false;
+            }
         }
 
         // Normalize by sqrt of active grains to avoid level explosion

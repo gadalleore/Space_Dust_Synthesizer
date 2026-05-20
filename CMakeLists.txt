@@ -95,6 +95,8 @@ target_sources(SpaceDust PRIVATE
     Source/PresetManager.cpp
     Source/PresetManager.h
     Source/CheezeGuyGame.h
+    Source/MemorySafetyLogger.cpp
+    Source/MemorySafetyLogger.h
 )
 
 # Disable VST2 replacement compatibility for VST3-only plugin
@@ -141,6 +143,30 @@ if(ENABLE_ASAN)
     else()
         message(WARNING "ENABLE_ASAN currently only wired up for MSVC; ignored.")
     endif()
+endif()
+
+#==============================================================================
+# Memory Safety Logger — always-on dev logger for RT-safe voice / grain /
+# pointer / buffer / delay-line / filter tracking.
+# Configure with: cmake -B build-safety -DENABLE_MEMORY_SAFETY_LOGGING=ON
+# When OFF (default):
+#   * SPACEDUST_ENABLE_SAFETY_LOGGING=0 → every SAFETY_LOG_* macro is a no-op.
+#   * JUCE_LOG_ASSERTIONS=0             → silences juce::Logger assertion lines.
+#   * Release builds also have JUCE_DEBUG=0 (set by NDEBUG), so DBG(...) is empty.
+# Result: clean Release builds emit zero log code. See disable-all-logging-for-release.ps1.
+#==============================================================================
+option(ENABLE_MEMORY_SAFETY_LOGGING "Build with Space Dust memory-safety logger" OFF)
+if(ENABLE_MEMORY_SAFETY_LOGGING)
+    target_compile_definitions(SpaceDust PRIVATE SPACEDUST_ENABLE_SAFETY_LOGGING=1)
+    if(WIN32)
+        target_link_libraries(SpaceDust PRIVATE DbgHelp)
+    endif()
+    message(STATUS "MemorySafetyLogger ENABLED. Logs: %APPDATA%/Shades/Space Dust/Logs/Safety/")
+else()
+    target_compile_definitions(SpaceDust PRIVATE
+        SPACEDUST_ENABLE_SAFETY_LOGGING=0
+        JUCE_LOG_ASSERTIONS=0)
+    message(STATUS "MemorySafetyLogger DISABLED (logging compiled out).")
 endif()
 
 #==============================================================================
