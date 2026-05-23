@@ -46,6 +46,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstddef>
+#include <mutex>
 #include <thread>
 #include <memory>
 
@@ -85,12 +86,24 @@ public:
     static MemorySafetyLogger& instance();
 
     /** Spin up the background writer thread and create today's log file.
-        Idempotent: safe to call multiple times. */
+        Idempotent: safe to call multiple times.
+        Most callers should use addRef() instead — see refcount note below. */
     void start();
 
     /** Stop the writer thread, drain the ring, and close the file.
-        Idempotent: safe to call multiple times. */
+        Idempotent: safe to call multiple times.
+        Most callers should use release() instead — see refcount note below. */
     void shutdown();
+
+    /** Refcounted lifecycle for multi-instance hosts.
+        The logger is a process-wide singleton shared across every Space Dust
+        instance loaded into the same DLL. addRef() increments the live-instance
+        count and calls start() on the 0→1 transition; release() decrements and
+        calls shutdown() on the 1→0 transition. Both serialize via lifecycleMutex
+        so a fast remove-then-add cannot race start() and shutdown().
+        These are the canonical entry points from PluginProcessor ctor / dtor. */
+    void addRef();
+    void release();
 
     /** Real-time safe: never allocates, never blocks, never throws.
         If the ring is full the entry is dropped and an internal counter
@@ -144,6 +157,9 @@ private:
 
     std::atomic<bool> running { false };
     std::thread       writer;
+
+    std::mutex lifecycleMutex;
+    int        refCount { 0 }; // guarded by lifecycleMutex
 
     juce::File logDir;
     juce::File logFile;
@@ -287,10 +303,10 @@ private:
     ::spacedust::MemorySafetyLogger::instance().markAudioThread()
 
 #define SAFETY_LOGGER_START()                                                       \
-    ::spacedust::MemorySafetyLogger::instance().start()
+    ::spacedust::MemorySafetyLogger::instance().addRef()
 
 #define SAFETY_LOGGER_SHUTDOWN()                                                    \
-    ::spacedust::MemorySafetyLogger::instance().shutdown()
+    ::spacedust::MemorySafetyLogger::instance().release()
 
 //==============================================================================
 #else   // SPACEDUST_ENABLE_SAFETY_LOGGING == 0  →  every macro is a no-op

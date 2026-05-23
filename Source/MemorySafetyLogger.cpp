@@ -179,6 +179,21 @@ void MemorySafetyLogger::shutdown()
         writer.join();
 }
 
+void MemorySafetyLogger::addRef()
+{
+    std::lock_guard<std::mutex> lock (lifecycleMutex);
+    if (refCount++ == 0)
+        start();
+}
+
+void MemorySafetyLogger::release()
+{
+    std::lock_guard<std::mutex> lock (lifecycleMutex);
+    if (refCount <= 0) { refCount = 0; return; }     // unmatched release: ignore rather than underflow
+    if (--refCount == 0)
+        shutdown();
+}
+
 void MemorySafetyLogger::markAudioThread() noexcept   { tlsIsAudioThread = true; }
 bool MemorySafetyLogger::isAudioThread() const noexcept { return tlsIsAudioThread; }
 
