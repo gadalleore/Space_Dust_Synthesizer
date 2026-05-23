@@ -1001,10 +1001,13 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     float envSustain = currentSustainLevel.load();
     float envRelease = currentReleaseTime.load();
     
-    // Voice mode and glide parameters (convert normalized 0-1 to actual seconds for glide)
-    float glideTime = 0.0f;
-    if (auto* p = apvts.getParameter("glideTime"))
-        glideTime = p->convertFrom0to1(safeGetParam(apvts, "glideTime"));
+    // Voice mode and glide. safeGetParam returns the DENORMALISED (actual) value via
+    // APVTS::getRawParameterValue -> getRawDenormalisedValue, so this is already in
+    // seconds. The previous code wrapped it in convertFrom0to1() which treated 0.016
+    // as a 0-1 normalised value and produced ~0.000338s — which then got snapped to 0
+    // by the parameter's 0.001 interval, silently disabling user glide and forcing
+    // the 3ms anti-click branch on every note in mono/legato.
+    float glideTime = juce::jlimit(0.0f, 5.0f, safeGetParam(apvts, "glideTime"));
     bool legatoGlide = safeGetParam(apvts, "legatoGlide") > 0.5f;
     
     // Pitch envelope parameters (use get() for actual value - separate from pitch bend)

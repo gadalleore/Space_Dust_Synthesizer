@@ -887,7 +887,14 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             float curve = 1.0f - frac;  // Linear: 1 at start, 0 at end (hits note at indicated time)
             float pitchModSemitones = juce::jlimit(-48.0f, 48.0f, curve * (pitchEnvAmount / 100.0f) * pitchEnvPitch);
             double pitchEnvRatio = std::pow(2.0, static_cast<double>(pitchModSemitones) / 12.0);
-            pitchForOscillators = currentPitch * pitchEnvRatio;
+            // Anchor pitch env to the intended note (targetPitch), not the glide-tracking
+            // currentPitch. Rapid notes whose glide hasn't completed would otherwise produce
+            // a meaningless attack of (mid-glide) × envRatio. Crossfade in Hz from the
+            // env-shifted target back to currentPitch as the curve decays, so glide takes
+            // over naturally once the env attack is past.
+            const double envedTargetHz = targetPitch * pitchEnvRatio;
+            const double curveD = static_cast<double>(curve);
+            pitchForOscillators = envedTargetHz * curveD + currentPitch * (1.0 - curveD);
         }
         // Cap pitchEnvSamplesElapsed to avoid float precision loss on very long holds
         if (pitchEnvSamplesElapsed < 1e7f)
