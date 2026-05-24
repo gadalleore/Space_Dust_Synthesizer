@@ -3890,6 +3890,11 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter1ResonanceSlider.addListener(this);
     modFilter2CutoffSlider.addListener(this);
     modFilter2ResonanceSlider.addListener(this);
+    // While linked, mod-tab Warm Saturation toggle must push to warmSaturationMaster.
+    // buttonStateChanged() handles the push; without these listeners the mod toggle
+    // updates only warmSaturationMod*, and the next master-side mirror reverts the visual.
+    warmSaturationMod1Button.addListener(this);
+    warmSaturationMod2Button.addListener(this);
     
     // LFO2 Retrigger button
     lfo2RetriggerButton.setButtonText(safeString("Retrigger"));
@@ -5205,6 +5210,8 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
     modFilter1ResonanceSlider.removeListener(this);
     modFilter2CutoffSlider.removeListener(this);
     modFilter2ResonanceSlider.removeListener(this);
+    warmSaturationMod1Button.removeListener(this);
+    warmSaturationMod2Button.removeListener(this);
     if (lfo1SyncRateListener)
         lfo1SyncRateCombo.removeListener(lfo1SyncRateListener.get());
     if (lfo2SyncRateListener)
@@ -5451,30 +5458,37 @@ void SpaceDustAudioProcessorEditor::sliderDragEnded(juce::Slider* slider)
 //==============================================================================
 // -- Button Listener (On toggle -> group glow sync) --
 
+void SpaceDustAudioProcessorEditor::buttonClicked(juce::Button* button)
+{
+    // Only handle clicks on the mod-tab Warm Saturation toggles. We use buttonClicked
+    // (not buttonStateChanged) so hover/mouse-over and visibility-driven state changes
+    // never trigger this — only real user clicks. The mirror function uses
+    // dontSendNotification, so master->mod widget mirroring won't loop back through here.
+    if (isBeingDestroyed.load() || button == nullptr || isSyncingFilterParams) return;
+    if (button != &warmSaturationMod1Button && button != &warmSaturationMod2Button) return;
+
+    auto& apvts = audioProcessor.getValueTreeState();
+    const char* modId = (button == &warmSaturationMod1Button) ? "warmSaturationMod1" : "warmSaturationMod2";
+    const char* linkId = (button == &warmSaturationMod1Button) ? "modFilter1LinkToMaster" : "modFilter2LinkToMaster";
+    if (*apvts.getRawParameterValue(linkId) <= 0.5f) return;
+
+    auto* m   = apvts.getParameter("warmSaturationMaster");
+    auto* mod = apvts.getParameter(modId);
+    if (m == nullptr || mod == nullptr) return;
+
+    const float want = mod->getValue();
+    if (std::abs(m->getValue() - want) > 1.0e-5f)
+    {
+        m->beginChangeGesture();
+        m->setValueNotifyingHost(want);
+        m->endChangeGesture();
+    }
+}
+
 void SpaceDustAudioProcessorEditor::buttonStateChanged(juce::Button* button)
 {
     if (isBeingDestroyed.load() || button == nullptr)
         return;
-
-    auto& apvts = audioProcessor.getValueTreeState();
-    auto pushModWarmSatToMaster = [&](juce::Button& modBtn, const char* modId, bool link)
-    {
-        if (isSyncingFilterParams || !link || button != &modBtn) return;
-        auto* m = apvts.getParameter("warmSaturationMaster");
-        auto* mod = apvts.getParameter(modId);
-        if (m == nullptr || mod == nullptr) return;
-        const float want = mod->getValue();
-        if (std::abs(m->getValue() - want) > 1.0e-5f)
-        {
-            m->beginChangeGesture();
-            m->setValueNotifyingHost(want);
-            m->endChangeGesture();
-        }
-    };
-    pushModWarmSatToMaster(warmSaturationMod1Button, "warmSaturationMod1",
-                           *apvts.getRawParameterValue("modFilter1LinkToMaster") > 0.5f);
-    pushModWarmSatToMaster(warmSaturationMod2Button, "warmSaturationMod2",
-                           *apvts.getRawParameterValue("modFilter2LinkToMaster") > 0.5f);
 
     auto sync = [](juce::ToggleButton& btn, juce::GroupComponent& grp) {
         grp.getProperties().set("isActive", btn.getToggleState());

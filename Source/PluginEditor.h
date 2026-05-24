@@ -243,7 +243,7 @@ public:
     void sliderDragStarted(juce::Slider* slider) override;
     void sliderValueChanged(juce::Slider* slider) override;
     void sliderDragEnded(juce::Slider* slider) override;
-    void buttonClicked(juce::Button* button) override {}
+    void buttonClicked(juce::Button* button) override;
     void buttonStateChanged(juce::Button* button) override;
     void parameterChanged(const juce::String& parameterID, float newValue) override;
 

@@ -97,3 +97,7 @@ soak-test-baseline.json
 # Crash dumps (configured to land in C:\CrashDumps but ignore if any land here)
 CrashDumps/
 *.dmp
+
+# Extra build directories and logs
+build-safety-rel/
+rebuild-safety.log
