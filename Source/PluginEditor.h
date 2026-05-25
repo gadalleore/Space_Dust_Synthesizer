@@ -251,6 +251,19 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
 
+    // ========================================================================
+    // SAFE PARAMETER ACCESS (2026 session crash hardening)
+    // ========================================================================
+    // Replaces dangerous direct *getRawParameterValue(...) calls throughout the
+    // editor and its sub-components. Prevents null dereference crashes when a
+    // parameter ID is missing during Ableton session restore, rapid automation,
+    // or partial state load.
+    // ========================================================================
+    // Safe accessor for raw parameter values (returns the actual/denormalized value,
+    // not the 0-1 normalized representation). Prevents null derefs during session
+    // restore or when parameter IDs are missing.
+    float safeGetParam(const juce::String& paramID, float fallback = 0.0f) const noexcept;
+
 private:
     SpaceDustAudioProcessor& audioProcessor;
     

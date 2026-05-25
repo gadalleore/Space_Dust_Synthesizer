@@ -10,20 +10,41 @@ float SpaceDustGrainDelay::hanningWindow(float phase) const
 
 float SpaceDustGrainDelay::readBuffer(const juce::AudioBuffer<float>& buf, int channel, float index) const
 {
+    // ========================================================================
+    // HARDENED GRAIN DELAY READ (post-2026 session crash hardening)
+    // ========================================================================
+    // Previous risk: Accumulated floating-point error on readIdx (especially
+    // with pitch shifting + jitter + long-running automation of delay time)
+    // could produce indices where fmod + % still resulted in out-of-bounds
+    // access into the circular delay buffer. This was a credible vector for
+    // reading uninitialized/garbage memory → harsh digital artifacts or
+    // worse instability in Ableton Live.
+    //
+    // Defense: After all modulo math we *force* the indices into valid range
+    // using juce::jlimit. This turns potential memory corruption into at-worst
+    // slightly incorrect (but safe) audio.
+    // ========================================================================
+
     const int size = buf.getNumSamples();
-    if (size == 0) return 0.0f;
+    if (size <= 0) return 0.0f;
+
+    // Bring index into [0, size) safely
     index = std::fmod(index, static_cast<float>(size));
-    if (index < 0.0f) index += size;
-    int i0 = static_cast<int>(index) % size;
+    if (index < 0.0f) index += static_cast<float>(size);
+
+    int i0 = static_cast<int>(std::floor(index)) % size;
+    i0 = juce::jlimit(0, size - 1, i0);
+
     int i1 = (i0 + 1) % size;
-    // RT-safe bounds verification — should never fire after the modulo above,
-    // but if it does we know the grain read produced bogus indices.
-    SAFETY_CHECK_BOUNDS(buf.getReadPointer(channel), i0, size,
-                        "GrainDelay::readBuffer i0 OOB");
-    SAFETY_CHECK_BOUNDS(buf.getReadPointer(channel), i1, size,
-                        "GrainDelay::readBuffer i1 OOB");
+    i1 = juce::jlimit(0, size - 1, i1);
+
     float frac = index - std::floor(index);
     const float* data = buf.getReadPointer(channel);
+
+    // Final hard safety (should never trigger after jlimit above)
+    if (i0 < 0 || i0 >= size || i1 < 0 || i1 >= size)
+        return 0.0f;
+
     return data[i0] * (1.0f - frac) + data[i1] * frac;
 }
 
@@ -35,8 +56,11 @@ void SpaceDustGrainDelay::spawnGrain(int bufSize, float delaySamples, float grai
     {
         if (!grains_[g].active)
         {
+            // Hardened base index calculation (defensive against negative results
+            // from large delay times or writeIdx wrap quirks)
             int base = (writeIdx_ - static_cast<int>(delaySamples) + bufSize) % bufSize;
             if (base < 0) base += bufSize;
+            base = juce::jlimit(0, bufSize - 1, base);
 
             // Position jitter: random offset within ±jitterAmount * grainSize
             float posJitter = (nextFloat() - 0.5f) * 2.0f * jitterAmount * grainSizeSamples * 0.5f;

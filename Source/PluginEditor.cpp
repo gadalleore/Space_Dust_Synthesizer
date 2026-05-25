@@ -624,7 +624,7 @@ void MainPageComponent::parameterChanged(const juce::String& parameterID, float 
 
 void MainPageComponent::updateSubOscVisibility()
 {
-    bool on = parentEditor.audioProcessor.getValueTreeState().getParameter("subOscOn")->getValue() > 0.5f;
+    bool on = parentEditor.safeGetParam("subOscOn") > 0.5f;
     parentEditor.subOscWaveformCombo.setVisible(on);
     parentEditor.subOscLevelSlider.setVisible(on);
     parentEditor.subOscCoarseSlider.setVisible(on);
@@ -911,8 +911,7 @@ void MainPageComponent::resized()
     const int modLfoBoxPadV = 32;       // ModulationPageComponent lfoBoxPadV
     const int modRowSpacing = 4;      // ModulationPageComponent modRowSpacing (gap after last row)
     const int ampEnvBottomInset = modLfoBoxPadV + modRowSpacing;
-    bool subOscOn = parentEditor.audioProcessor.getValueTreeState().getParameter("subOscOn") != nullptr
-        && parentEditor.audioProcessor.getValueTreeState().getParameter("subOscOn")->getValue() > 0.5f;
+    bool subOscOn = parentEditor.safeGetParam("subOscOn") > 0.5f;
     int ampEnvBottom = subOscOn ? parentEditor.subOscWaveformCombo.getBottom() : (subOscY + subOscToggleHeight);
     int ampEnvHeight = ampEnvBottom - topY + ampEnvBottomInset;
     parentEditor.envelopeGroup.setBounds(rightX, topY, narrowStripWidth, ampEnvHeight);
@@ -1244,9 +1243,9 @@ void ModulationPageComponent::resized()
     
     // Check if filter sections are shown (each LFO has its own toggle)
     bool modFilter1Show = parentEditor.audioProcessor.getValueTreeState().getParameter("modFilter1Show") != nullptr
-        && *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("modFilter1Show") > 0.5f;
+        && parentEditor.safeGetParam("modFilter1Show") > 0.5f;
     bool modFilter2Show = parentEditor.audioProcessor.getValueTreeState().getParameter("modFilter2Show") != nullptr
-        && *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("modFilter2Show") > 0.5f;
+        && parentEditor.safeGetParam("modFilter2Show") > 0.5f;
     // LFO box heights will be set after layout to shrink-to-fit
     int lfo1AreaHeight = modulationContent.getHeight();
     int lfo2AreaHeight = modulationContent.getHeight();
@@ -1730,7 +1729,7 @@ void EffectsPageComponent::parameterChanged(const juce::String& parameterID, flo
 
 void EffectsPageComponent::updateDelayFilterVisibility()
 {
-    bool show = *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("delayFilterShow") > 0.5f;
+    bool show = parentEditor.safeGetParam("delayFilterShow") > 0.5f;
     parentEditor.delayFilterHPCutoffSlider.setVisible(show);
     parentEditor.delayFilterHPResonanceSlider.setVisible(show);
     parentEditor.delayFilterLPCutoffSlider.setVisible(show);
@@ -1745,7 +1744,7 @@ void EffectsPageComponent::updateDelayFilterVisibility()
 
 void EffectsPageComponent::updateGrainDelayFilterVisibility()
 {
-    bool show = *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("grainDelayFilterShow") > 0.5f;
+    bool show = parentEditor.safeGetParam("grainDelayFilterShow") > 0.5f;
     parentEditor.grainDelayFilterHPCutoffSlider.setVisible(show);
     parentEditor.grainDelayFilterHPResonanceSlider.setVisible(show);
     parentEditor.grainDelayFilterLPCutoffSlider.setVisible(show);
@@ -1760,7 +1759,7 @@ void EffectsPageComponent::updateGrainDelayFilterVisibility()
 
 void EffectsPageComponent::updateReverbFilterVisibility()
 {
-    bool show = *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("reverbFilterShow") > 0.5f;
+    bool show = parentEditor.safeGetParam("reverbFilterShow") > 0.5f;
     parentEditor.reverbFilterWarmSaturationButton.setVisible(show);
     parentEditor.reverbFilterHPCutoffSlider.setVisible(show);
     parentEditor.reverbFilterHPResonanceSlider.setVisible(show);
@@ -1844,7 +1843,7 @@ void EffectsPageComponent::resized()
     y += btnH + gap;
     
     // Filter toggle; when on, Warm Saturation next to it (only visible when filter is on)
-    bool filterShow = *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("delayFilterShow") > 0.5f;
+    bool filterShow = parentEditor.safeGetParam("delayFilterShow") > 0.5f;
     const int warmSatW = 120;
     const int filterRowGap = 6;
     if (filterShow)
@@ -1932,7 +1931,7 @@ void EffectsPageComponent::resized()
     gY += gBtnH + gGap;
 
     // Filter toggle; when on, Warm Saturation next to it (only visible when filter is on)
-    bool grainFilterShow = *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("grainDelayFilterShow") > 0.5f;
+    bool grainFilterShow = parentEditor.safeGetParam("grainDelayFilterShow") > 0.5f;
     const int gWarmSatW = 120;
     const int gFilterRowGap = 6;
     if (grainFilterShow)
@@ -2000,7 +1999,7 @@ void EffectsPageComponent::resized()
     rY += rKnobSize + gap;
     
     // Filter toggle; when on, Warm Saturation next to it (only visible when filter is on)
-    bool reverbFilterShow = *parentEditor.audioProcessor.getValueTreeState().getRawParameterValue("reverbFilterShow") > 0.5f;
+    bool reverbFilterShow = parentEditor.safeGetParam("reverbFilterShow") > 0.5f;
     const int rWarmSatW = 120;
     const int rFilterRowGap = 6;
     if (reverbFilterShow)
@@ -3873,7 +3872,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter1ModeCombo.onChange = [this]()
     {
         if (isSyncingFilterParams) return;
-        if (*audioProcessor.getValueTreeState().getRawParameterValue("modFilter1LinkToMaster") <= 0.5f) return;
+        if (safeGetParam("modFilter1LinkToMaster") <= 0.5f) return;
         const int id = modFilter1ModeCombo.getSelectedId();
         if (id > 0 && filterModeCombo.getSelectedId() != id)
             filterModeCombo.setSelectedId(id, juce::sendNotificationSync);
@@ -3881,7 +3880,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter2ModeCombo.onChange = [this]()
     {
         if (isSyncingFilterParams) return;
-        if (*audioProcessor.getValueTreeState().getRawParameterValue("modFilter2LinkToMaster") <= 0.5f) return;
+        if (safeGetParam("modFilter2LinkToMaster") <= 0.5f) return;
         const int id = modFilter2ModeCombo.getSelectedId();
         if (id > 0 && filterModeCombo.getSelectedId() != id)
             filterModeCombo.setSelectedId(id, juce::sendNotificationSync);
@@ -5260,6 +5259,18 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
 }
 
 //==============================================================================
+// -- Safe Parameter Access (post-2026 Ableton hardening) --
+
+float SpaceDustAudioProcessorEditor::safeGetParam(const juce::String& paramID, float fallback) const noexcept
+{
+    if (auto* v = audioProcessor.getValueTreeState().getRawParameterValue(paramID))
+        return v->load();
+    // Parameter missing (bad state, version mismatch, or restore in progress).
+    // Return fallback instead of crashing the message thread.
+    return fallback;
+}
+
+//==============================================================================
 // -- Preset Management Helpers --
 
 void SpaceDustAudioProcessorEditor::refreshPresetList()
@@ -5346,8 +5357,8 @@ void SpaceDustAudioProcessorEditor::syncLinkedFilterParams(const juce::String& p
     isSyncingFilterParams = true;
 
     auto& apvts = audioProcessor.getValueTreeState();
-    const bool link1 = *apvts.getRawParameterValue("modFilter1LinkToMaster") > 0.5f;
-    const bool link2 = *apvts.getRawParameterValue("modFilter2LinkToMaster") > 0.5f;
+    const bool link1 = safeGetParam("modFilter1LinkToMaster") > 0.5f;
+    const bool link2 = safeGetParam("modFilter2LinkToMaster") > 0.5f;
 
     struct ParamMapping { const char* master; const char* mod1; const char* mod2; };
     static const ParamMapping mappings[] = {
@@ -5397,12 +5408,12 @@ void SpaceDustAudioProcessorEditor::sliderDragStarted(juce::Slider* slider)
 
     if (slider == &modFilter1CutoffSlider || slider == &modFilter1ResonanceSlider)
     {
-        if (*apvts.getRawParameterValue("modFilter1LinkToMaster") > 0.5f)
+        if (safeGetParam("modFilter1LinkToMaster") > 0.5f)
             linkedModFilterDragSource = slider;
     }
     else if (slider == &modFilter2CutoffSlider || slider == &modFilter2ResonanceSlider)
     {
-        if (*apvts.getRawParameterValue("modFilter2LinkToMaster") > 0.5f)
+        if (safeGetParam("modFilter2LinkToMaster") > 0.5f)
             linkedModFilterDragSource = slider;
     }
 }
@@ -5470,7 +5481,7 @@ void SpaceDustAudioProcessorEditor::buttonClicked(juce::Button* button)
     auto& apvts = audioProcessor.getValueTreeState();
     const char* modId = (button == &warmSaturationMod1Button) ? "warmSaturationMod1" : "warmSaturationMod2";
     const char* linkId = (button == &warmSaturationMod1Button) ? "modFilter1LinkToMaster" : "modFilter2LinkToMaster";
-    if (*apvts.getRawParameterValue(linkId) <= 0.5f) return;
+    if (safeGetParam(linkId) <= 0.5f) return;
 
     auto* m   = apvts.getParameter("warmSaturationMaster");
     auto* mod = apvts.getParameter(modId);
@@ -5572,10 +5583,10 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     }
     
     // Update LFO1 rate display
-    bool lfo1Sync = *audioProcessor.getValueTreeState().getRawParameterValue("lfo1Sync") > 0.5f;
+    bool lfo1Sync = safeGetParam("lfo1Sync") > 0.5f;
     double lfo1Rate = lfo1FreeRateSlider.getValue();
-    bool lfo1Triplet = *audioProcessor.getValueTreeState().getRawParameterValue("lfo1TripletEnabled") > 0.5f;
-    bool lfo1All = *audioProcessor.getValueTreeState().getRawParameterValue("lfo1TripletStraightToggle") > 0.5f;
+    bool lfo1Triplet = safeGetParam("lfo1TripletEnabled") > 0.5f;
+    bool lfo1All = safeGetParam("lfo1TripletStraightToggle") > 0.5f;
     
     lfo1FreeRateSlider.setVisible(true);
     lfo1SyncRateCombo.setVisible(false);
@@ -5629,10 +5640,10 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     }
     
     // Update LFO2 rate display
-    bool lfo2Sync = *audioProcessor.getValueTreeState().getRawParameterValue("lfo2Sync") > 0.5f;
+    bool lfo2Sync = safeGetParam("lfo2Sync") > 0.5f;
     double lfo2Rate = lfo2FreeRateSlider.getValue();
-    bool lfo2Triplet = *audioProcessor.getValueTreeState().getRawParameterValue("lfo2TripletEnabled") > 0.5f;
-    bool lfo2All = *audioProcessor.getValueTreeState().getRawParameterValue("lfo2TripletStraightToggle") > 0.5f;
+    bool lfo2Triplet = safeGetParam("lfo2TripletEnabled") > 0.5f;
+    bool lfo2All = safeGetParam("lfo2TripletStraightToggle") > 0.5f;
     
     lfo2FreeRateSlider.setVisible(true);
     lfo2SyncRateCombo.setVisible(false);
@@ -5687,8 +5698,8 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     
     // Update Delay rate display (inverted: knob 0 = long, knob 12 = short)
     // Use same parameter value as processor for consistency
-    bool delaySync = *audioProcessor.getValueTreeState().getRawParameterValue("delaySync") > 0.5f;
-    float delayRateParam = *audioProcessor.getValueTreeState().getRawParameterValue("delayRate");
+    bool delaySync = safeGetParam("delaySync") > 0.5f;
+    float delayRateParam = safeGetParam("delayRate");
     double delayRateClamped = juce::jlimit(0.0, 12.0, static_cast<double>(delayRateParam));
     double delayRateInverted = 12.0 - delayRateClamped;
     

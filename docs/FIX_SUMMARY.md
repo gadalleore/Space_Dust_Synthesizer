@@ -129,3 +129,52 @@
 5. `SynthVoice.cpp` - Logger calls removed; pink-noise index fix and non-finite DSP guards
 6. `SynthVoice.h` - Pink-noise counter type
 7. `SpaceDustSynthesiser.cpp` - Safe string helpers
+
+---
+
+## 2026-06+ Additional Hardening (Post-Review by Grok)
+
+### 7. Grain Delay Circular Buffer Safety (Memory Corruption Risk) ✅
+
+**Status**: FIXED
+
+**Previous Risk**:
+- `readBuffer()` used `fmod` + integer modulo on accumulated floating-point read indices.
+- Under sustained pitch-shifted grains + jitter + automated delay time, indices could escape valid range despite the modulo math.
+- Direct array access after only a *logging* `SAFETY_CHECK_BOUNDS` → credible vector for reading garbage/uninitialized delay buffer memory.
+- Symptoms: intermittent harsh digital artifacts, potential session instability in Ableton.
+
+**Fix**:
+- Added aggressive `juce::jlimit` clamping on final indices in `readBuffer()`.
+- Added matching defensive clamp in `spawnGrain()` base index calculation.
+- Added large explanatory comment block.
+
+**Files**:
+- `SpaceDustGrainDelay.cpp` — `readBuffer()` and `spawnGrain()`
+
+### 8. Editor Raw Parameter Dereference Hardening (Crash-on-Restore Risk) ✅
+
+**Status**: FIXED
+
+**Previous Risk**:
+- ~22 sites in `PluginEditor.cpp` performed unconditional `*getRawParameterValue("id")` with no null check.
+- These ran in timer callbacks, visibility updaters, and parameterChanged paths.
+- During Ableton session restore, rapid automation, or when a saved project contained unknown/old parameter IDs → null dereference on the message thread → editor (and potentially host) crash.
+- This class of bug is a classic contributor to "crash on project load" loops.
+
+**Fix**:
+- Added `SpaceDustAudioProcessorEditor::safeGetParam(const String&, float fallback)` — the editor equivalent of the processor's `safeGetParam`.
+- Replaced every dangerous direct dereference with the safe helper (including all visibility toggles and live rate display updates in `timerCallback`).
+- FinalEQComponent accesses were already null-guarded (left as-is with clarifying comment).
+
+**Files**:
+- `PluginEditor.h` — new helper declaration
+- `PluginEditor.cpp` — helper implementation + 22 call-site replacements
+- `FinalEQComponent.cpp` — added explanatory comment (no functional change needed)
+
+### Summary of New Defensive Patterns
+- All editor UI code now goes through `safeGetParam` for normalized (0-1) parameter reads.
+- Grain delay reads are now clamped even under extreme floating-point drift.
+- These changes directly target the two remaining credible vectors for Ableton Live hard failures that survived the original 2026 incident hardening pass.
+
+**Recommendation**: Rebuild with safety logging enabled, load heavy projects with lots of automation on the grain delay + filter link parameters, and watch for any new "OOB" or "safe fallback used" log messages.

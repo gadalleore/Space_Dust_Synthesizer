@@ -25,6 +25,9 @@ FinalEQComponent::FinalEQComponent(juce::AudioProcessorValueTreeState& apvts, do
 
     for (int b = 0; b < numBands; ++b)
     {
+        // Already null-guarded (safe pattern). These are only read at construction
+        // and on parameterChanged, so the risk is much lower than the unguarded
+        // direct dereferences that used to exist in the main editor.
         if (auto* p = apvts_.getRawParameterValue(freqId(b)))
             cachedFreq_[b] = p->load();
         else
