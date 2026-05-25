@@ -9,6 +9,8 @@ git clone https://github.com/gadalleore/Space_Dust_Synthesizer.git
 cd Space_Dust_Synthesizer
 ```
 
+**Known Good With:** Ableton Live 10, 11, and 12 (heavily tested for stability as of 2026).
+
 ## Features
 
 - **VST3 format** – VST3-only plugin
@@ -19,6 +21,7 @@ cd Space_Dust_Synthesizer
 - **MIDI input** – Full MIDI note and control support, including **MPE** (per-note pitch bend, pressure, and timbre via Lower Zone or Legacy modes — see [MPE Support](#mpe-support))
 - **Custom UI** – SpaceDust look and feel with compact tabbed layout (Main, Modulation, Effects, Saturation Color, Spectral) and meter-linked glow
 - **Real-time safe** – Parameter updates without allocations in the audio thread
+- **Ableton stability focus** – Significant hardening against common VST3 crash patterns in Ableton (state restore, automation, editor lifecycle). Includes automated QA checks and runtime safety logging (optional).
 
 ## MPE Support
 
@@ -63,21 +66,27 @@ Hold a note and move your controller's pitch wheel — pitch should glide; move 
    - Set the `JUCE_DIR` environment variable, or
    - Pass `-DJUCE_DIR=...` when running CMake
 
-2. **Generate and build**:
-   ```powershell
-   cmake -B build -G "Visual Studio 17 2022" -A x64
-   cmake --build build --config Release
-   ```
-   (Use `Visual Studio 18 2026` if you have VS 2026 installed.)
-
-   Or use the convenience script (builds, copies VST3, and optionally launches Ableton):
+2. **Generate and build** (recommended):
+   The easiest and most reliable way is to use the provided build script:
    ```powershell
    .\build-and-launch.ps1
    # Use -NoLaunch to skip launching Ableton
    .\build-and-launch.ps1 -NoLaunch
    ```
 
-3. **Plugin output**: `build\SpaceDust_artefacts\Release\VST3\Space Dust.vst3`
+   This script will:
+   - Configure with the correct Visual Studio generator (with fallback between 2022 and 2026)
+   - Build the Release VST3
+   - Automatically copy the plugin to all common VST3 locations (system folder + Ableton User Library, etc.)
+
+   Manual alternative:
+   ```powershell
+   cmake -B build -G "Visual Studio 17 2022" -A x64
+   cmake --build build --config Release
+   ```
+   (Use `Visual Studio 18 2026` if you have VS 2026 installed.)
+
+3. **Plugin output**: `build\SpaceDust_artefacts\Release\VST3\Space Dust.vst3` (when building manually)
 
 ## Building the Windows installer
 
@@ -116,6 +125,8 @@ Source/
 ├── SynthVoice.*             # Voice implementation
 ├── SynthSound.*             # Sound definition
 ├── SpaceDustSynthesiser.*   # Synth engine
+├── MemorySafetyLogger.*     # Runtime safety & crash diagnostics logging (optional)
+├── PresetManager.*          # Preset saving/loading system
 ├── Goniometer.*             # Stereo correlation meter
 ├── OscilloscopeComponent.*  # Lissajous / waveform display
 ├── SpectrumAnalyserComponent.*  # Spectrum analyzer
@@ -129,20 +140,38 @@ Source/
 ├── SpaceDustCompressor.*    # SSL/1176/LA-2A style compressor (Saturation Color tab)
 ├── SpaceDustTransient.*     # 808/909 transient shaper (Saturation Color tab)
 ├── SpaceDustLofi.*          # Lo-fi effect (Saturation Color tab)
-├── SpaceDustParametricEQ.*   # Parametric EQ
+├── SpaceDustParametricEQ.*  # Parametric EQ
+├── SpaceDustFinalEQ.*       # Final mastering EQ (DSP)
+├── FinalEQComponent.*       # Final EQ UI component
 ├── SexiconReverb.*          # Additional reverb
-└── SpaceDustLookAndFeel.*   # Custom UI styling
+├── SpaceDustLookAndFeel.*   # Custom UI styling
+└── CheezeGuyGame.h          # Easter egg (optional)
 ```
 
 ## Recent fixes
 
+- **Ableton stability hardening (2026):** Major pass to eliminate classes of crashes that could occur during session restore, preset loading, and rapid automation. Key changes:
+  - Introduced `safeGetParam()` helper on the editor (and equivalent helpers in the processor) to safely read parameters without risking null dereferences when IDs are missing or during state restore.
+  - Replaced dozens of direct `*getRawParameterValue()` and `getParameter()->getValue()` calls throughout the UI with the safe wrappers.
+  - Hardened Grain Delay read buffer against floating-point index drift (common with pitch shifting + automation), preventing potential out-of-bounds reads into the delay buffer.
+- **Build & deployment reliability:** `build-and-launch.ps1` now reliably copies the VST3 to all common locations (system VST3, Ableton User Library, etc.) and includes fallback logic between Visual Studio 2022 and 2026 generators.
 - **Host automation vs. Link to Master (filter):** When LFO filter sections follow the main filter, the editor previously mixed normalized APVTS values with `convertTo0to1` as if they were Hz, and called `setValueNotifyingHost` on the master when mod-filter parameters changed (including from host automation). That could corrupt cutoff and fight automation on the main filter. Link toggles now copy master→mod using normalized `getValue()`; while linked, the mod page mirrors the main filter visually without extra host notifications, and user edits on the mod page update the master through normal control gestures.
 - **Pink noise generator:** The Voss–McCartney implementation uses 16 filter rows; the row index must stay in range. The counter is now wrapped so it cannot produce an out-of-bounds row (which could cause rare harsh digital glitches after sustained play, for example on long chords with pink noise). Non-finite oscillator frequencies and filter outputs are also clamped or zeroed; developers can read `SpaceDustAudioProcessor::getDspSanitizeEventCount()` if investigating edge cases.
 
 ## Additional documentation
 
-- [docs/FIX_SUMMARY.md](docs/FIX_SUMMARY.md) — internal development notes (assertion fixes, UTF-8 handling)
+- [docs/FIX_SUMMARY.md](docs/FIX_SUMMARY.md) — detailed history of stability hardening, crash prevention work, and assertion fixes
 - [docs/REVERB_RESEARCH.md](docs/REVERB_RESEARCH.md)
+
+## Development & Testing
+
+This project includes significant tooling focused on stability and quality:
+
+- `run-full-qa.ps1` — Runs static analysis checks, pluginval validation, installer smoke tests, and crash-marker hygiene.
+- `enable-safety-logging.ps1` / `disable-all-logging-for-release.ps1` — Toggles the built-in `MemorySafetyLogger` for detailed runtime diagnostics (voices, grains, buffer access, audio-thread safety, etc.).
+- The plugin has undergone extensive hardening specifically against common Ableton Live VST3 crash patterns (state restore crashes, dangling parameter listeners, etc.).
+
+See `QA-README.md` for details on the QA suite.
 
 ## References
 
