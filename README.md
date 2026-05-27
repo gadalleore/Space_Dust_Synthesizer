@@ -90,6 +90,16 @@ Hold a note and move your controller's pitch wheel — pitch should glide; move 
 
 ## Building the Windows installer
 
+**Critical:** Before building any installer or final Release binary, you **must** produce a completely clean build with all logging compiled out.
+
+Run this first (it forces `ENABLE_MEMORY_SAFETY_LOGGING=OFF`, turns off VLD/ASAN, and does a binary scan as a safety net):
+
+```powershell
+.\disable-all-logging-for-release.ps1
+```
+
+Then continue with packaging:
+
 A signed-and-sealed Inno Setup script ships in [`installer/SpaceDust-Setup.iss`](installer/SpaceDust-Setup.iss).
 
 1. Install [Inno Setup 6](https://jrsoftware.org/isdl.php) (one time).
@@ -98,8 +108,11 @@ A signed-and-sealed Inno Setup script ships in [`installer/SpaceDust-Setup.iss`]
    installer wizard / `%ProgramData%\Space Dust\config.xml`).
 3. Run the packaging script:
    ```powershell
+   # Recommended full flow (ensures zero logging leaks):
+   .\disable-all-logging-for-release.ps1
    .\package-installer.ps1
-   # Skip the VST3 rebuild for fast iteration on installer-only tweaks:
+
+   # Or for fast iteration on installer-only tweaks (assumes you already ran disable):
    .\package-installer.ps1 -SkipBuild
    ```
    The script rebuilds the Release VST3, syncs your `*.xml` presets into
