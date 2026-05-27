@@ -42,7 +42,7 @@ jobs:
         shell: pwsh
         run: ./download-pluginval.ps1
 
-      - name: Run pluginval (CI smoke: strictness 4, repeat 1)
+      - name: "Run pluginval (CI smoke: strictness 4, repeat 1)"
         shell: pwsh
         run: ./run-pluginval.ps1 -NoBuild -BuildDir "${{ github.workspace }}/build" -Strictness 4 -Repeat 1
 
