@@ -109,15 +109,6 @@ void SynthVoice::noteStarted()
                           (float) note.getFrequencyInHertz(),
                           "noteStarted");
 
-    // ALWAYS cancel any pending voice fade so the voice is at full amplitude
-    // immediately.  This is critical for fast note repetition in mono mode —
-    // if a fade lingers from a previous hard-stop, the new note must override
-    // it instantly.  For preserving-voice/legato handoffs, stopNote does NOT
-    // start a fade at all (it just clears the JUCE note), so there's nothing
-    // to cancel in the common case.
-    voiceFade = 1.0f;
-    voiceFadeSamplesRemaining = 0;
-
     // Snapshot before this note (used for glide-from and pitch-wheel handling).
     const bool wasVoiceActive = isActive;
 
@@ -125,6 +116,36 @@ void SynthVoice::noteStarted()
     isLegatoNote = (synthesiser != nullptr) ? synthesiser->getAndClearNextNoteLegato() : false;
 
     const int voiceMode = (synthesiser != nullptr) ? synthesiser->getVoiceModeIndex() : 0;
+
+    // Cancel pending voice fade, but be careful in poly mode during voice stealing.
+    // In mono/legato we want instant takeover. In poly chord changes (voice steal),
+    // we prefer to let a short fade complete or blend to avoid a hard jump when
+    // the same voice is reassigned to a new note while its previous tail was decaying.
+    const bool isPolySteal = (voiceMode == 0) && wasVoiceActive;
+    if (isPolySteal)
+    {
+        // This is the exact moment a poly voice is stolen for a new chord note.
+        // The previous waveform contribution from this voice is about to be replaced.
+        SAFETY_LOG_VOICE_NOTE(note.noteID, this, midiNoteNumber,
+                              (float)note.getFrequencyInHertz(),
+                              "POLY_VOICE_STEAL_START");
+
+        // Activate extra cutoff damping for the next ~4 ms to tame any rapid
+        // movement coming from the (re)starting filter envelope on this stolen voice.
+        postStealCutoffSlowdownSamples = kPostStealCutoffSlowdownLength;
+    }
+
+    // Always cancel any pending voice fade on note start.
+    // Leaving an old fade running on a stolen poly voice is dangerous because
+    // the fade completion code will do full cleanup (clearCurrentNote + isActive=false),
+    // which would kill the new note after only ~64 samples.
+    // The anti-click protection for poly steals now comes from:
+    // - Preserving oscillator phases
+    // - Not zeroing smoothedEnvelope / outputSmoothers
+    // - Not resetting the filter
+    // - The 3ms smoothedFilterEnvelope + post-steal cutoff slowdown
+    voiceFade = 1.0f;
+    voiceFadeSamplesRemaining = 0;
 
     // MPE: pitch wheel is no longer fed via a separate startNote() argument.
     // mpeBendSemitones (set above from currentlyPlayingNote.totalPitchbendInSemitones)
@@ -321,14 +342,31 @@ void SynthVoice::noteStarted()
     // Full retrigger: new envelope, filter, and modulator cycles
     pitchEnvSamplesElapsed = 0.0f;
 
-    // Anti-click: in mono/legato modes, DON'T reset oscillator phases or envelope to 0.
-    // Resetting phases causes a waveform discontinuity; resetting the envelope causes an
-    // amplitude jump from the current level to 0.  Both produce audible pops/clicks.
-    // Instead, let phases continue naturally and retrigger the envelope from its current
-    // level (analog mono-synth behaviour).  In poly mode, always reset for clean note starts.
-    if (!isMonoRetrigger)
+    // Anti-click strategy (updated after 7s poly chord transition investigation):
+    // - Mono/Legato: phases preserved, smoothedEnvelope catches retrigger jumps.
+    // - Poly fresh voice: full reset is acceptable (no previous audio from this voice).
+    // - Poly voice steal (chord change while previous notes are still sounding):
+    //   Hard-resetting phases + zeroing smoothers on a voice that was contributing
+    //   audio is the root cause of the observed polarity-flip clicks at beat-grid
+    //   aligned chord transitions (see the two-step noteStopped(false) →
+    //   noteStarted() sequence that defeats the voiceFade).
+    //   We now:
+    //     * Leave any pending voiceFade running.
+    //     * Keep oscillator phases continuous.
+    //     * Do NOT call adsr.reset() / filterAdsr.reset() on steal (just noteOn()).
+    //     * Do NOT zero smoothedEnvelope / smoothedFilterEnvelope / outputSmoothers.
+    //     * Let the 3 ms lowpasses naturally blend the old decaying contribution
+    //       into the new note's attack. This gives clean poly note starts while
+    //       preventing the amplitude cliff / sign reversal.
+    //
+    // We also added smoothedFilterEnvelope (matching the 3ms amplitude smoother)
+    // because raw filterAdsr jumps into the log-space cutoff math were perturbing
+    // the StateVariableTPTFilter internal state (especially at high resonance).
+    const bool shouldHardResetForPoly = !isMonoRetrigger && !isPolySteal;
+
+    if (shouldHardResetForPoly)
     {
-        // Poly or first note: full reset
+        // Truly new poly voice: safe to do full reset
         osc1Angle = 0.0;
         osc2Angle = 0.0;
         subOscAngle = 0.0;
@@ -341,8 +379,12 @@ void SynthVoice::noteStarted()
         pinkSum = std::accumulate(pinkState.begin(), pinkState.end(), 0.0f);
         adsr.reset();
         smoothedEnvelope = 0.0f;
+        smoothedFilterEnvelope = 0.0f;
         outputSmootherL = 0.0f;
         outputSmootherR = 0.0f;
+        prevSmoothedL = 0.0f;
+        prevSmoothedR = 0.0f;
+        postStealCutoffSlowdownSamples = 0;
         filter.reset();
         modFilter1.reset();
         modFilter2.reset();
@@ -353,6 +395,32 @@ void SynthVoice::noteStarted()
         isActive = true;
         updateFilter();
         filterAdsr.noteOn();
+    }
+    else if (isPolySteal)
+    {
+        // Poly voice steal during chord change: keep phases continuous to avoid
+        // the polarity flip. Still retrigger envelopes (desired poly behaviour),
+        // but the existing smoothedEnvelope + any remaining voiceFade will
+        // prevent a hard click. Filter state is also left running.
+        SAFETY_LOG_VOICE_NOTE(note.noteID, this, midiNoteNumber,
+                              (float)note.getFrequencyInHertz(),
+                              "POLY_VOICE_STEAL_NO_PHASE_RESET");
+
+        // Per the analysis: do NOT call reset() here. ...
+        // filterAdsr is left untouched for the same reason.
+        adsr.noteOn();
+        filterAdsr.noteOn();
+
+        // Extra diagnostic: mark exactly when the filter envelope restarts on a steal.
+        // Combined with AUDIO_CLICK_DETECTED + current cutoff, this will show if
+        // the click is tightly correlated with filterAdsr.noteOn() during chord changes.
+        SAFETY_LOG_VOICE_NOTE(note.noteID, this, midiNoteNumber,
+                              smoothedFilterCutoffHz,
+                              "POLY_STEAL_FILTER_ENV_RESTART");
+        inReleasePhase = false;
+        isActive = true;
+        // phases, pink state, filter, outputSmoother*, and smoothed*Envelopes
+        // are deliberately left running from the stolen voice's previous state.
     }
     else
     {
@@ -1110,7 +1178,12 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // Anti-click: one-pole lowpass smooths any discontinuity from ADSR retrigger
         smoothedEnvelope += envSmoothCoeff * (rawEnvelope - smoothedEnvelope);
         float envelope = smoothedEnvelope;
-        float filterEnvOutput = filterAdsr.getNextSample();
+
+        // Same treatment for filter envelope (prevents raw jumps from slamming
+        // the nonlinear log-space cutoff calculation and ringing the SVF).
+        float rawFilterEnv = filterAdsr.getNextSample();
+        smoothedFilterEnvelope += filterEnvSmoothCoeff * (rawFilterEnv - smoothedFilterEnvelope);
+        float filterEnvOutput = smoothedFilterEnvelope;
 
         //==============================================================================
         // -- MPE PRESSURE → AMPLITUDE MODULATION --
@@ -1168,7 +1241,19 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
 
         float modulatedCutoff = std::exp(juce::jlimit(logMin, logMax, logModulated + timbreLogOffset)) * lfoFactor;
         modulatedCutoff = juce::jlimit(20.0f, 20000.0f, modulatedCutoff);
-        smoothedFilterCutoffHz += filterCutoffSmoothCoeff * (modulatedCutoff - smoothedFilterCutoffHz);
+
+        // Apply normal cutoff smoothing, but use a much slower slew (extra damping)
+        // for a short time after a poly steal. This directly mitigates the fast
+        // cutoff movement from the restarting filter envelope that the user
+        // confirmed triggers the click when the filter is active.
+        float cutoffSlew = filterCutoffSmoothCoeff;
+        if (postStealCutoffSlowdownSamples > 0)
+        {
+            --postStealCutoffSlowdownSamples;
+            // Very slow slew (precomputed ~35 ms time constant) for the first ~4 ms after steal
+            cutoffSlew = postStealCutoffSlowCoeff;
+        }
+        smoothedFilterCutoffHz += cutoffSlew * (modulatedCutoff - smoothedFilterCutoffHz);
         filter.setCutoffFrequency(smoothedFilterCutoffHz);
         
         // Check if envelope has completed (release phase finished)
@@ -1190,6 +1275,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             isActive = false;
             outputSmootherL = 0.0f;
             outputSmootherR = 0.0f;
+            prevSmoothedL = 0.0f;
+            prevSmoothedR = 0.0f;
             
             // CRITICAL: Only process samples we've actually generated
             if (i < maxSamples)
@@ -1269,6 +1356,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                 voiceFade = 0.0f;
                 adsr.reset();
                 smoothedEnvelope = 0.0f;
+                smoothedFilterEnvelope = 0.0f;
                 filterAdsr.reset();
                 filter.reset();
                 modFilter1.reset();
@@ -1287,6 +1375,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                 isActive = false;
                 outputSmootherL = 0.0f;
                 outputSmootherR = 0.0f;
+                prevSmoothedL = 0.0f;
+                prevSmoothedR = 0.0f;
                 voiceTempBuffer.setSample(0, i, outL);
                 voiceTempBuffer.setSample(1, i, outR);
                 samplesProcessed = i + 1;
@@ -1308,6 +1398,43 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         voiceTempBuffer.setSample(0, i, outputSmootherL);
         voiceTempBuffer.setSample(1, i, outputSmootherR);
         samplesProcessed = i + 1; // Track that we processed this sample
+
+        // ====================================================================
+        // REAL-TIME CLICK / DISCONTINUITY DETECTOR (for tracking down pops)
+        // ====================================================================
+        // Compares the *final* smoothed output sample against the previous one.
+        // Any large jump that survives the envelope smoother, output smoother,
+        // voice fade, 3 ms auto-glide, filter smoothing etc. will be caught here.
+        // Threshold chosen to be clearly audible as a pop/click on most systems.
+        const float clickThreshold = 0.035f;   // ~ -29 dB step — definitely audible
+        const float deltaL = std::abs(outputSmootherL - prevSmoothedL);
+        const float deltaR = std::abs(outputSmootherR - prevSmoothedR);
+
+        if (deltaL > clickThreshold || deltaR > clickThreshold)
+        {
+            ++discontinuityCount;
+
+            // Pack useful state into the logger fields so we can correlate with
+            // the exact moment (envelope level, filter cutoff, voice mode, etc.)
+            const int   noteId   = currentlyPlayingNote.isValid() ? (int)currentlyPlayingNote.noteID : -1;
+            const int   midiNote = currentlyPlayingNote.isValid() ? (int)currentlyPlayingNote.initialNote : -1;
+            const float envNow   = envelope;
+            const float cutNow   = smoothedFilterCutoffHz;
+
+            SAFETY_LOG_VOICE_NOTE(noteId, this, midiNote, cutNow,
+                                  "AUDIO_CLICK_DETECTED");
+
+            // Also emit a plain DBG so it shows up even when safety logging is off
+            DBG("Space Dust [CLICK] t=" << (samplesProcessed / std::max(1.0f, (float)sampleRate))
+                << "s  deltaL=" << deltaL << " deltaR=" << deltaR
+                << " env=" << envNow << " cutoff=" << cutNow
+                << " discCount=" << discontinuityCount
+                << " note=" << midiNote
+                << " voiceFadeRem=" << voiceFadeSamplesRemaining);
+        }
+
+        prevSmoothedL = outputSmootherL;
+        prevSmoothedR = outputSmootherR;
         
         // Update oscillator phases for next sample using current angle deltas
         // (deltas are updated per-sample to support per-sample LFO modulation)
@@ -1448,9 +1575,16 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     // Anti-click envelope smoother: ~3ms one-pole lowpass on ADSR output
     envSmoothCoeff = 1.0f - std::exp(-1.0f / (0.003f * static_cast<float>(sampleRate)));
+    filterEnvSmoothCoeff = 1.0f - std::exp(-1.0f / (0.003f * static_cast<float>(sampleRate)));  // same time constant for filter env
     smoothedEnvelope = 0.0f;
-    // Slightly faster than amplitude smooth — only enough to kill zipper/parameter clicks.
-    filterCutoffSmoothCoeff = 1.0f - std::exp(-1.0f / (0.0015f * static_cast<float>(sampleRate)));
+    smoothedFilterEnvelope = 0.0f;
+    // Base cutoff smoothing (~4 ms). This is a compromise:
+    // - Fast enough for responsive LFO wobbles, manual filter sweeps, and MPE timbre.
+    // - Slow enough to help tame most note-start transients.
+    // The heavy lifting for poly steals (when the filter envelope restarts on a stolen voice)
+    // is done by the postStealCutoffSlowdownSamples window + precomputed
+    // postStealCutoffSlowCoeff (very slow slew) + smoothedFilterEnvelope.
+    filterCutoffSmoothCoeff = 1.0f - std::exp(-1.0f / (0.004f * static_cast<float>(sampleRate)));
     smoothedFilterCutoffHz = juce::jlimit(20.0f, 20000.0f, baseFilterCutoff);
     // ~10 s time constant for gentle analog-style wander (per sample)
     analogDriftWalkCoeff = 1.0f - std::exp(-1.0f / (10.0f * static_cast<float>(sampleRate)));
@@ -1458,6 +1592,12 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
     voiceFadeSamplesRemaining = 0;
     outputSmootherL = 0.0f;
     outputSmootherR = 0.0f;
+
+    prevSmoothedL = 0.0f;
+    prevSmoothedR = 0.0f;
+    discontinuityCount = 0;
+    postStealCutoffSlowdownSamples = 0;
+    postStealCutoffSlowCoeff = 1.0f - std::exp(-1.0f / (0.035f * static_cast<float>(sampleRate)));
 
     // Mark DSP as properly initialized
     // This prevents issues if setCurrentPlaybackSampleRate() is called again
@@ -1525,7 +1665,10 @@ void SynthVoice::setCurrentSampleRate(double newRate)
         updateAdsrParameters();
         updateFilterAdsrParameters();
         envSmoothCoeff = 1.0f - std::exp(-1.0f / (0.003f * static_cast<float>(newRate)));
-        filterCutoffSmoothCoeff = 1.0f - std::exp(-1.0f / (0.0015f * static_cast<float>(newRate)));
+        filterEnvSmoothCoeff = 1.0f - std::exp(-1.0f / (0.003f * static_cast<float>(newRate)));
+        // Use the current (slower) base cutoff smoothing, not the old 1.5ms value
+        filterCutoffSmoothCoeff = 1.0f - std::exp(-1.0f / (0.004f * static_cast<float>(newRate)));
+        postStealCutoffSlowCoeff = 1.0f - std::exp(-1.0f / (0.035f * static_cast<float>(newRate)));
         analogDriftWalkCoeff = 1.0f - std::exp(-1.0f / (10.0f * static_cast<float>(newRate)));
     }
     // If DSP not initialized yet, prepareToPlay() will handle initialization

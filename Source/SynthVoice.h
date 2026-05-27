@@ -349,9 +349,23 @@ private:
     float smoothedEnvelope = 0.0f;
     float envSmoothCoeff = 0.0f;   // Computed from sample rate in prepareToPlay
 
-    // Anti-click: slew master filter cutoff (~1.5ms) — blocks knob/jumps between notes from clicking.
+    // Matching smoother for the *filter* envelope. The amplitude envelope has
+    // smoothedEnvelope to prevent clicks on retrigger. The filter envelope was
+    // fed raw into the log-space cutoff calculation, which could perturb the
+    // StateVariableTPTFilter state badly (especially with high resonance).
+    float smoothedFilterEnvelope = 0.0f;
+    float filterEnvSmoothCoeff = 0.0f;
+
+    // Anti-click: slew master filter cutoff (now ~7ms base, with extra damping after steals).
     float smoothedFilterCutoffHz = 8000.0f;
     float filterCutoffSmoothCoeff = 0.0f;
+
+    // Short-term extra damping on cutoff right after poly voice steal / new chord note.
+    // The filter envelope restart on stolen voices was driving fast cutoff movement
+    // that excited the observed click (confirmed by "click disappears when filter open").
+    int postStealCutoffSlowdownSamples = 0;
+    static constexpr int kPostStealCutoffSlowdownLength = 192; // ~4.3 ms @ 44.1 kHz
+    float postStealCutoffSlowCoeff = 0.0f;  // Precomputed very slow (~35ms) slew coeff, used only during postStealCutoffSlowdownSamples window after poly steals
 
     // Voice fade: linear gain ramp applied to the FINAL output sample (after
     // filter + ADSR) to prevent clicks on any hard stop.  When stopNote is called
@@ -372,6 +386,14 @@ private:
     float outputSmootherL = 0.0f;
     float outputSmootherR = 0.0f;
     static constexpr float kOutputSmoothCoeff = 0.99f;
+
+    // Real-time discontinuity (click/pop) detector for QA.
+    // Tracks the final smoothed output so we can catch single-sample jumps
+    // that survive all the other anti-click measures (envelope smoother,
+    // output smoother, voice fade, 3 ms auto-glide, etc.).
+    float prevSmoothedL = 0.0f;
+    float prevSmoothedR = 0.0f;
+    int   discontinuityCount = 0;
     
     //==============================================================================
     // -- Glide (Portamento) State --
