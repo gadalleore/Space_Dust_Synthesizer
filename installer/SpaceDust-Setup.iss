@@ -40,9 +40,13 @@ WizardSizePercent=120,150
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 ; --- Install scope -----------------------------------------------------------
-; Per-machine paths ({commoncf64}, ProgramData) require elevation.
+; Admin-required, no per-user override. The "install for me only" option was
+; removed because the resulting per-user VST3 path (%LOCALAPPDATA%\Programs\Common\VST3)
+; isn't scanned by older DAWs (FL Studio 20 and earlier, older Cubase/Studio One),
+; so users on those hosts saw a successful install but no plugin. Forcing admin
+; means the VST3 lands in C:\Program Files\Common Files\VST3 — the universal path
+; every Windows DAW scans by default.
 PrivilegesRequired=admin
-PrivilegesRequiredOverridesAllowed=dialog
 ; --- Wizard copy --------------------------------------------------------------
 LicenseFile=License-MIT.txt
 InfoBeforeFile=
@@ -90,9 +94,10 @@ Source: "Support\README-Presets.txt"; DestDir: "{code:GetPresetsDir}"; DestName:
 
 [UninstallDelete]
 ; config.xml is written from script — remove on uninstall.
-Type: files; Name: "{commonappdata}\Space Dust\config.xml"
+; {autoappdata} matches whichever mode was used at install time.
+Type: files; Name: "{autoappdata}\Space Dust\config.xml"
 ; Remove empty config directory if nothing else remains (ignore errors).
-Type: dirifempty; Name: "{commonappdata}\Space Dust"
+Type: dirifempty; Name: "{autoappdata}\Space Dust"
 
 [Code]
 var
@@ -136,7 +141,9 @@ begin
     'Select the folder that should contain Space Dust.vst3 (your DAW''s VST3 scan path).',
     False, '');
   VST3DirPage.Add('VST3 folder:');
-  VST3DirPage.Values[0] := ExpandConstant('{commoncf64}\VST3');
+  (* {autocf64} resolves to {commoncf64} in all-users mode, {localappdata}\Programs\Common
+     in per-user mode. The latter is the standard per-user VST3 location DAWs scan. *)
+  VST3DirPage.Values[0] := ExpandConstant('{autocf64}\VST3');
 end;
 
 (* Wizard page: presets + “all users” checkbox (default under Documents). *)
@@ -247,8 +254,11 @@ begin
   (* Folder selected on the “Space Dust Presets Location” page *)
   PresetPath := Trim(PresetsDirPage.Values[0]);
 
-  (* %ProgramData%\Space Dust\config.xml — must match PresetManager::getConfigFile on Windows. *)
-  ConfigPath := ExpandConstant('{commonappdata}\Space Dust\config.xml');
+  (* {autoappdata} = %ProgramData%\Space Dust\config.xml in all-users mode,
+     %APPDATA%\Space Dust\config.xml in per-user mode. The plugin's PresetManager
+     looks in BOTH locations (user APPDATA preferred, ProgramData fallback) so
+     either install mode is discoverable at runtime. *)
+  ConfigPath := ExpandConstant('{autoappdata}\Space Dust\config.xml');
 
   ConfigDir := ExtractFileDir(ConfigPath);
   if not ForceDirectories(ConfigDir) then

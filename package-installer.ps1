@@ -11,7 +11,7 @@
 #    into the shipped binary.
 # 2. Stages the .vst3 bundle into installer\Files\VST3\.
 # 3. SAFETY-NET: scans the staged VST3 for "MemorySafetyLogger" symbols.
-#    If found, the installer is REFUSED — the binary is not safe to ship.
+#    If found, the installer is REFUSED - the binary is not safe to ship.
 # 4. Syncs factory presets from %USERPROFILE%\Documents\Space Dust\Presets
 #    into installer\Files\Presets\ so they ship with the installer.
 # 5. Runs ISCC.exe to compile installer\Output\SpaceDust-Synthesizer-1.0-Setup.exe.
@@ -61,7 +61,7 @@ Write-Host "[Package] ISCC: $iscc" -ForegroundColor Gray
 # This is the single source of truth for installer builds: we ALWAYS re-run
 # CMake configure with logging explicitly OFF so the cache can't drift to a
 # logging-enabled state from a prior dev build. The user never has to
-# remember to disable logging — packaging here forces it.
+# remember to disable logging - packaging here forces it.
 if (-not $SkipBuild) {
     $buildDir = "build"
     Write-Host "[Package] Configuring CMake (Release, ALL logging OFF)..." -ForegroundColor Cyan
@@ -104,7 +104,7 @@ if (Test-Path $vstDst) { Remove-Item -Recurse -Force $vstDst }
 Copy-Item -Recurse -Force $vstSrc $vstDst
 Write-Host "[Package] Staged VST3 -> $vstDst" -ForegroundColor Green
 
-# ── Step 2.5: Safety-net scan — refuse to ship a binary with logger code ──
+# ── Step 2.5: Safety-net scan - refuse to ship a binary with logger code ──
 # The binary must not contain the "MemorySafetyLogger" symbol string. If it
 # does, ENABLE_MEMORY_SAFETY_LOGGING leaked into a Release build and we abort
 # rather than ship logs onto user machines.
@@ -129,7 +129,7 @@ if ($found) {
     Write-Host "" -ForegroundColor Red
     Write-Host "[Package] ABORT: 'MemorySafetyLogger' symbol present in staged VST3." -ForegroundColor Red
     Write-Host "          This means ENABLE_MEMORY_SAFETY_LOGGING leaked into the Release build." -ForegroundColor Red
-    Write-Host "          Refusing to package — fix the build configuration and retry:" -ForegroundColor Red
+    Write-Host "          Refusing to package - fix the build configuration and retry:" -ForegroundColor Red
     Write-Host "              .\disable-all-logging-for-release.ps1" -ForegroundColor Red
     Write-Host "          DLL: $($stagedDll.FullName)" -ForegroundColor Red
     exit 2
@@ -192,7 +192,7 @@ if (Test-Path $exe) {
     Write-Host ("  Path : {0}" -f $info.FullName)
     Write-Host ("  Size : {0} MB" -f [math]::Round($info.Length / 1MB, 2))
     Write-Host ("  Built: {0}" -f $info.LastWriteTime)
-    $stagedPresets = (Get-ChildItem "installer\Files\Presets" -Filter "*.xml" -File -ErrorAction SilentlyContinue | Measure-Object).Count
+    $stagedPresets = (Get-ChildItem "installer\Files\Presets" -Filter "*.sdpreset" -File -ErrorAction SilentlyContinue | Measure-Object).Count
     Write-Host ("  Factory presets shipped: {0}" -f $stagedPresets)
 } else {
     Write-Host "[Package] Installer .exe missing despite successful compile." -ForegroundColor Red

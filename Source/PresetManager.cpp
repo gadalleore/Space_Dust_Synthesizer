@@ -102,23 +102,29 @@ juce::File PresetManager::getDefaultPresetFolder() const
         .getChildFile("Presets");
 }
 
-juce::File PresetManager::getConfigFile() const
+juce::File PresetManager::getUserConfigFile() const
 {
-#if JUCE_WINDOWS
-    // Matches Windows installer: %ProgramData%\Space Dust\config.xml
-    return juce::File::getSpecialLocation(juce::File::commonApplicationDataDirectory)
-        .getChildFile("Space Dust")
-        .getChildFile("config.xml");
-#else
+    // %APPDATA%\Space Dust\config.xml on Windows, ~/Library/Application Support/... on macOS.
+    // Always user-writable so the plugin can persist preset-folder changes without elevation.
     return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
         .getChildFile("Space Dust")
         .getChildFile("config.xml");
-#endif
+}
+
+juce::File PresetManager::getSystemConfigFile() const
+{
+    // %ProgramData%\Space Dust\config.xml on Windows. Written by the all-users installer;
+    // used as a read-only fallback when no per-user config exists yet.
+    return juce::File::getSpecialLocation(juce::File::commonApplicationDataDirectory)
+        .getChildFile("Space Dust")
+        .getChildFile("config.xml");
 }
 
 void PresetManager::savePresetFolderConfig() const
 {
-    auto configFile = getConfigFile();
+    // Always write to the user location: the plugin runs at user privileges and cannot
+    // write to ProgramData. On load, the user config takes precedence over the system one.
+    auto configFile = getUserConfigFile();
     configFile.getParentDirectory().createDirectory();
 
     juce::XmlElement config("SpaceDustConfig");
@@ -128,23 +134,26 @@ void PresetManager::savePresetFolderConfig() const
 
 void PresetManager::loadPresetFolderConfig()
 {
-    auto configFile = getConfigFile();
-
-    if (configFile.existsAsFile())
+    auto tryLoad = [this](const juce::File& configFile) -> bool
     {
+        if (!configFile.existsAsFile())
+            return false;
         auto xml = juce::XmlDocument::parse(configFile);
-        if (xml != nullptr && xml->hasTagName("SpaceDustConfig"))
-        {
-            auto folderPath = xml->getStringAttribute("presetFolder");
-            if (folderPath.isNotEmpty())
-            {
-                presetFolder = juce::File(folderPath);
-                if (presetFolder.exists())
-                    return;
-            }
-        }
-    }
+        if (xml == nullptr || !xml->hasTagName("SpaceDustConfig"))
+            return false;
+        auto folderPath = xml->getStringAttribute("presetFolder");
+        if (folderPath.isEmpty())
+            return false;
+        presetFolder = juce::File(folderPath);
+        return presetFolder.exists();
+    };
 
-    // Fall back to default
+    // User config (per-user install OR previous in-plugin folder change) wins.
+    if (tryLoad(getUserConfigFile()))
+        return;
+    // Fall back to system config written by an all-users installer.
+    if (tryLoad(getSystemConfigFile()))
+        return;
+
     presetFolder = getDefaultPresetFolder();
 }

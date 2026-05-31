@@ -5380,13 +5380,18 @@ void SpaceDustAudioProcessorEditor::syncLinkedFilterParams(const juce::String& p
 
     if (parameterID == "modFilter1LinkToMaster")
     {
-        for (auto& m : mappings)
-            syncNormalizedMasterToTarget(m.master, m.mod1);
+        // Only pull master values into the mod filter when the link is being turned ON.
+        // When unlinking (or restoring an unlinked preset), the mod filter must keep its
+        // own saved mode/cutoff/res — otherwise it gets clobbered by the master's values.
+        if (link1)
+            for (auto& m : mappings)
+                syncNormalizedMasterToTarget(m.master, m.mod1);
     }
     else if (parameterID == "modFilter2LinkToMaster")
     {
-        for (auto& m : mappings)
-            syncNormalizedMasterToTarget(m.master, m.mod2);
+        if (link2)
+            for (auto& m : mappings)
+                syncNormalizedMasterToTarget(m.master, m.mod2);
     }
     else if (parameterID == "filterMode" || parameterID == "filterCutoff" || parameterID == "filterResonance"
              || parameterID == "warmSaturationMaster")

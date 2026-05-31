@@ -38,7 +38,10 @@ private:
     juce::File getDefaultPresetFolder() const;
     void savePresetFolderConfig() const;
     void loadPresetFolderConfig();
-    juce::File getConfigFile() const;
+    // Per-user config (user-writable). Preferred on read.
+    juce::File getUserConfigFile() const;
+    // System-wide config written by an all-users installer. Read-only fallback.
+    juce::File getSystemConfigFile() const;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PresetManager)
 };
