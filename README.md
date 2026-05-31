@@ -156,7 +156,7 @@ Source/
 ├── SpaceDustParametricEQ.*  # Parametric EQ
 ├── SpaceDustFinalEQ.*       # Final mastering EQ (DSP)
 ├── FinalEQComponent.*       # Final EQ UI component
-├── SexiconReverb.*          # Additional reverb
+├── VoidVerbReverb.*         # Additional reverb (Dattorro plate)
 ├── SpaceDustLookAndFeel.*   # Custom UI styling
 └── CheezeGuyGame.h          # Easter egg (optional)
 ```

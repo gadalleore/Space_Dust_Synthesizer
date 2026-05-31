@@ -2219,7 +2219,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     float reverbDecayTime = safeGetParam(apvts, "reverbDecayTime");
     if (reverbEnabled && buffer.getNumChannels() >= 2 && numSamples > 0)
     {
-        // Decay at minimum: flush reverb once and bypass (Sexicon still diffuses when decay_ == 0).
+        // Decay at minimum: flush reverb once and bypass (Void Verb still diffuses when decay_ == 0).
         if (reverbDecayTime <= 0.001f)
         {
             if (lastReverbDecayForBypass_ > 0.001f || lastReverbDecayForBypass_ < 0.0f)
@@ -3339,7 +3339,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"reverbType", 1}, "Reverb Type",
-            juce::StringArray("Schroeder", "Sexicon take an L"), 0),
+            juce::StringArray("Schroeder", "Void Verb"), 0),
         "reverbType");
     
     ADD_PARAM_WITH_LOG(params,

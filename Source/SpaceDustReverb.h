@@ -2,18 +2,18 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
-#include "SexiconReverb.h"
+#include "VoidVerbReverb.h"
 
 //==============================================================================
 /**
     Reverb processor for Space Dust.
-    Types: Schroeder (Freeverb), Sexicon take an L (Dattorro/Lexicon 480L style).
+    Types: Schroeder (Freeverb), Void Verb (Dattorro plate style).
     Filter: toggle + HP/LP in series (like delay effect).
 */
 class SpaceDustReverb
 {
 public:
-    enum ReverbType { SchroederFreeverb = 0, SexiconTakeAnL = 1, NumTypes };
+    enum ReverbType { SchroederFreeverb = 0, VoidVerb = 1, NumTypes };
 
     struct Parameters
     {
@@ -40,7 +40,7 @@ private:
     Parameters params_;
 
     juce::Reverb freeverb_;
-    SexiconReverb sexicon_;
+    VoidVerbReverb voidVerb_;
     juce::dsp::StateVariableTPTFilter<float> filterHP_;
     juce::dsp::StateVariableTPTFilter<float> filterLP_;
 

@@ -141,7 +141,7 @@ void MemorySafetyLogger::start()
         return;
 
     logDir = juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-                .getChildFile ("Shades")
+                .getChildFile ("63C")
                 .getChildFile ("Space Dust")
                 .getChildFile ("Logs")
                 .getChildFile ("Safety");

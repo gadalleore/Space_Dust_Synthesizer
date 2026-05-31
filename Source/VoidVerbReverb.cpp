@@ -1,15 +1,15 @@
-#include "SexiconReverb.h"
+#include "VoidVerbReverb.h"
 #include <cmath>
 #include <algorithm>
 
 //==============================================================================
-int SexiconReverb::scaleDelay(int samplesAt29761) const
+int VoidVerbReverb::scaleDelay(int samplesAt29761) const
 {
     return static_cast<int>(std::round(samplesAt29761 * sampleRate_ / kOriginalFs));
 }
 
 //==============================================================================
-float SexiconReverb::processAllpass(AllpassState& state, int delaySamples, float input, float diffusion)
+float VoidVerbReverb::processAllpass(AllpassState& state, int delaySamples, float input, float diffusion)
 {
     if (state.buffer.empty() || delaySamples < 1) return input;
 
@@ -23,13 +23,13 @@ float SexiconReverb::processAllpass(AllpassState& state, int delaySamples, float
 }
 
 //==============================================================================
-void SexiconReverb::prepare(double sampleRate, int maxBlockSize)
+void VoidVerbReverb::prepare(double sampleRate, int maxBlockSize)
 {
     sampleRate_ = sampleRate;
     reset();
 }
 
-void SexiconReverb::reset()
+void VoidVerbReverb::reset()
 {
     const int maxLen = scaleDelay(4500) + 256;
     for (auto& ap : {&inputAp1_, &inputAp2_, &inputAp3_, &inputAp4_})
@@ -48,7 +48,7 @@ void SexiconReverb::reset()
     dcState_ = dcPrevIn_ = 0.0f;
 }
 
-void SexiconReverb::setDecay(float decayTimeSeconds)
+void VoidVerbReverb::setDecay(float decayTimeSeconds)
 {
     const float t = juce::jmax(0.0f, decayTimeSeconds);
     if (t <= 0.0f)
@@ -65,7 +65,7 @@ void SexiconReverb::setDecay(float decayTimeSeconds)
     decay_ = 0.55f + 0.35f * norm;  // 0.55–0.9 range - 4x longer max decay
 }
 
-void SexiconReverb::setSampleRate(double sampleRate)
+void VoidVerbReverb::setSampleRate(double sampleRate)
 {
     if (std::abs(sampleRate_ - sampleRate) > 1.0)
     {
@@ -75,7 +75,7 @@ void SexiconReverb::setSampleRate(double sampleRate)
 }
 
 //==============================================================================
-void SexiconReverb::processSample(float input, float& outputL, float& outputR)
+void VoidVerbReverb::processSample(float input, float& outputL, float& outputR)
 {
     const int d1 = scaleDelay(142);
     const int d2 = scaleDelay(107);

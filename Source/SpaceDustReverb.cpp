@@ -8,7 +8,7 @@ void SpaceDustReverb::prepare(const juce::dsp::ProcessSpec& spec)
 
     freeverb_.setSampleRate(sr);
     freeverb_.reset();
-    sexicon_.prepare(sr, spec.maximumBlockSize);
+    voidVerb_.prepare(sr, spec.maximumBlockSize);
 
     juce::dsp::ProcessSpec filterSpec;
     filterSpec.sampleRate = sr;
@@ -28,7 +28,7 @@ void SpaceDustReverb::prepare(const juce::dsp::ProcessSpec& spec)
 void SpaceDustReverb::reset()
 {
     freeverb_.reset();
-    sexicon_.reset();
+    voidVerb_.reset();
     filterHP_.reset();
     filterLP_.reset();
 }
@@ -54,7 +54,7 @@ void SpaceDustReverb::setParameters(const Parameters& p)
     rp.width = 0.9f;      // Slight crossfeed for L/R balance (was right-biased at 1.0)
     rp.freezeMode = 0.0f;
     freeverb_.setParameters(rp);
-    sexicon_.setDecay(params_.decayTime);
+    voidVerb_.setDecay(params_.decayTime);
 }
 
 void SpaceDustReverb::process(juce::AudioBuffer<float>& buffer)
@@ -70,14 +70,14 @@ void SpaceDustReverb::process(juce::AudioBuffer<float>& buffer)
     dryBuffer.copyFrom(0, 0, left, numSamples);
     dryBuffer.copyFrom(1, 0, right, numSamples);
 
-    if (params_.type == SexiconTakeAnL)
+    if (params_.type == VoidVerb)
     {
-        sexicon_.setSampleRate(spec_.sampleRate);
+        voidVerb_.setSampleRate(spec_.sampleRate);
         for (int i = 0; i < numSamples; ++i)
         {
             const float monoIn = (left[i] + right[i]) * 0.5f;
             float outL, outR;
-            sexicon_.processSample(monoIn, outL, outR);
+            voidVerb_.processSample(monoIn, outL, outR);
             left[i] = outL;
             right[i] = outR;
         }

@@ -6,15 +6,15 @@
 
 //==============================================================================
 /**
-    "Sexicon take an L" - Dattorro-style plate reverb inspired by Lexicon 480L.
+    "Void Verb" - Dattorro-style plate reverb (Griesinger figure-8 tank topology).
     Based on Jon Dattorro's Effect Design Part 1 (Griesinger topology).
     Figure-8 feedback tank with input diffusion, modulated allpasses, and
     multi-tap output for lush, dense tails.
 */
-class SexiconReverb
+class VoidVerbReverb
 {
 public:
-    SexiconReverb() = default;
+    VoidVerbReverb() = default;
 
     void prepare(double sampleRate, int maxBlockSize);
     void reset();
@@ -66,5 +66,5 @@ private:
 
     // Modulation disabled - was causing periodic artifact; tank still sounds lush
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SexiconReverb)
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(VoidVerbReverb)
 };

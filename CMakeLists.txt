@@ -21,7 +21,7 @@ endif()
 
 # Create the plugin
 juce_add_plugin(SpaceDust
-    COMPANY_NAME "Shades"
+    COMPANY_NAME "63C"
     PLUGIN_NAME "Space Dust"
     PLUGIN_MANUFACTURER_CODE YcPl
     PLUGIN_CODE SpDs
@@ -35,7 +35,7 @@ juce_add_plugin(SpaceDust
     IS_MIDI_EFFECT FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE
-    PLUGIN_MANUFACTURER "Shades"
+    PLUGIN_MANUFACTURER "63C"
 )
 
 # Embed fonts as binary data (Glitch Goblin for title)
@@ -88,8 +88,8 @@ target_sources(SpaceDust PRIVATE
     Source/SpaceDustFinalEQ.h
     Source/FinalEQComponent.cpp
     Source/FinalEQComponent.h
-    Source/SexiconReverb.cpp
-    Source/SexiconReverb.h
+    Source/VoidVerbReverb.cpp
+    Source/VoidVerbReverb.h
     Source/SpaceDustLookAndFeel.cpp
     Source/SpaceDustLookAndFeel.h
     Source/PresetManager.cpp
@@ -161,7 +161,7 @@ if(ENABLE_MEMORY_SAFETY_LOGGING)
     if(WIN32)
         target_link_libraries(SpaceDust PRIVATE DbgHelp)
     endif()
-    message(STATUS "MemorySafetyLogger ENABLED. Logs: %APPDATA%/Shades/Space Dust/Logs/Safety/")
+    message(STATUS "MemorySafetyLogger ENABLED. Logs: %APPDATA%/63C/Space Dust/Logs/Safety/")
 else()
     target_compile_definitions(SpaceDust PRIVATE
         SPACEDUST_ENABLE_SAFETY_LOGGING=0

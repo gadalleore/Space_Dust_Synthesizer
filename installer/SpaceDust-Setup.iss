@@ -11,8 +11,8 @@
 
 #define MyAppName       "Space Dust Synthesizer"
 #define MyAppVersion    "1.0"
-#define MyPublisher     "Shades"
-#define MyAppCopyright  "Copyright (c) 2026 Shades"
+#define MyPublisher     "63C"
+#define MyAppCopyright  "Copyright (c) 2026 63C"
 ; Stable AppId keeps upgrade/uninstall registration consistent across releases.
 #define MyAppId         "{{E4B2C9A1-7F3D-4E8B-9C2A-1D5E6F708192}"
 

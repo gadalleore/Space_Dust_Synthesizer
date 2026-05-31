@@ -9,7 +9,7 @@
 #      .\enable-safety-logging.ps1 -BuildDir build-mine
 #
 #  After build, logs land in:
-#      %APPDATA%\Shades\Space Dust\Logs\Safety\
+#      %APPDATA%\63C\Space Dust\Logs\Safety\
 #  with the form SpaceDust_Safety_<yyyy-MM-dd_HH-mm-ss>_PID<n>.log
 # =====================================================================
 [CmdletBinding()]
@@ -52,7 +52,7 @@ Write-Host "[2/3] Building Space Dust ($Config)..." -ForegroundColor Yellow
 cmake --build $BuildDir --config $Config --parallel
 if ($LASTEXITCODE -ne 0) { throw "Build failed (exit $LASTEXITCODE)." }
 
-$logDir = Join-Path $env:APPDATA "Shades\Space Dust\Logs\Safety"
+$logDir = Join-Path $env:APPDATA "63C\Space Dust\Logs\Safety"
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Force -Path $logDir | Out-Null }
 
 Write-Host ""

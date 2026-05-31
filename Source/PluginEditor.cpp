@@ -4048,7 +4048,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     reverbEnabledLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
     reverbTypeCombo.addItem("Schroeder", 1);
-    reverbTypeCombo.addItem("Sexicon take an L", 2);
+    reverbTypeCombo.addItem("Void Verb", 2);
     reverbTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getValueTreeState(), "reverbType", reverbTypeCombo);
     reverbTypeLabel.setText("Type", juce::dontSendNotification);
