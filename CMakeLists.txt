@@ -1,5 +1,18 @@
 cmake_minimum_required(VERSION 3.22)
 
+# macOS distribution defaults: build a universal (Apple Silicon + Intel) binary
+# and target an older deployment baseline so it runs on both architectures and
+# older OS versions. Only applied on a Mac host, and only when the caller hasn't
+# already set these on the command line. No effect on Windows/Linux builds.
+if(CMAKE_HOST_APPLE)
+    if(NOT CMAKE_OSX_ARCHITECTURES)
+        set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "macOS build architectures")
+    endif()
+    if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS version")
+    endif()
+endif()
+
 project(SpaceDust VERSION 1.0.0)
 
 # Set C++ standard
@@ -25,7 +38,8 @@ juce_add_plugin(SpaceDust
     PLUGIN_NAME "Space Dust"
     PLUGIN_MANUFACTURER_CODE YcPl
     PLUGIN_CODE SpDs
-    FORMATS VST3 Standalone
+    FORMATS VST3 AU Standalone
+    BUNDLE_ID "com.63c.SpaceDust"
     PRODUCT_NAME "Space Dust"
     DESCRIPTION "Cosmic particles of sound"
     VERSION 1.0.0
