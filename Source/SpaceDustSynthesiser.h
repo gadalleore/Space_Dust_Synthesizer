@@ -89,6 +89,26 @@ public:
     // Process MIDI buffer with mono/legato handling and active-note count
     void processMidiBuffer(juce::MidiBuffer& midiMessages, int numSamples);
 
+    /** Flush all mono/legato note-tracking state.
+
+        MUST be called whenever the host transport stops or the playhead jumps
+        (loop wrap / seek), and from prepareToPlay()/releaseResources().  The
+        mono/legato note stack models "which keys does the host think are held";
+        if it is never reset, a loop or transport stop leaves phantom held notes
+        in the stack, and processMidiBuffer() then rewrites the MIDI stream with
+        spurious note-on/note-off pairs → wrong notes, stuck notes and voice-steal
+        thrashing.  vector::clear() keeps the capacity, so this is allocation-free
+        and safe to call from the audio thread. */
+    void resetNoteState()
+    {
+        noteStack.clear();
+        currentNote = -1;
+        lastMonoVoiceIndex = -1;
+        activeNoteCount.store(0);
+        nextNoteIsLegato.store(false);
+        nextNotePreservesVoice.store(false);
+    }
+
     //==============================================================================
     // MPE convenience helpers (optional UI extension hooks).
 

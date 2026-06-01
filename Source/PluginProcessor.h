@@ -189,6 +189,13 @@ private:
     //==============================================================================
     // -- Voice / Mono state (optional future use) --
     int lastPlayedNote = -1;                      // Last played MIDI note - accessed only in audio thread
+
+    // -- Transport-edge tracking (audio thread only) --
+    // Used to detect transport stop and playhead jumps (loop wrap / seek) so the
+    // mono/legato note stack can be flushed (synth.resetNoteState()).  Without this
+    // the note stack desyncs from the host across a loop → wrong / stuck notes.
+    bool   wasPlayingState = false;
+    double lastPpqPosition = 0.0;
     
     //==============================================================================
     // -- Reverb Effect State --

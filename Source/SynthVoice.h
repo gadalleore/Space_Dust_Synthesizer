@@ -394,6 +394,10 @@ private:
     float prevSmoothedL = 0.0f;
     float prevSmoothedR = 0.0f;
     int   discontinuityCount = 0;
+    // Throttle: samples since we last logged a click on this voice.  The detector
+    // runs per-sample, so an unthrottled click storm produced multi-GB logs and
+    // saturated the safety ring (1.5M+ dropped entries).  Log at most ~once/100ms/voice.
+    int   samplesSinceClickLog = 1 << 30;
     
     //==============================================================================
     // -- Glide (Portamento) State --

@@ -452,13 +452,18 @@ void SynthVoice::noteStopped(bool allowTailOff)
     // The semantics are identical: allowTailOff=true → release the envelope normally;
     // allowTailOff=false → hard stop (we apply a short voice fade to avoid clicks).
 
-    // Memory-safety logger: voice stop. WARN level only on hard-stops so they
-    // stand out in the log when scanning for click sources / voice-steal bugs.
-    SAFETY_LOG_VOICE_NOTE(currentlyPlayingNote.noteID, this,
-                          (int) currentlyPlayingNote.initialNote,
-                          allowTailOff ? 1.0f : 0.0f,
-                          allowTailOff ? "noteStopped tailOff"
-                                       : "noteStopped HARD (voice steal/allNotesOff)");
+    // Memory-safety logger: voice stop. Only log when the voice was actually
+    // active — turnOffAllVoices()/prepare sweeps call noteStopped() on every
+    // voice including idle ones, which previously flooded the log with thousands
+    // of redundant "HARD" entries per transport edge.
+    if (isActive)
+    {
+        SAFETY_LOG_VOICE_NOTE(currentlyPlayingNote.noteID, this,
+                              (int) currentlyPlayingNote.initialNote,
+                              allowTailOff ? 1.0f : 0.0f,
+                              allowTailOff ? "noteStopped tailOff"
+                                           : "noteStopped HARD (voice steal/allNotesOff)");
+    }
 
     // Preserving-voice / legato handoff: noteStarted follows immediately inside
     // MPESynthesiser::startVoice.  Do NOT start a fade or touch ADSR — just
@@ -1412,26 +1417,39 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
 
         if (deltaL > clickThreshold || deltaR > clickThreshold)
         {
-            ++discontinuityCount;
+            ++discontinuityCount;   // always count for accurate QA stats
 
-            // Pack useful state into the logger fields so we can correlate with
-            // the exact moment (envelope level, filter cutoff, voice mode, etc.)
-            const int   noteId   = currentlyPlayingNote.isValid() ? (int)currentlyPlayingNote.noteID : -1;
-            const int   midiNote = currentlyPlayingNote.isValid() ? (int)currentlyPlayingNote.initialNote : -1;
-            const float envNow   = envelope;
-            const float cutNow   = smoothedFilterCutoffHz;
+            // Throttle the actual logging: the detector runs per-sample, so a click
+            // storm (e.g. voice-steal thrashing) would otherwise emit thousands of
+            // entries per buffer and bloat logs into the multi-GB range.  Log at most
+            // once per ~100 ms per voice; discontinuityCount still reflects the truth.
+            const int clickLogIntervalSamples = (int) std::max(1.0f, 0.1f * (float)sampleRate);
+            if (samplesSinceClickLog >= clickLogIntervalSamples)
+            {
+                samplesSinceClickLog = 0;
 
-            SAFETY_LOG_VOICE_NOTE(noteId, this, midiNote, cutNow,
-                                  "AUDIO_CLICK_DETECTED");
+                // Pack useful state into the logger fields so we can correlate with
+                // the exact moment (envelope level, filter cutoff, voice mode, etc.)
+                const int   noteId   = currentlyPlayingNote.isValid() ? (int)currentlyPlayingNote.noteID : -1;
+                const int   midiNote = currentlyPlayingNote.isValid() ? (int)currentlyPlayingNote.initialNote : -1;
+                const float envNow   = envelope;
+                const float cutNow   = smoothedFilterCutoffHz;
 
-            // Also emit a plain DBG so it shows up even when safety logging is off
-            DBG("Space Dust [CLICK] t=" << (samplesProcessed / std::max(1.0f, (float)sampleRate))
-                << "s  deltaL=" << deltaL << " deltaR=" << deltaR
-                << " env=" << envNow << " cutoff=" << cutNow
-                << " discCount=" << discontinuityCount
-                << " note=" << midiNote
-                << " voiceFadeRem=" << voiceFadeSamplesRemaining);
+                SAFETY_LOG_VOICE_NOTE(noteId, this, midiNote, cutNow,
+                                      "AUDIO_CLICK_DETECTED");
+
+                // Also emit a plain DBG so it shows up even when safety logging is off
+                DBG("Space Dust [CLICK] t=" << (samplesProcessed / std::max(1.0f, (float)sampleRate))
+                    << "s  deltaL=" << deltaL << " deltaR=" << deltaR
+                    << " env=" << envNow << " cutoff=" << cutNow
+                    << " discCount=" << discontinuityCount
+                    << " note=" << midiNote
+                    << " voiceFadeRem=" << voiceFadeSamplesRemaining);
+            }
         }
+
+        if (samplesSinceClickLog < (1 << 30))
+            ++samplesSinceClickLog;
 
         prevSmoothedL = outputSmootherL;
         prevSmoothedR = outputSmootherR;

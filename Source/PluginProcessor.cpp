@@ -895,6 +895,12 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     try
     {
         updateVoicesWithParameters();
+
+        // Start from a clean mono/legato note model and transport-edge baseline.
+        synth.resetNoteState();
+        wasPlayingState = false;
+        lastPpqPosition = 0.0;
+
         DBG("Space Dust: prepareToPlay END - voices initialized");
     }
     catch (const std::exception& e)
@@ -1211,7 +1217,12 @@ void SpaceDustAudioProcessor::releaseResources()
     // MPE: juce::MPESynthesiser uses turnOffAllVoices(allowTailOff) — the
     // equivalent of juce::Synthesiser::allNotesOff(0, allowTailOff).
     synth.turnOffAllVoices(true);  // allowTailOff=true → graceful release
-    
+    synth.resetNoteState();        // clear mono/legato note stack so it can't survive a reload
+
+    // Reset transport-edge tracking so the next prepareToPlay starts clean.
+    wasPlayingState = false;
+    lastPpqPosition = 0.0;
+
     //==============================================================================
     // -- CRITICAL: Complete Resource Cleanup for Safe Unload --
     // 
@@ -1848,6 +1859,47 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     
     bool transientEnabled = safeGetParam(apvts, "transientEnabled") > 0.5f;
     bool transientPostEffect = safeGetParam(apvts, "transientPostEffect") > 0.5f;
+
+    //==============================================================================
+    // -- Transport-edge detection: flush stale mono/legato note state --
+    //
+    // The mono/legato note stack (SpaceDustSynthesiser::noteStack/currentNote) models
+    // "which keys the host thinks are held".  On a transport stop or a playhead jump
+    // (loop wrap / rewind / seek) the host stops sending the note-offs we are tracking,
+    // so the stack desyncs and processMidiBuffer() starts rewriting the stream with
+    // phantom note-on/note-off pairs → wrong notes, stuck notes, voice-steal thrashing.
+    //
+    // Detect those edges here and flush.  Only act in Mono/Legato (mode != 0): Poly
+    // mode keeps no stack and must NOT have voices cut at a loop boundary (would chop
+    // sustained chords), so its behaviour is left exactly as before.
+    {
+        bool   nowPlaying = wasPlayingState;
+        double ppq        = lastPpqPosition;
+        if (auto* ph = getPlayHead())
+        {
+            auto posInfo = ph->getPosition();
+            if (posInfo.hasValue())
+            {
+                nowPlaying = posInfo->getIsPlaying();
+                if (posInfo->getPpqPosition().hasValue())
+                    ppq = *posInfo->getPpqPosition();
+            }
+        }
+
+        const bool stopped    = (wasPlayingState && ! nowPlaying);
+        // Backward jump while playing = loop wrap or rewind. Small epsilon avoids
+        // false positives from float noise on a steadily-advancing playhead.
+        const bool jumpedBack = (nowPlaying && (ppq + 1.0e-6 < lastPpqPosition));
+
+        if ((stopped || jumpedBack) && synth.getVoiceModeIndex() != 0)
+        {
+            synth.resetNoteState();
+            synth.turnOffAllVoices(false);   // hard stop: no notes can hang across the edge
+        }
+
+        wasPlayingState = nowPlaying;
+        lastPpqPosition = ppq;
+    }
 
     //==============================================================================
     // -- Process MIDI with Mono Mode Support --
