@@ -9,7 +9,8 @@ param(
     [int]   $Repeat     = 3,             # how many validation runs
     [int]   $Timeout    = 600,           # seconds before pluginval aborts
     [int]   $SampleRates,                # optional: pass-through; pluginval picks defaults
-    [switch]$NoBuild
+    [switch]$NoBuild,
+    [switch]$SkipGuiTests                # skip editor/GUI tests (used in headless CI)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -54,9 +55,12 @@ $args = @(
     '--repeat',            $Repeat,
     '--timeout-ms',        ($Timeout * 1000),
     '--randomise',
-    '--verbose',
-    "`"$vst3Bundle`""
+    '--verbose'
 )
+# Editor/GUI tests ("open editor whilst processing") deadlock on a headless CI
+# runner and hang until the job timeout. Skip them there; run them locally.
+if ($SkipGuiTests) { $args += '--skip-gui-tests' }
+$args += "`"$vst3Bundle`""
 
 $logPath = Join-Path $BuildDir 'pluginval-report.log'
 & $pluginval @args 2>&1 | Tee-Object -FilePath $logPath

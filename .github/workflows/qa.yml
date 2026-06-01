@@ -7,10 +7,16 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
+# A newer push supersedes an in-flight run on the same ref (saves runner time;
+# superseded runs show as "cancelled" by design - the latest commit still runs).
+concurrency:
+  group: qa-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   qa-windows:
     runs-on: windows-latest
-    timeout-minutes: 120
+    timeout-minutes: 45
 
     env:
       JUCE_REF: 8.0.4   # pin to a known-good JUCE tag
@@ -42,9 +48,10 @@ jobs:
         shell: pwsh
         run: ./download-pluginval.ps1
 
-      - name: "Run pluginval (CI smoke: strictness 4, repeat 1)"
+      - name: "Run pluginval (CI smoke: strictness 4, repeat 1, no GUI tests)"
         shell: pwsh
-        run: ./run-pluginval.ps1 -NoBuild -BuildDir "${{ github.workspace }}/build" -Strictness 4 -Repeat 1
+        timeout-minutes: 15
+        run: ./run-pluginval.ps1 -NoBuild -BuildDir "${{ github.workspace }}/build" -Strictness 4 -Repeat 1 -SkipGuiTests
 
       - name: Run full QA (static checks + crash-marker hygiene)
         shell: pwsh
