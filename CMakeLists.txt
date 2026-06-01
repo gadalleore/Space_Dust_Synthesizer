@@ -117,6 +117,14 @@ target_sources(SpaceDust PRIVATE
 target_compile_definitions(SpaceDust
     PRIVATE
         JUCE_VST3_CAN_REPLACE_VST2=0
+        # Force VST3 Audio Module "Class Flags" to 0.
+        # JUCE defaults JucePlugin_Vst3ComponentFlags to kSimpleModeSupported (=2)
+        # for synths. FL Studio interprets that flag as a second usable mode and
+        # registers the plugin TWICE, so it shows up as "Space Dust_2". Other hosts
+        # (Ableton, etc.) ignore it. Setting it to 0 (matching e.g. Serum) makes FL
+        # list the plugin once. JUCE guards this macro with #ifndef, so this override
+        # wins. See juce_VST3ModuleInfo.h.
+        JucePlugin_Vst3ComponentFlags=0
 )
 
 #==============================================================================

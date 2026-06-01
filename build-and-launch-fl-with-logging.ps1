@@ -1,28 +1,44 @@
 #==============================================================================
-# Space Dust - Build & Launch (LOGGING variant)
-# Uses the Debug+MemorySafetyLogger bundle from build-safety/ instead of the
-# Release bundle from build/. Copies to every common VST3 path and launches /
-# focuses Ableton, matching build-and-launch.ps1's behavior.
+# Space Dust - Build & Launch (LOGGING variant, FL STUDIO)
+# Builds the RelWithDebInfo + MemorySafetyLogger bundle in build-safety/, copies
+# it to every common VST3 path, then launches / focuses FL Studio.
+# FL clone of build-and-launch-with-logging.ps1 (which targets Ableton).
+#
+# Logs land in: %APPDATA%\63C\Space Dust\Logs\Safety\
+#   form: SpaceDust_Safety_<yyyy-MM-dd_HH-mm-ss>_PID<n>.log
+# Tail the newest live:
+#   Get-ChildItem "$env:APPDATA\63C\Space Dust\Logs\Safety" *.log |
+#     Sort-Object LastWriteTime -Desc | Select-Object -First 1 | Get-Content -Wait
 #==============================================================================
-param([switch]$NoLaunch)
+param([switch]$NoLaunch, [switch]$NoBuild)
 
 $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $projectRoot
 
-# --- Step 1: Ensure the Debug+logging bundle exists (build if missing) ---
-$source = "build-safety\SpaceDust_artefacts\RelWithDebInfo\VST3\Space Dust.vst3"
-if (-not (Test-Path $source)) {
-    Write-Host "[Space Dust] build-safety bundle missing - running enable-safety-logging.ps1..." -ForegroundColor Yellow
-    & "$projectRoot\enable-safety-logging.ps1"
-    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $source)) {
-        Write-Host "[Space Dust] Safety-logging build failed." -ForegroundColor Red
-        exit 1
+$buildDir = "build-safety"
+$config   = "RelWithDebInfo"
+$source   = "$buildDir\SpaceDust_artefacts\$config\VST3\Space Dust.vst3"
+
+# --- Step 1: Build the RelWithDebInfo + logging bundle ---
+if (-not $NoBuild) {
+    if (-not (Test-Path (Join-Path $buildDir "CMakeCache.txt"))) {
+        Write-Host "[Space Dust] $buildDir not configured - running enable-safety-logging.ps1..." -ForegroundColor Yellow
+        & "$projectRoot\enable-safety-logging.ps1" -BuildDir $buildDir -Config $config
+        if ($LASTEXITCODE -ne 0) { Write-Host "[Space Dust] Configure/build failed." -ForegroundColor Red; exit 1 }
+    } else {
+        Write-Host "[Space Dust] Building $buildDir ($config)..." -ForegroundColor Cyan
+        cmake --build $buildDir --config $config --target SpaceDust_VST3 --parallel
+        if ($LASTEXITCODE -ne 0) { Write-Host "[Space Dust] Build failed." -ForegroundColor Red; exit 1 }
     }
+}
+if (-not (Test-Path $source)) {
+    Write-Host "[Space Dust] Bundle missing after build: $source" -ForegroundColor Red
+    exit 1
 }
 Write-Host "[Space Dust] Source: $source" -ForegroundColor Green
 
-# --- Step 2: Verify logging needle in the source DLL ---
+# --- Step 2: Verify the logging needle in the source DLL ---
 $srcDll = Join-Path $source "Contents\x86_64-win\Space Dust.vst3"
 $bytes  = [System.IO.File]::ReadAllBytes($srcDll)
 $nb     = [System.Text.Encoding]::ASCII.GetBytes("SpaceDust_Safety_")
@@ -39,6 +55,11 @@ if (-not $found) {
 Write-Host "[Space Dust] Logging needle confirmed in source." -ForegroundColor Green
 
 # --- Step 3: Destinations (split admin / user) ---
+# FL Studio scans C:\Program Files\Common Files\VST3 by default - the admin copy
+# below is the one FL actually loads (it is where the crashing instance loaded from).
+# Deliberately NOT copying to the 32-bit "Program Files (x86)\Common Files\VST3":
+# this is a 64-bit-only plugin, and FL scans both folders, so a copy there shows up
+# as a confusing duplicate ("Space Dust_2") in FL's plugin database.
 $adminDests = @(
     "C:\Program Files\Common Files\VST3\Space Dust.vst3"
 )
@@ -88,12 +109,13 @@ foreach ($d in $adminDests) {
     }
 }
 
-# --- Step 6: Launch / focus Ableton (non-elevated) ---
+# --- Step 6: Launch / focus FL Studio (non-elevated) ---
 if ($NoLaunch) { Write-Host "[Space Dust] Done (-NoLaunch)." -ForegroundColor Gray; exit 0 }
 
-$running = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like "Live*" }
+# FL's 64-bit process is FL64 (older builds: FL). Match either.
+$running = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in @("FL64","FL") }
 if ($running) {
-    Write-Host "[Space Dust] Ableton is running - bringing to front..." -ForegroundColor Green
+    Write-Host "[Space Dust] FL Studio is running - bringing to front..." -ForegroundColor Green
     try {
         Add-Type -TypeDefinition @"
 using System;
@@ -108,21 +130,27 @@ public class Win32 {
             [Win32]::SetForegroundWindow($proc.MainWindowHandle) | Out-Null
         }
     } catch {}
-    Write-Host "[Space Dust] Rescan plugins in Ableton to load the new build." -ForegroundColor Yellow
+    Write-Host "[Space Dust] Rescan plugins in FL (Options > Manage plugins > Find installed plugins) to load the new build." -ForegroundColor Yellow
     exit 0
 }
 
-$abletonExe = $null
-$roots = @("C:\ProgramData\Ableton", "C:\Program Files\Ableton", "$env:ProgramFiles\Ableton")
-foreach ($root in $roots) {
-    if (-not (Test-Path $root)) { continue }
-    $found = Get-ChildItem -Path $root -Recurse -Filter "Ableton Live*.exe" -ErrorAction SilentlyContinue |
-             Where-Object { $_.FullName -match "\\Program\\" } | Select-Object -First 1
-    if ($found) { $abletonExe = $found.FullName; break }
+# Find FL64.exe under the Image-Line install tree.
+$flExe = $null
+$flCandidates = @(
+    "C:\Program Files\Image-Line\FL Studio 2025\FL64.exe",
+    "C:\Program Files\Image-Line\FL Studio 2024\FL64.exe"
+)
+foreach ($c in $flCandidates) { if (Test-Path $c) { $flExe = $c; break } }
+if (-not $flExe) {
+    $root = "C:\Program Files\Image-Line"
+    if (Test-Path $root) {
+        $hit = Get-ChildItem -Path $root -Recurse -Filter "FL64.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($hit) { $flExe = $hit.FullName }
+    }
 }
-if ($abletonExe) {
-    Write-Host "[Space Dust] Launching $abletonExe..." -ForegroundColor Cyan
-    Start-Process -FilePath $abletonExe
+if ($flExe) {
+    Write-Host "[Space Dust] Launching $flExe..." -ForegroundColor Cyan
+    Start-Process -FilePath $flExe
 } else {
-    Write-Host "[Space Dust] Ableton not found. Please launch manually and rescan plugins." -ForegroundColor Yellow
+    Write-Host "[Space Dust] FL Studio not found. Please launch it manually and rescan plugins." -ForegroundColor Yellow
 }

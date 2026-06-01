@@ -58,7 +58,6 @@ if (-not (Test-Path $source)) {
 
 $destinations = @(
     "C:\Program Files\Common Files\VST3\Space Dust.vst3",
-    "C:\Program Files (x86)\Common Files\VST3\Space Dust.vst3",
     "$env:USERPROFILE\Documents\Ableton\User Library\VST3\Space Dust.vst3",
     "$env:USERPROFILE\Documents\VST3\Space Dust.vst3",
     "$env:USERPROFILE\VST3\Space Dust.vst3",
