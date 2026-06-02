@@ -68,12 +68,20 @@ if (-not $OutOfProcess) { $args += '--validate-in-process' }
 if ($SkipGuiTests) { $args += '--skip-gui-tests' }
 $args += "`"$vst3Bundle`""
 
-# Stream pluginval output straight to the console (no pipe/Tee). Piping through
-# Tee-Object buffers the native process output, and that buffer is lost when a
-# hung step is killed by its timeout - which hid where pluginval was hanging on
-# CI. Direct invocation lets the host (and the CI log) receive output live.
-& $pluginval @args
-$code = $LASTEXITCODE
+# Run via Start-Process, NOT a PowerShell pipeline. The old `& $pluginval 2>&1 |
+# Tee-Object` deadlocked on the headless CI runner (PS 5.1 wrapping a native
+# exe's stderr + piping a GUI-subsystem process) and hung to the step timeout.
+# A bare `& $pluginval` doesn't wait for a GUI-subsystem exe (false instant pass).
+# Start-Process -Wait waits reliably and redirects output to files (no pipeline),
+# so there's no deadlock and we still capture the full log.
+$logPath = Join-Path $BuildDir 'pluginval-report.log'
+$errPath = Join-Path $BuildDir 'pluginval-stderr.log'
+$argLine = ($args -join ' ')
+$proc = Start-Process -FilePath $pluginval -ArgumentList $argLine -Wait -NoNewWindow -PassThru `
+                      -RedirectStandardOutput $logPath -RedirectStandardError $errPath
+$code = $proc.ExitCode
+if (Test-Path $logPath) { Get-Content $logPath }
+if ((Test-Path $errPath) -and (Get-Item $errPath).Length -gt 0) { Write-Host '--- stderr ---'; Get-Content $errPath }
 
 Write-Section 'Result'
 if ($code -eq 0) {
