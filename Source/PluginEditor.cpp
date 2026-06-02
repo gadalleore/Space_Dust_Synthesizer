@@ -1,4 +1,5 @@
 #include "PluginEditor.h"
+#include "BinaryData.h"
 
 //==============================================================================
 // -- Safe String Helper (Same as PluginProcessor) --
@@ -5985,29 +5986,42 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
     }
 
     //==============================================================================
-    // -- Title: Space Dust (Glitch Goblin font) --
+    // -- Title: Space Dust (nebula logo artwork) --
     {
         auto titleArea = juce::Rectangle<int>(0, 2, w, 44);
-        juce::Font titleFont = customLookAndFeel.getTitleFont(40.0f);
 
-        // Outer glow layers (expanding offsets, decreasing opacity); red when meter clips
-        const juce::Colour glowCol = meterLinkedTitleGlowHue(clippingHoldTicks > 0);
-        for (int i = 3; i >= 1; --i)
+        // Lazily fetch the embedded logo (black already keyed to transparent).
+        if (! titleImage.isValid())
+            titleImage = juce::ImageCache::getFromMemory(BinaryData::SpaceDustTitle_png,
+                                                         BinaryData::SpaceDustTitle_pngSize);
+
+        if (titleImage.isValid())
         {
-            g.setColour(glowCol.withAlpha(static_cast<juce::uint8>(18 / i)));
-            g.setFont(titleFont);
-            g.drawText(safeString("Space Dust"), titleArea.expanded(i * 2, i), juce::Justification::centred, true);
+            // Draw the nebula logo centred in the header strip, preserving aspect.
+            // (The artwork carries its own dusty glow, so no extra glow layer.)
+            g.setColour(juce::Colours::white);
+            g.drawImageWithin(titleImage, titleArea.getX(), titleArea.getY(),
+                              titleArea.getWidth(), titleArea.getHeight(),
+                              juce::RectanglePlacement::centred, false);
         }
-
-        // Drop shadow
-        g.setColour(juce::Colour(0x44000000));
-        g.setFont(titleFont);
-        g.drawText(safeString("Space Dust"), titleArea.translated(1, 2), juce::Justification::centred, true);
-
-        // Main text
-        g.setColour(juce::Colour(0xffffffff));
-        g.setFont(titleFont);
-        g.drawText(safeString("Space Dust"), titleArea, juce::Justification::centred, true);
+        else
+        {
+            // Fallback: rendered text title (Glitch Goblin font).
+            juce::Font titleFont = customLookAndFeel.getTitleFont(40.0f);
+            const juce::Colour glowCol = meterLinkedTitleGlowHue(clippingHoldTicks > 0);
+            for (int i = 3; i >= 1; --i)
+            {
+                g.setColour(glowCol.withAlpha(static_cast<juce::uint8>(18 / i)));
+                g.setFont(titleFont);
+                g.drawText(safeString("Space Dust"), titleArea.expanded(i * 2, i), juce::Justification::centred, true);
+            }
+            g.setColour(juce::Colour(0x44000000));
+            g.setFont(titleFont);
+            g.drawText(safeString("Space Dust"), titleArea.translated(1, 2), juce::Justification::centred, true);
+            g.setColour(juce::Colour(0xffffffff));
+            g.setFont(titleFont);
+            g.drawText(safeString("Space Dust"), titleArea, juce::Justification::centred, true);
+        }
     }
 
     //==============================================================================

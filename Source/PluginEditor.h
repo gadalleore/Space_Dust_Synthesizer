@@ -311,6 +311,12 @@ private:
     void showSavePresetDialog();
 
     //==============================================================================
+    // Space Dust title artwork (nebula logo, black keyed to transparent). Drawn in
+    // the top header strip in place of the rendered "Space Dust" text. Falls back
+    // to the text title if the image fails to load.
+    juce::Image titleImage;
+
+    //==============================================================================
     // Filter box bottom edge in EDITOR coordinates, published by
     // MainPageComponent::resized() (where filterGroup is final and parented).
     // The always-visible Master section reads this to line its own bottom up with

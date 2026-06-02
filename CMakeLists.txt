@@ -56,6 +56,7 @@ juce_add_plugin(SpaceDust
 juce_add_binary_data(SpaceDustBinaryData
     SOURCES
         Resources/GlitchGoblin.ttf
+        Resources/SpaceDustTitle.png
 )
 
 # Add source files
