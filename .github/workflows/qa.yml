@@ -50,8 +50,8 @@ jobs:
 
       - name: "Run pluginval (CI smoke: strictness 4, repeat 1, no GUI tests)"
         shell: pwsh
-        timeout-minutes: 30
-        run: ./run-pluginval.ps1 -NoBuild -BuildDir "${{ github.workspace }}/build" -Strictness 4 -Repeat 1 -SkipGuiTests -OutOfProcess
+        timeout-minutes: 12
+        run: ./run-pluginval.ps1 -NoBuild -BuildDir "${{ github.workspace }}/build" -Strictness 4 -Repeat 1 -SkipGuiTests
 
       - name: Run full QA (static checks + crash-marker hygiene)
         shell: pwsh

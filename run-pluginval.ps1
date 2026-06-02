@@ -68,15 +68,18 @@ if (-not $OutOfProcess) { $args += '--validate-in-process' }
 if ($SkipGuiTests) { $args += '--skip-gui-tests' }
 $args += "`"$vst3Bundle`""
 
-$logPath = Join-Path $BuildDir 'pluginval-report.log'
-& $pluginval @args 2>&1 | Tee-Object -FilePath $logPath
+# Stream pluginval output straight to the console (no pipe/Tee). Piping through
+# Tee-Object buffers the native process output, and that buffer is lost when a
+# hung step is killed by its timeout - which hid where pluginval was hanging on
+# CI. Direct invocation lets the host (and the CI log) receive output live.
+& $pluginval @args
 $code = $LASTEXITCODE
 
 Write-Section 'Result'
 if ($code -eq 0) {
-    Write-Host "PASS  pluginval reported no failures (log: $logPath)" -ForegroundColor Green
+    Write-Host 'PASS  pluginval reported no failures' -ForegroundColor Green
 } else {
-    Write-Host "FAIL  pluginval exit code $code  (log: $logPath)" -ForegroundColor Red
-    Write-Host 'Inspect the log for the failing test name and stack.' -ForegroundColor Yellow
+    Write-Host "FAIL  pluginval exit code $code" -ForegroundColor Red
+    Write-Host 'Inspect the output above for the failing/last test name.' -ForegroundColor Yellow
 }
 exit $code
