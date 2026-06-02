@@ -311,6 +311,13 @@ private:
     void showSavePresetDialog();
 
     //==============================================================================
+    // Filter box bottom edge in EDITOR coordinates, published by
+    // MainPageComponent::resized() (where filterGroup is final and parented).
+    // The always-visible Master section reads this to line its own bottom up with
+    // the Filter box in Mono/Legato mode. 0 = not laid out yet.
+    int filterBoxBottomY = 0;
+
+    //==============================================================================
     // -- Tabbed Component for Main/Modulation Pages --
     juce::TabbedComponent tabbedComponent;
     std::unique_ptr<TabGlowOverlayComponent> tabGlowOverlay;

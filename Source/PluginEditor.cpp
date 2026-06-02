@@ -1040,6 +1040,14 @@ void MainPageComponent::resized()
     int matchedFilterHeight  = (filterElementsBottom - filterY) + oscBottomGap;
     parentEditor.filterGroup.setBounds(leftX, filterY, filterWidth, matchedFilterHeight);
 
+    // Publish the Filter box bottom edge in the editor's coordinate space so the
+    // always-visible Master section can line its own bottom up with it. This page
+    // sits inside the tabbed component, so add the tab component's Y and this
+    // page's own Y (the tab-bar offset) to the filter bottom in page coords.
+    parentEditor.filterBoxBottomY = parentEditor.tabbedComponent.getY()
+                                  + getY()
+                                  + filterY + matchedFilterHeight;
+
     // Cosmetic: when the Sub Oscillator is expanded, line the Amp Envelope box
     // bottom up with the Filter box bottom (it otherwise stops a touch short).
     // Collapsing behaviour when Sub Osc is off is left untouched - we only ever
@@ -6137,20 +6145,24 @@ void SpaceDustAudioProcessorEditor::resized()
     const bool showLegato = (voiceModeIndex != 0);
 
     // --- Consistent vertical rhythm -------------------------------------------
-    // Every section is laid out top-down with the SAME gap between sections, so
-    // the spacing reads evenly. The box height is the sum of its sections (it is
-    // not stretched to the window), which is what collapses it in Poly and
-    // expands it to reveal the Legato Glide toggle in Mono/Legato.
-    const int masterKnobTextTail = 10 + 18;   // gap + value text height under a rotary
+    // Every section is laid out top-down with the SAME fixed gap between sections,
+    // so the spacing reads evenly. The box height is the sum of its sections (it
+    // is NOT stretched to the window), which is what collapses it in Poly and
+    // expands it downward to reveal the Legato Glide toggle in Mono/Legato. The
+    // six always-visible sections keep the same Y positions in every mode; only
+    // the box border grows to make room for the toggle at the bottom.
     const int pitchFaderWidth = 24;
     const int pitchFaderHeight = 80;
     const int meterBarHeight = 170;            // fixed stereo-meter height
     const int legatoBtnH = 20;
-    const int sectionGap = 12;                 // uniform gap between every section
+    const int sectionGap = 20;                 // uniform gap between every section (tightened ~30% from 28)
 
-    const int knobGroupH  = labelHeight + labelGap + knobDiameter + masterKnobTextTail; // label+knob+value
-    const int comboGroupH = labelHeight + labelGap + comboHeight;
-    const int faderGroupH = labelHeight + labelGap + pitchFaderHeight;
+    // Natural content height of each section: label + gap + control. Rotary value
+    // readouts are drawn INSIDE the knob bounds, so no extra tail is reserved.
+    const int knobGroupH  = labelHeight + labelGap + knobDiameter; // Volume / Bend / Glide
+    const int comboGroupH = labelHeight + labelGap + comboHeight;  // Voice Mode
+    const int faderGroupH = labelHeight + labelGap + pitchFaderHeight; // Pitch Bend
+    // (the stereo meter has no label, its height is meterBarHeight)
 
     int masterContentH = knobGroupH                  // Volume
                        + sectionGap + meterBarHeight  // Stereo meter
@@ -6161,7 +6173,30 @@ void SpaceDustAudioProcessorEditor::resized()
     if (showLegato)
         masterContentH += sectionGap + legatoBtnH;    // Legato Glide toggle
 
-    int masterHeight = groupTitleHeight + groupPadding + masterContentH + groupPadding;
+    // Box height depends on whether the Legato Glide toggle is showing:
+    //  - Mono/Legato (toggle visible): anchor the box BOTTOM to the Filter box
+    //    bottom so the two line up. The Filter box is content-sized on the Main
+    //    page (see MainPageComponent::resized(), matchedFilterHeight), so we read
+    //    its real bottom edge and translate it into this editor's coordinates
+    //    rather than assuming a fixed window margin.
+    //  - Poly (toggle hidden): size to content, but with DOUBLE the normal bottom
+    //    padding (2 * groupPadding) between the last element (Glide) and the
+    //    border, since the elements stay top-anchored.
+    const int masterContentHeight = groupTitleHeight + groupPadding + masterContentH + groupPadding;
+    int masterHeight;
+    if (showLegato)
+    {
+        // Filter box bottom in editor space, published by MainPageComponent::resized().
+        // Fall back to the content height if the Main page hasn't been laid out yet.
+        const int filterBoxBottom = (filterBoxBottomY > 0) ? filterBoxBottomY
+                                                           : (masterY + masterContentHeight);
+        // Never shorter than the content needs (keeps the toggle from clipping).
+        masterHeight = juce::jmax(masterContentHeight, filterBoxBottom - masterY);
+    }
+    else
+    {
+        masterHeight = masterContentHeight + groupPadding;  // double bottom padding
+    }
     masterGroup.setBounds(masterX, masterY, masterWidth, masterHeight);
 
     // Content rect: title + padding off the top, only padding off the bottom.
@@ -6170,6 +6205,7 @@ void SpaceDustAudioProcessorEditor::resized()
     auto masterContent = masterGroup.getBounds().reduced(groupPadding, 0);
     masterContent.removeFromTop(groupTitleHeight + groupPadding);
     masterContent.removeFromBottom(groupPadding);
+
     const int masterKnobX  = masterContent.getCentreX() - knobDiameter / 2;
     const int pitchCentreX = masterContent.getCentreX();
     int masterCurrentY = masterContent.getY();
