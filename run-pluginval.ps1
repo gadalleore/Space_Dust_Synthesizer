@@ -10,7 +10,10 @@ param(
     [int]   $Timeout    = 600,           # seconds before pluginval aborts
     [int]   $SampleRates,                # optional: pass-through; pluginval picks defaults
     [switch]$NoBuild,
-    [switch]$SkipGuiTests                # skip editor/GUI tests (used in headless CI)
+    [switch]$SkipGuiTests,               # skip editor/GUI tests (used in headless CI)
+    [switch]$OutOfProcess                # validate in a child process (recommended for CI:
+                                         # --timeout-ms can then kill a hung test instead of
+                                         # an in-process deadlock hanging the whole run)
 )
 
 $ErrorActionPreference = 'Stop'
@@ -51,12 +54,15 @@ if (-not (Test-Path $vst3Bundle)) {
 Write-Section "Running pluginval (strictness=$Strictness, repeat=$Repeat)"
 $args = @(
     '--strictness-level', $Strictness,
-    '--validate-in-process',
     '--repeat',            $Repeat,
     '--timeout-ms',        ($Timeout * 1000),
     '--randomise',
     '--verbose'
 )
+# In-process is convenient for local debugging, but an in-process deadlock hangs
+# the whole run with no way for --timeout-ms to interrupt it (seen on the headless
+# CI runner). Default to in-process locally; CI passes -OutOfProcess.
+if (-not $OutOfProcess) { $args += '--validate-in-process' }
 # Editor/GUI tests ("open editor whilst processing") deadlock on a headless CI
 # runner and hang until the job timeout. Skip them there; run them locally.
 if ($SkipGuiTests) { $args += '--skip-gui-tests' }
