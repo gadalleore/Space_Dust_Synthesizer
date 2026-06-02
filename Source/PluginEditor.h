@@ -317,6 +317,11 @@ private:
     juce::Image titleImage;
 
     //==============================================================================
+    // 63C company logo (white ghost on transparent). Drawn as a small watermark
+    // in the bottom-right corner of the window, below the Master box.
+    juce::Image logoImage;
+
+    //==============================================================================
     // Filter box bottom edge in EDITOR coordinates, published by
     // MainPageComponent::resized() (where filterGroup is final and parented).
     // The always-visible Master section reads this to line its own bottom up with

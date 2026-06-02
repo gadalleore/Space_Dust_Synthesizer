@@ -6033,6 +6033,36 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
         const int baseAlpha = 8 + static_cast<int>(44.0f * avgLevel);
         drawGlows(g, baseAlpha, meterLinkedGroupGlowHue(clippingHoldTicks > 0), { &masterGroup });
     }
+
+    //==============================================================================
+    // -- 63C company logo (bottom-right watermark) --
+    {
+        if (! logoImage.isValid())
+            logoImage = juce::ImageCache::getFromMemory(BinaryData::Logo63C_png,
+                                                        BinaryData::Logo63C_pngSize);
+        if (logoImage.isValid())
+        {
+            // 63C wordmark in the bottom-right corner. The Master box bottom in
+            // Legato (glide toggle visible) is filterBoxBottomY; the logo lives in
+            // the band beneath it, sized to a fraction of the tallest height that
+            // still clears every box on all tabs.
+            const int masterBottom = (filterBoxBottomY > 0 ? filterBoxBottomY : h - 60);
+            const int band = h - masterBottom;
+            const int cleanH = juce::jlimit(24, 64, band - 9);
+            const int logoH = juce::roundToInt(cleanH * 0.5985f);  // cumulative downscales
+            const int logoW = juce::roundToInt(logoH * (logoImage.getWidth()
+                                                        / (float) logoImage.getHeight()));
+            // Tuck into the bottom-right corner with an equal margin on every side:
+            // gap to the window's right edge == gap to the window's bottom == gap
+            // up to the Master box bottom.
+            const int gap = (band - logoH) / 2;
+            const int logoX = (w - gap) - logoW;
+            const int logoY = masterBottom + gap;
+            g.setColour(juce::Colours::white.withAlpha(0.9f));
+            g.drawImageWithin(logoImage, logoX, logoY, logoW, logoH,
+                              juce::RectanglePlacement::centred, false);
+        }
+    }
 }
 
 //==============================================================================
