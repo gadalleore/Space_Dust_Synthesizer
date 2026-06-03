@@ -384,6 +384,8 @@ void SynthVoice::noteStarted()
         outputSmootherR = 0.0f;
         prevSmoothedL = 0.0f;
         prevSmoothedR = 0.0f;
+        meanAbsDeltaL = 0.0f;
+        meanAbsDeltaR = 0.0f;
         postStealCutoffSlowdownSamples = 0;
         filter.reset();
         modFilter1.reset();
@@ -1325,7 +1327,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             outputSmootherR = 0.0f;
             prevSmoothedL = 0.0f;
             prevSmoothedR = 0.0f;
-            
+            meanAbsDeltaL = 0.0f;
+            meanAbsDeltaR = 0.0f;
+
             // CRITICAL: Only process samples we've actually generated
             if (i < maxSamples)
             {
@@ -1425,6 +1429,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                 outputSmootherR = 0.0f;
                 prevSmoothedL = 0.0f;
                 prevSmoothedR = 0.0f;
+                meanAbsDeltaL = 0.0f;
+                meanAbsDeltaR = 0.0f;
                 voiceTempBuffer.setSample(0, i, outL);
                 voiceTempBuffer.setSample(1, i, outR);
                 samplesProcessed = i + 1;
@@ -1450,15 +1456,36 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // ====================================================================
         // REAL-TIME CLICK / DISCONTINUITY DETECTOR (for tracking down pops)
         // ====================================================================
-        // Compares the *final* smoothed output sample against the previous one.
-        // Any large jump that survives the envelope smoother, output smoother,
-        // voice fade, 3 ms auto-glide, filter smoothing etc. will be caught here.
-        // Threshold chosen to be clearly audible as a pop/click on most systems.
-        const float clickThreshold = 0.035f;   // ~ -29 dB step — definitely audible
+        // Goal: catch genuine discontinuities (pops) while IGNORING the natural
+        // steepness of an ordinary waveform.  An absolute per-sample-step
+        // threshold is wrong: the max step of a clean sine is A·2π·f/sr, so a
+        // loud (A>0.75) or high note legitimately steps far past any audible
+        // threshold every cycle and floods the log with false positives.
+        //
+        // Instead we compare each step against the LOCAL slope envelope — an EMA
+        // of recent |step| (kClickSlopeEmaCoeff, ~5 ms time constant).  A clean
+        // waveform's step stays within ~1.6x of this average (sine max/mean of
+        // |slope| = π/2); a real click is a single step many times larger.  We
+        // flag only when the step is BOTH well above the local slope (ratio test)
+        // AND above a small absolute floor (so near-silence, where the EMA ~0,
+        // can't make a tiny step look like a huge ratio).
+        constexpr float kClickSlopeEmaCoeff = 0.0045f; // ~5 ms @ 44.1 kHz
+        constexpr float kClickRatio         = 8.0f;    // step vs. local slope
+        constexpr float kClickAbsFloor      = 0.02f;   // ~ -34 dB, must be audible
         const float deltaL = std::abs(outputSmootherL - prevSmoothedL);
         const float deltaR = std::abs(outputSmootherR - prevSmoothedR);
 
-        if (deltaL > clickThreshold || deltaR > clickThreshold)
+        // Compare against the slope envelope as it was BEFORE this sample, so the
+        // spike itself doesn't inflate the baseline it's measured against.
+        const float slopeRefL = meanAbsDeltaL;
+        const float slopeRefR = meanAbsDeltaR;
+        meanAbsDeltaL += kClickSlopeEmaCoeff * (deltaL - meanAbsDeltaL);
+        meanAbsDeltaR += kClickSlopeEmaCoeff * (deltaR - meanAbsDeltaR);
+
+        const bool clickL = deltaL > kClickAbsFloor && deltaL > kClickRatio * slopeRefL;
+        const bool clickR = deltaR > kClickAbsFloor && deltaR > kClickRatio * slopeRefR;
+
+        if (clickL || clickR)
         {
             ++discontinuityCount;   // always count for accurate QA stats
 
@@ -1656,6 +1683,8 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
 
     prevSmoothedL = 0.0f;
     prevSmoothedR = 0.0f;
+    meanAbsDeltaL = 0.0f;
+    meanAbsDeltaR = 0.0f;
     discontinuityCount = 0;
     postStealCutoffSlowdownSamples = 0;
     postStealCutoffSlowCoeff = 1.0f - std::exp(-1.0f / (0.035f * static_cast<float>(sampleRate)));

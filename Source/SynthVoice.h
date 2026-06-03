@@ -411,6 +411,14 @@ private:
     // output smoother, voice fade, 3 ms auto-glide, etc.).
     float prevSmoothedL = 0.0f;
     float prevSmoothedR = 0.0f;
+    // Running EMA of the per-sample |step| on each channel (the "local slope
+    // envelope").  A normal waveform has a steady slope, so its step stays close
+    // to this average; a true click/pop is a single step many times larger than
+    // the local slope.  Comparing against this (instead of a fixed absolute
+    // threshold) stops the detector firing on the natural steepness of loud/high
+    // notes.  Time constant ~5 ms (see kClickSlopeEmaCoeff).
+    float meanAbsDeltaL = 0.0f;
+    float meanAbsDeltaR = 0.0f;
     int   discontinuityCount = 0;
     // Throttle: samples since we last logged a click on this voice.  The detector
     // runs per-sample, so an unthrottled click storm produced multi-GB logs and
