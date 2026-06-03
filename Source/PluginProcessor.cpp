@@ -984,7 +984,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("filterEnvAttack")))
         filterEnvAttack = juce::jlimit(0.01f, 20.0f, p->get());
     if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("filterEnvDecay")))
-        filterEnvDecay = juce::jlimit(0.01f, 5.0f, p->get());
+        filterEnvDecay = juce::jlimit(0.01f, 20.0f, p->get());
     if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("filterEnvRelease")))
         filterEnvRelease = juce::jlimit(0.01f, 20.0f, p->get());
     float filterEnvAmount = 0.0f;
@@ -1163,7 +1163,7 @@ void SpaceDustAudioProcessor::parameterChanged(const juce::String& parameterID, 
     {
         // Read actual value from param (matches UI label exactly)
         if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(parameterID)))
-            currentFilterEnvDecay.store(juce::jlimit(0.01f, 5.0f, p->get()));
+            currentFilterEnvDecay.store(juce::jlimit(0.01f, 20.0f, p->get()));
     }
     else if (parameterID == juce::ParameterID{"filterEnvRelease", 1}.getParamID())
     {
@@ -2899,7 +2899,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     // Filter envelope modulates filter cutoff with bipolar amount control
     
     // Filter envelope attack time (skewed: 0.01s to 20.0s, midpoint at 2.0s)
-    juce::NormalisableRange<float> filterAttackRange(0.01f, 20.0f, 0.001f);
+    // Fine 0.0001s step (vs 0.001s) so the heavily-skewed low end moves smoothly
+    // instead of feeling "sticky" — the curve is near-flat near 0.01s, so a coarse
+    // 1ms step there required a noticeable drag before the value would tick over.
+    juce::NormalisableRange<float> filterAttackRange(0.01f, 20.0f, 0.0001f);
     filterAttackRange.setSkewForCentre(2.0f);
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -2907,8 +2910,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             filterAttackRange, 0.01f),
         "filterEnvAttack");
     
-    // Filter envelope decay time (0.01s to 5s, linear - 1:1 mapping so label matches decay exactly)
-    juce::NormalisableRange<float> filterDecayRange(0.01f, 5.0f, 0.001f);
+    // Filter envelope decay time (skewed: 0.01s to 20.0s, midpoint at 2.0s)
+    // Matches the attack curve/range and uses the same fine 0.0001s step so the
+    // low end moves smoothly instead of feeling "sticky".
+    juce::NormalisableRange<float> filterDecayRange(0.01f, 20.0f, 0.0001f);
+    filterDecayRange.setSkewForCentre(2.0f);
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"filterEnvDecay", 1}, "Filter Env Decay",
@@ -2923,7 +2929,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         "filterEnvSustain");
     
     // Filter envelope release time (skewed: 0.01s to 20.0s, midpoint at 2.0s)
-    juce::NormalisableRange<float> filterReleaseRange(0.01f, 20.0f, 0.001f);
+    // Fine 0.0001s step (4 decimals shown) to match attack/decay for smooth low-end control.
+    juce::NormalisableRange<float> filterReleaseRange(0.01f, 20.0f, 0.0001f);
     filterReleaseRange.setSkewForCentre(2.0f);
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -2955,7 +2962,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     // with the final portion extending dramatically to very long times.
     
     // Attack time (skewed: 0.01s to 20.0s, midpoint at 2.0s)
-    juce::NormalisableRange<float> attackRange(0.01f, 20.0f, 0.001f);
+    // Fine 0.0001s step so the heavily-skewed low end moves smoothly (matches filter env).
+    juce::NormalisableRange<float> attackRange(0.01f, 20.0f, 0.0001f);
     attackRange.setSkewForCentre(2.0f); // 50% knob position = 2.0 seconds
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -2964,7 +2972,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         "envAttack");
     
     // Decay time (skewed: 0.01s to 20.0s, midpoint at 2.0s)
-    juce::NormalisableRange<float> decayRange(0.01f, 20.0f, 0.001f);
+    // Fine 0.0001s step so the heavily-skewed low end moves smoothly (matches filter env).
+    juce::NormalisableRange<float> decayRange(0.01f, 20.0f, 0.0001f);
     decayRange.setSkewForCentre(2.0f); // 50% knob position = 2.0 seconds
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -2980,7 +2989,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         "envSustain");
     
     // Release time (skewed: 0.01s to 20.0s, midpoint at 2.0s) - long cosmic tails!
-    juce::NormalisableRange<float> releaseRange(0.01f, 20.0f, 0.001f);
+    // Fine 0.0001s step so the heavily-skewed low end moves smoothly (matches filter env).
+    juce::NormalisableRange<float> releaseRange(0.01f, 20.0f, 0.0001f);
     releaseRange.setSkewForCentre(2.0f); // 50% knob position = 2.0 seconds
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -2998,10 +3008,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"pitchEnvAmount", 1}, "Pitch Env Amount",
             juce::NormalisableRange<float>(-100.0f, 100.0f, 0.1f), 0.0f),
         "pitchEnvAmount");
+    // Pitch ramp length: 0 to 10s, skewed (midpoint at 2.0s) so short pitch blips
+    // stay easy to dial. Fine 0.0001s step (4 decimals) like the ADSR time knobs.
+    juce::NormalisableRange<float> pitchEnvTimeRange(0.0f, 10.0f, 0.0001f);
+    pitchEnvTimeRange.setSkewForCentre(2.0f);
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"pitchEnvTime", 1}, "Pitch Env Time",
-            juce::NormalisableRange<float>(0.0f, 1.0f, 0.001f), 0.0f),
+            pitchEnvTimeRange, 0.0f),
         "pitchEnvTime");
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(

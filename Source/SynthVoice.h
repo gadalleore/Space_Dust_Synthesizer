@@ -338,6 +338,16 @@ private:
     float envSustainLevel = 0.7f;      // Sustain level (0.0-1.0, linear)
     float envReleaseTime = 0.2f;        // Release time (0.01-20.0s, skewed) - long cosmic tails!
     
+    // Last values actually pushed into the ADSRs. We update voice parameters every
+    // processBlock, but juce::ADSR::setParameters() recomputes releaseRate from the
+    // sustain level (sustain/(release*sr)); with a low/zero sustain that rate is <= 0
+    // and recalculateRates() forces the envelope straight to idle — cutting off the
+    // release tail mid-flight. So we only re-push when a value truly changed, leaving
+    // an in-progress release (whose rate noteOff() derived from the live level) alone.
+    // Sentinel -1.0f guarantees the first real update is applied.
+    float lastAdsrAttack = -1.0f, lastAdsrDecay = -1.0f, lastAdsrSustain = -1.0f, lastAdsrRelease = -1.0f;
+    float lastFilterAdsrAttack = -1.0f, lastFilterAdsrDecay = -1.0f, lastFilterAdsrSustain = -1.0f, lastFilterAdsrRelease = -1.0f;
+
     double sampleRate = 44100.0;       // Current sample rate for envelope calculations
     bool isDspInitialized = false;     // Track if DSP has been properly initialized
     

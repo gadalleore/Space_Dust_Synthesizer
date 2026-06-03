@@ -853,18 +853,32 @@ void SynthVoice::updateAdsrParameters()
         return;
     }
     
+    // Clamp to legal ranges. Times must be > 0.01s to prevent JUCE assertions.
+    const float attack  = juce::jmax(0.01f, envAttackTime);       // 0.01-20.0s, skewed
+    const float decay   = juce::jmax(0.01f, envDecayTime);        // 0.01-20.0s, skewed
+    const float sustain = juce::jlimit(0.0f, 1.0f, envSustainLevel); // 0.0-1.0, linear amplitude
+    const float release = juce::jmax(0.01f, envReleaseTime);      // 0.01-20.0s, skewed - long cosmic tails!
+
+    // Only push when something actually changed. We are called every processBlock,
+    // and setParameters() -> recalculateRates() rewrites releaseRate from sustain,
+    // which silences an in-progress release tail (esp. with low sustain). Skipping
+    // no-op pushes lets the release run from the level captured at note-off.
+    if (attack == lastAdsrAttack && decay == lastAdsrDecay
+        && sustain == lastAdsrSustain && release == lastAdsrRelease)
+        return;
+
+    lastAdsrAttack = attack;
+    lastAdsrDecay = decay;
+    lastAdsrSustain = sustain;
+    lastAdsrRelease = release;
+
     juce::ADSR::Parameters params;
-    
-    // Set all four ADSR parameters together (required by JUCE)
-    // Times are in seconds - JUCE's ADSR converts to samples internally
-    // CRITICAL: All times must be > 0.01s to prevent assertions
-    params.attack = juce::jmax(0.01f, envAttackTime);      // Attack time (0.01-20.0s, skewed)
-    params.decay = juce::jmax(0.01f, envDecayTime);        // Decay time (0.01-20.0s, skewed)
-    params.sustain = juce::jlimit(0.0f, 1.0f, envSustainLevel);  // Sustain level (0.0-1.0, linear amplitude)
-    params.release = juce::jmax(0.01f, envReleaseTime);    // Release time (0.01-20.0s, skewed) - long cosmic tails!
-    
+    params.attack = attack;
+    params.decay = decay;
+    params.sustain = sustain;
+    params.release = release;
+
     // Apply parameters to ADSR (real-time safe, no allocations)
-    // This is safe to call now because sample rate is valid
     adsr.setParameters(params);
 }
 
@@ -876,15 +890,28 @@ void SynthVoice::updateFilterAdsrParameters()
         return;
     }
     
+    const float attack  = juce::jmax(0.01f, filterEnvAttackTime);
+    const float decay   = juce::jmax(0.01f, filterEnvDecayTime);
+    const float sustain = juce::jlimit(0.0f, 1.0f, filterEnvSustainLevel);
+    const float release = juce::jmax(0.01f, filterEnvReleaseTime);
+
+    // Same guard as the amp envelope: only re-push on a real change so a running
+    // filter-envelope release isn't reset to idle by recalculateRates() each block.
+    if (attack == lastFilterAdsrAttack && decay == lastFilterAdsrDecay
+        && sustain == lastFilterAdsrSustain && release == lastFilterAdsrRelease)
+        return;
+
+    lastFilterAdsrAttack = attack;
+    lastFilterAdsrDecay = decay;
+    lastFilterAdsrSustain = sustain;
+    lastFilterAdsrRelease = release;
+
     juce::ADSR::Parameters params;
-    
-    // Set all four Filter Envelope ADSR parameters together (required by JUCE)
-    // Times are in seconds - JUCE ADSR uses linear decay; value = time to reach sustain
-    params.attack = juce::jmax(0.01f, filterEnvAttackTime);
-    params.decay = juce::jmax(0.01f, filterEnvDecayTime);
-    params.sustain = juce::jlimit(0.0f, 1.0f, filterEnvSustainLevel);
-    params.release = juce::jmax(0.01f, filterEnvReleaseTime);
-    
+    params.attack = attack;
+    params.decay = decay;
+    params.sustain = sustain;
+    params.release = release;
+
     // Apply parameters to Filter Envelope ADSR (real-time safe, no allocations)
     filterAdsr.setParameters(params);
 }
@@ -2000,7 +2027,7 @@ void SynthVoice::setPitchEnvAmount(float amount)
 
 void SynthVoice::setPitchEnvTime(float seconds)
 {
-    pitchEnvTime = juce::jlimit(0.0f, 5.0f, seconds);
+    pitchEnvTime = juce::jlimit(0.0f, 10.0f, seconds);
 }
 
 void SynthVoice::setPitchEnvPitch(float semitones)
