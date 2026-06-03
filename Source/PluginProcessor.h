@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
+#include <array>
 #include <atomic>
 #include <cstdint>
 
@@ -137,6 +138,10 @@ public:
     const juce::AudioBuffer<float>& getGoniometerBuffer() const;
     int getGoniometerValidSamples() const { return goniometerValidSamples.load(std::memory_order_acquire); }
 
+    // Spectrum analyser: copy the most-recent `numSamples` of continuous mono output
+    // history into dest (gap-free, so the FFT window is faithful and the display is stable).
+    void readSpectrumSamples(float* dest, int numSamples) const;
+
     // Update all voices with current parameter values (called after preset load)
     void updateVoicesWithParameters(float lfo1Modulation = 0.0f, float lfo2Modulation = 0.0f);
 
@@ -263,6 +268,13 @@ private:
     juce::AudioBuffer<float> goniometerBuffer[2];
     std::atomic<int> goniometerReadIndex{0};
     std::atomic<int> goniometerValidSamples{0};
+
+    // -- Spectrum Analyser Capture --
+    // Continuous (gap-free) mono ring buffer of recent output, written by the audio
+    // thread and read by the UI's FFT. Power-of-two size for cheap wrap masking.
+    static constexpr int spectrumFifoSize = 8192;
+    std::array<float, spectrumFifoSize> spectrumFifo{};
+    std::atomic<int> spectrumFifoWritePos{0};
     
     // -- Helper Methods --
     

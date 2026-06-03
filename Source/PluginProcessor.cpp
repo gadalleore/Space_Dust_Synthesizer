@@ -2567,6 +2567,38 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             goniometerReadIndex.store(writeIdx, std::memory_order_release);
         }
     }
+
+    //==============================================================================
+    // -- Spectrum Analyser FIFO --
+    // Append a continuous mono mix of the output so the UI FFT reads a gap-free
+    // window (this is what keeps a steady note rock-stable on the display).
+    if (numSamples > 0 && buffer.getNumChannels() >= 1)
+    {
+        const float* L = buffer.getReadPointer(0);
+        const float* R = buffer.getNumChannels() >= 2 ? buffer.getReadPointer(1) : L;
+        int wp = spectrumFifoWritePos.load(std::memory_order_relaxed);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            spectrumFifo[static_cast<size_t>(wp)] = 0.5f * (L[i] + R[i]);
+            wp = (wp + 1) & (spectrumFifoSize - 1);
+        }
+        spectrumFifoWritePos.store(wp, std::memory_order_release);
+    }
+}
+
+//==============================================================================
+void SpaceDustAudioProcessor::readSpectrumSamples(float* dest, int numSamples) const
+{
+    constexpr int mask = spectrumFifoSize - 1;
+    const int count = juce::jmin(numSamples, spectrumFifoSize);
+    const int wp = spectrumFifoWritePos.load(std::memory_order_acquire);
+    // The most-recent `count` samples end just before the write cursor.
+    int idx = (wp - count) & mask;
+    for (int i = 0; i < count; ++i)
+    {
+        dest[i] = spectrumFifo[static_cast<size_t>(idx)];
+        idx = (idx + 1) & mask;
+    }
 }
 
 //==============================================================================

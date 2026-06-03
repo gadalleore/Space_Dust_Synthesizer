@@ -3,13 +3,15 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+#include <functional>
 #include <vector>
 
 //==============================================================================
 /**
     SpectrumAnalyser - FFT-based frequency magnitude display.
 */
-class SpectrumAnalyserComponent : public juce::Component
+class SpectrumAnalyserComponent : public juce::Component,
+                                  private juce::Timer
 {
 public:
     SpectrumAnalyserComponent();
@@ -18,8 +20,18 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
 
-    /** Update with new stereo audio (uses L channel for FFT) */
-    void update(const juce::AudioBuffer<float>& buffer);
+    /** Begin self-driven, high-frame-rate repaint (decoupled from the slow shared editor timer). */
+    void start() { startTimerHz(60); }
+
+    /** Editor sets this to fill `dest` with the most-recent `numSamples` of continuous audio. */
+    std::function<void(float* dest, int numSamples)> fillSamplesCallback;
+
+    /** Sample rate is needed to map FFT bins onto the log-frequency axis. */
+    void setSampleRate(double newSampleRate)
+    {
+        if (newSampleRate > 0.0)
+            sampleRate = static_cast<float>(newSampleRate);
+    }
 
     void setClipping(bool isClipping)
     {
@@ -28,11 +40,17 @@ public:
     }
 
 private:
+    void timerCallback() override;
     void drawBackground(juce::Graphics& g);
-    void pushNextBlock(const float* src, int numSamples);
+    void computeSpectrum(const float* samples);
 
-    static constexpr int fftOrder = 9;
+    static constexpr int fftOrder = 11;            // 2048-pt FFT: ~21 Hz/bin, resolves low harmonics
     static constexpr int fftSize = 1 << fftOrder;
+
+    // Log-frequency display range (SPAN-style). Each octave gets equal width.
+    static constexpr float minFreq = 20.0f;
+    static constexpr float maxFreq = 20000.0f;
+    float sampleRate = 44100.0f;
 
     std::unique_ptr<juce::dsp::FFT> forwardFFT;
     std::unique_ptr<juce::dsp::WindowingFunction<float>> window;

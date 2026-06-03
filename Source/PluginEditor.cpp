@@ -2653,6 +2653,13 @@ SpectralPageComponent::SpectralPageComponent(SpaceDustAudioProcessorEditor& edit
     addAndMakeVisible(spectrumGroup);
     oscilloscope = std::make_unique<OscilloscopeComponent>();
     spectrumAnalyser = std::make_unique<SpectrumAnalyserComponent>();
+    // Self-drive the spectrum at 60fps, reading a continuous (gap-free) window from
+    // the processor's FIFO. Lambda captures the processor, which outlives the editor.
+    spectrumAnalyser->fillSamplesCallback = [this](float* dest, int numSamples)
+    {
+        parentEditor.audioProcessor.readSpectrumSamples(dest, numSamples);
+    };
+    spectrumAnalyser->start();
     oscilloscopeGroup.addAndMakeVisible(*oscilloscope);
     spectrumGroup.addAndMakeVisible(*spectrumAnalyser);
     // Glow overlay on top so Oscilloscope/Spectrum sit behind it - cleaner look
@@ -5854,9 +5861,10 @@ void SpaceDustAudioProcessorEditor::timerCallback()
         }
         if (auto* spec = spectralPage->getSpectrumAnalyser())
         {
+            // FFT + repaint are self-driven at 60fps inside the component;
+            // here we just keep its clipping colour and sample rate current.
             spec->setClipping(showClipping);
-            spec->update(buf);
-            spec->repaint();
+            spec->setSampleRate(audioProcessor.getSampleRate());
         }
     }
     
