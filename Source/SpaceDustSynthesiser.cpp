@@ -82,6 +82,10 @@ void SpaceDustSynthesiser::noteAdded(juce::MPENote newNote)
             startVoice(voice, newNote);
 
             nextNotePreservesVoice.store(false);
+
+            // Single-voice guarantee: kill any other voice still ringing out a
+            // long release so Mono/Legato never sounds two notes at once.
+            cutStrayVoices(voice);
             return;
         }
     }
@@ -94,6 +98,7 @@ void SpaceDustSynthesiser::noteAdded(juce::MPENote newNote)
     // can reuse it.  isCurrentlyPlayingNote() compares by noteID so this is exact.
     if (mode != 0)
     {
+        juce::MPESynthesiserVoice* allocated = nullptr;
         for (int i = 0; i < getNumVoices(); ++i)
         {
             if (auto* v = getVoice(i))
@@ -101,10 +106,31 @@ void SpaceDustSynthesiser::noteAdded(juce::MPENote newNote)
                 if (v->isCurrentlyPlayingNote(newNote))
                 {
                     lastMonoVoiceIndex = i;
+                    allocated = v;
                     break;
                 }
             }
         }
+
+        // Mono/Legato: a "first" note (lastMonoVoiceIndex was invalid) may be
+        // allocated to a FREE voice while an earlier note is still releasing on
+        // another voice — that stray long release is exactly the "first note's
+        // release still rings out" bug.  Cut every voice except the new one.
+        if (allocated != nullptr)
+            cutStrayVoices(allocated);
+    }
+}
+
+//==============================================================================
+void SpaceDustSynthesiser::cutStrayVoices(juce::MPESynthesiserVoice* keep)
+{
+    for (int i = 0; i < getNumVoices(); ++i)
+    {
+        auto* v = getVoice(i);
+        if (v == nullptr || v == keep)
+            continue;
+        if (auto* sv = dynamic_cast<SynthVoice*>(v))
+            sv->forceFadeOut();   // click-safe; ignores legato/preserve handoff
     }
 }
 

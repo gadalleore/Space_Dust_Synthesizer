@@ -1887,11 +1887,17 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         }
 
         const bool stopped    = (wasPlayingState && ! nowPlaying);
+        // Transport START (not-playing -> playing). Without this, the FIRST loop runs
+        // on whatever stale note-stack/voice state was left from preview notes, the
+        // prior session, or a note held across the loop point — so the first pass has
+        // wrong note timing, then "corrects" once the loop-wrap flush below fires.
+        // Treating start like a wrap makes loop 1 behave identically to loop 2+.
+        const bool started    = (! wasPlayingState && nowPlaying);
         // Backward jump while playing = loop wrap or rewind. Small epsilon avoids
         // false positives from float noise on a steadily-advancing playhead.
         const bool jumpedBack = (nowPlaying && (ppq + 1.0e-6 < lastPpqPosition));
 
-        if ((stopped || jumpedBack) && synth.getVoiceModeIndex() != 0)
+        if ((stopped || started || jumpedBack) && synth.getVoiceModeIndex() != 0)
         {
             synth.resetNoteState();
             synth.turnOffAllVoices(false);   // hard stop: no notes can hang across the edge
@@ -1904,7 +1910,60 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     //==============================================================================
     // -- Process MIDI with Mono Mode Support --
     // Call custom synthesiser methods to handle mono mode
+    //
+    // TEMP DIAGNOSTIC (mono first-loop timing): capture the MIDI stream at play
+    // start — incoming events vs. what our mono rewrite emits — to see whether FL
+    // sends a spurious early note or we generate a phantom note-on. Bounded to the
+    // first ~80 logged blocks after each play-start, then silent. Remove when fixed.
+#define SPACEDUST_MIDI_TIMING_DEBUG 0   // flip to 1 to re-capture mono play-start MIDI timing
+#if SPACEDUST_MIDI_TIMING_DEBUG
+    {
+        auto dumpNotes = [](const juce::MidiBuffer& mb) -> juce::String
+        {
+            juce::String s;
+            for (const auto meta : mb)
+            {
+                auto msg = meta.getMessage();
+                if (msg.isNoteOn() && msg.getVelocity() > 0)
+                    s << "+" << msg.getNoteNumber() << "@" << meta.samplePosition << " ";
+                else if (msg.isNoteOff() || (msg.isNoteOn() && msg.getVelocity() == 0))
+                    s << "-" << msg.getNoteNumber() << "@" << meta.samplePosition << " ";
+            }
+            return s;
+        };
+
+        static std::atomic<int> g_dbgCount{ 0 };
+        static bool g_dbgPrevPlaying = false;
+        const bool nowPlay = wasPlayingState;          // updated by edge block above
+        const double dbgPpq = lastPpqPosition;         // updated by edge block above
+
+        juce::File dbgFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+                                 .getChildFile("SpaceDust_MidiTiming.txt");
+
+        if (nowPlay && ! g_dbgPrevPlaying)
+        {
+            g_dbgCount.store(0);
+            dbgFile.replaceWithText("=== PLAY START  mode=" + juce::String(synth.getVoiceModeIndex())
+                                    + "  sr=" + juce::String(currentSampleRate) + " ===\n");
+        }
+        g_dbgPrevPlaying = nowPlay;
+
+        const juce::String inc = dumpNotes(midiMessages);
+        synth.processMidiBuffer(midiMessages, numSamples);
+        const juce::String outg = dumpNotes(midiMessages);
+
+        int c = g_dbgCount.load();
+        if (nowPlay && c < 80 && (inc.isNotEmpty() || outg.isNotEmpty()))
+        {
+            g_dbgCount.store(c + 1);
+            dbgFile.appendText("ppq=" + juce::String(dbgPpq, 4)
+                               + " n=" + juce::String(numSamples)
+                               + " IN[" + inc + "] OUT[" + outg + "]\n");
+        }
+    }
+#else
     synth.processMidiBuffer(midiMessages, numSamples);
+#endif
 
     //==============================================================================
     // -- Transient: trigger from MIDI after mono/legato rewrite --

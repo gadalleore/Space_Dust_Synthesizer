@@ -85,6 +85,14 @@ public:
         we still apply a short linear voice fade to avoid clicks. */
     void noteStopped (bool allowTailOff) override;
 
+    /** Click-safe hard stop that ignores the legato/preserve handoff flags.
+        Used to enforce single-voice behaviour in Mono/Legato: when a new note
+        starts, any OTHER voice still ringing out a long release must be cut so
+        the synth stays monophonic.  Unlike noteStopped(false), this does NOT
+        defer to isPreservingVoice()/isNextNoteLegato() — the voice is always
+        faded out over kVoiceFadeLength and then cleaned up in renderNextBlock. */
+    void forceFadeOut();
+
     /** Called when the MPE pressure ("Y" axis / channel pressure) dimension changes.
         We map this to a multiplicative amplitude boost (0..+100%). */
     void notePressureChanged() override;

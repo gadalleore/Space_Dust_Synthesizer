@@ -89,6 +89,11 @@ public:
     // Process MIDI buffer with mono/legato handling and active-note count
     void processMidiBuffer(juce::MidiBuffer& midiMessages, int numSamples);
 
+    // Mono/Legato single-voice guarantee: fade out every active voice EXCEPT
+    // `keep` so a long release left over from a previous note (or a poly→mono
+    // switch) cannot keep ringing under the new note.  No-op in Poly mode.
+    void cutStrayVoices(juce::MPESynthesiserVoice* keep);
+
     /** Flush all mono/legato note-tracking state.
 
         MUST be called whenever the host transport stops or the playhead jumps

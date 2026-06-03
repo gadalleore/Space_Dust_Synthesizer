@@ -498,6 +498,22 @@ void SynthVoice::noteStopped(bool allowTailOff)
 }
 
 //==============================================================================
+void SynthVoice::forceFadeOut()
+{
+    // Nothing to cut if the voice is neither sounding nor mid-fade.
+    if (! isActive && voiceFadeSamplesRemaining <= 0)
+        return;
+
+    // Mono/Legato single-voice guarantee: this is a STRAY voice (e.g. a long
+    // release left over from a previous note or a poly→mono switch) that must
+    // not keep ringing under the new note.  Bypass the legato/preserve handoff
+    // (we are NOT reusing this voice) and start the short click-safe fade; the
+    // existing fade→cleanup path in renderNextBlock finishes the job.
+    voiceFade = 1.0f;
+    voiceFadeSamplesRemaining = kVoiceFadeLength;
+}
+
+//==============================================================================
 // -- MPE Expression Callbacks --
 //
 // Fired from MPESynthesiser when the controller updates pressure / pitch-bend /
