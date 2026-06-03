@@ -1445,13 +1445,17 @@ void ModulationPageComponent::resized()
     if (modFilter1Show)
     {
         const int filterKnobSize = modRateKnobSize;  // Rotary width matches Rate/Depth/Phase
-        const int filterKnobGap = 8;
+        const int filterKnobGap = 28;                // Wider gap so the full "Resonance" label fits
+        const int filterLabelW = 62;                 // Label wider than the knob to show "Resonance" uncut
         const int filterComboW = 90;
         const int filterComboH = 20;
         int filterPairLeft = lfo1CentreX - (2 * filterKnobSize + filterKnobGap) / 2;  // Center pair under Filter button
         int resX = filterPairLeft + filterKnobSize + filterKnobGap;
-        parentEditor.modFilter1CutoffLabel.setBounds(filterPairLeft, lfo1CurrentY, filterKnobSize, modLabelHeight);
-        parentEditor.modFilter1ResonanceLabel.setBounds(resX, lfo1CurrentY, filterKnobSize, modLabelHeight);
+        const int cutoffCentre = filterPairLeft + filterKnobSize / 2;
+        const int resCentre = resX + filterKnobSize / 2;
+        // Labels are centred on each knob but wider than it, so long words ("Resonance") aren't clipped.
+        parentEditor.modFilter1CutoffLabel.setBounds(cutoffCentre - filterLabelW / 2, lfo1CurrentY, filterLabelW, modLabelHeight);
+        parentEditor.modFilter1ResonanceLabel.setBounds(resCentre - filterLabelW / 2, lfo1CurrentY, filterLabelW, modLabelHeight);
         lfo1CurrentY += modLabelHeight + modLabelGap;
         parentEditor.modFilter1CutoffSlider.setBounds(filterPairLeft, lfo1CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
         parentEditor.modFilter1ResonanceSlider.setBounds(resX, lfo1CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
@@ -1575,13 +1579,17 @@ void ModulationPageComponent::resized()
     if (modFilter2Show)
     {
         const int filterKnobSize = modRateKnobSize;  // Rotary width matches Rate/Depth/Phase
-        const int filterKnobGap = 8;
+        const int filterKnobGap = 28;                // Wider gap so the full "Resonance" label fits
+        const int filterLabelW = 62;                 // Label wider than the knob to show "Resonance" uncut
         const int filterComboW = 90;
         const int filterComboH = 20;
         int filterPairLeft = lfo2CentreX - (2 * filterKnobSize + filterKnobGap) / 2;  // Center pair under Filter button
         int resX = filterPairLeft + filterKnobSize + filterKnobGap;
-        parentEditor.modFilter2CutoffLabel.setBounds(filterPairLeft, lfo2CurrentY, filterKnobSize, modLabelHeight);
-        parentEditor.modFilter2ResonanceLabel.setBounds(resX, lfo2CurrentY, filterKnobSize, modLabelHeight);
+        const int cutoffCentre = filterPairLeft + filterKnobSize / 2;
+        const int resCentre = resX + filterKnobSize / 2;
+        // Labels are centred on each knob but wider than it, so long words ("Resonance") aren't clipped.
+        parentEditor.modFilter2CutoffLabel.setBounds(cutoffCentre - filterLabelW / 2, lfo2CurrentY, filterLabelW, modLabelHeight);
+        parentEditor.modFilter2ResonanceLabel.setBounds(resCentre - filterLabelW / 2, lfo2CurrentY, filterLabelW, modLabelHeight);
         lfo2CurrentY += modLabelHeight + modLabelGap;
         parentEditor.modFilter2CutoffSlider.setBounds(filterPairLeft, lfo2CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
         parentEditor.modFilter2ResonanceSlider.setBounds(resX, lfo2CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
@@ -3884,23 +3892,17 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter1ModeCombo.addItem(safeString("Band Pass"), 2);
     modFilter1ModeCombo.addItem(safeString("High Pass"), 3);
     modFilter1ModeCombo.setSelectedId(1);
-    modFilter1ModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        audioProcessor.getValueTreeState(), "modFilter1Mode", modFilter1ModeCombo);
     modFilter1CutoffSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     modFilter1CutoffSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     modFilter1CutoffSlider.setTextValueSuffix(" Hz");
-    modFilter1CutoffAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getValueTreeState(), "modFilter1Cutoff", modFilter1CutoffSlider);
     modFilter1ResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     modFilter1ResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
-    modFilter1ResonanceAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getValueTreeState(), "modFilter1Resonance", modFilter1ResonanceSlider);
     warmSaturationMod1Button.setButtonText(safeString("Warm Saturation"));
-    warmSaturationMod1Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        audioProcessor.getValueTreeState(), "warmSaturationMod1", warmSaturationMod1Button);
+    // Cutoff/Resonance/Mode/WarmSat attachments are created in rebuildLinkedFilterAttachments()
+    // (called below and on every link toggle) so they can point at master or own params.
     modFilter1ModeLabel.setText(safeString("Mode"), juce::dontSendNotification);
     modFilter1CutoffLabel.setText(safeString("Cutoff"), juce::dontSendNotification);
-    modFilter1ResonanceLabel.setText(safeString("Res"), juce::dontSendNotification);
+    modFilter1ResonanceLabel.setText(safeString("Resonance"), juce::dontSendNotification);
     modFilter1ModeLabel.setJustificationType(juce::Justification::centred);
     modFilter1ModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     modFilter1ModeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
@@ -3918,23 +3920,15 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter2ModeCombo.addItem(safeString("Band Pass"), 2);
     modFilter2ModeCombo.addItem(safeString("High Pass"), 3);
     modFilter2ModeCombo.setSelectedId(1);
-    modFilter2ModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        audioProcessor.getValueTreeState(), "modFilter2Mode", modFilter2ModeCombo);
     modFilter2CutoffSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     modFilter2CutoffSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     modFilter2CutoffSlider.setTextValueSuffix(" Hz");
-    modFilter2CutoffAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getValueTreeState(), "modFilter2Cutoff", modFilter2CutoffSlider);
     modFilter2ResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     modFilter2ResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
-    modFilter2ResonanceAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getValueTreeState(), "modFilter2Resonance", modFilter2ResonanceSlider);
     warmSaturationMod2Button.setButtonText(safeString("Warm Saturation"));
-    warmSaturationMod2Attachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        audioProcessor.getValueTreeState(), "warmSaturationMod2", warmSaturationMod2Button);
     modFilter2ModeLabel.setText(safeString("Mode"), juce::dontSendNotification);
     modFilter2CutoffLabel.setText(safeString("Cutoff"), juce::dontSendNotification);
-    modFilter2ResonanceLabel.setText(safeString("Res"), juce::dontSendNotification);
+    modFilter2ResonanceLabel.setText(safeString("Resonance"), juce::dontSendNotification);
     modFilter2ModeLabel.setJustificationType(juce::Justification::centred);
     modFilter2ModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     modFilter2ModeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
@@ -3945,29 +3939,11 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter2ResonanceLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     modFilter2ResonanceLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
-    // While linked, user edits on the mod page must update the master filter. We intentionally do not
-    // use APVTS parameter listeners on the mod parameters: host automation on those IDs was pushing
-    // back onto the master via setValueNotifyingHost and fighting main-filter automation.
-    modFilter1ModeCombo.onChange = [this]()
-    {
-        if (isSyncingFilterParams) return;
-        if (safeGetParam("modFilter1LinkToMaster") <= 0.5f) return;
-        const int id = modFilter1ModeCombo.getSelectedId();
-        if (id > 0 && filterModeCombo.getSelectedId() != id)
-            filterModeCombo.setSelectedId(id, juce::sendNotificationSync);
-    };
-    modFilter2ModeCombo.onChange = [this]()
-    {
-        if (isSyncingFilterParams) return;
-        if (safeGetParam("modFilter2LinkToMaster") <= 0.5f) return;
-        const int id = modFilter2ModeCombo.getSelectedId();
-        if (id > 0 && filterModeCombo.getSelectedId() != id)
-            filterModeCombo.setSelectedId(id, juce::sendNotificationSync);
-    };
-    modFilter1CutoffSlider.addListener(this);
-    modFilter1ResonanceSlider.addListener(this);
-    modFilter2CutoffSlider.addListener(this);
-    modFilter2ResonanceSlider.addListener(this);
+    // Point the mod-filter knobs at the master params (if linked) or their own params (if not).
+    // Re-run on every link toggle via syncLinkedFilterParams(). No onChange/setValueNotifyingHost
+    // sync is needed any more: a linked filter literally shares the master's parameter, so one
+    // automation lane drives both knobs and moving either edits the same param.
+    rebuildLinkedFilterAttachments();
     // While linked, mod-tab Warm Saturation toggle must push to warmSaturationMaster.
     // buttonStateChanged() handles the push; without these listeners the mod toggle
     // updates only warmSaturationMod*, and the next master-side mirror reverts the visual.
@@ -5213,11 +5189,10 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     //==============================================================================
     // -- Register APVTS Listeners for Bidirectional Filter Sync --
     {
+        // Only the link toggles need a listener: when one flips, we repoint that filter's knob
+        // attachments at the master or its own params. Linked knobs share the master parameter
+        // directly, so master-filter changes propagate to them with no extra listening.
         auto& vts = audioProcessor.getValueTreeState();
-        vts.addParameterListener("filterMode", this);
-        vts.addParameterListener("filterCutoff", this);
-        vts.addParameterListener("filterResonance", this);
-        vts.addParameterListener("warmSaturationMaster", this);
         vts.addParameterListener("modFilter1LinkToMaster", this);
         vts.addParameterListener("modFilter2LinkToMaster", this);
     }
@@ -5260,10 +5235,6 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
     // Remove APVTS filter sync listeners
     {
         auto& vts = audioProcessor.getValueTreeState();
-        vts.removeParameterListener("filterMode", this);
-        vts.removeParameterListener("filterCutoff", this);
-        vts.removeParameterListener("filterResonance", this);
-        vts.removeParameterListener("warmSaturationMaster", this);
         vts.removeParameterListener("modFilter1LinkToMaster", this);
         vts.removeParameterListener("modFilter2LinkToMaster", this);
     }
@@ -5412,124 +5383,67 @@ void SpaceDustAudioProcessorEditor::parameterChanged(const juce::String& paramet
     });
 }
 
-void SpaceDustAudioProcessorEditor::mirrorMasterFilterWidgetsToLinkedModPages(bool link1, bool link2)
+void SpaceDustAudioProcessorEditor::rebuildLinkedFilterAttachments()
 {
-    if (link1)
-    {
-        modFilter1ModeCombo.setSelectedId(filterModeCombo.getSelectedId(), juce::dontSendNotification);
-        modFilter1CutoffSlider.setValue(filterCutoffSlider.getValue(), juce::dontSendNotification);
-        modFilter1ResonanceSlider.setValue(filterResonanceSlider.getValue(), juce::dontSendNotification);
-        warmSaturationMod1Button.setToggleState(warmSaturationMasterButton.getToggleState(), juce::dontSendNotification);
-    }
-    if (link2)
-    {
-        modFilter2ModeCombo.setSelectedId(filterModeCombo.getSelectedId(), juce::dontSendNotification);
-        modFilter2CutoffSlider.setValue(filterCutoffSlider.getValue(), juce::dontSendNotification);
-        modFilter2ResonanceSlider.setValue(filterResonanceSlider.getValue(), juce::dontSendNotification);
-        warmSaturationMod2Button.setToggleState(warmSaturationMasterButton.getToggleState(), juce::dontSendNotification);
-    }
+    auto& vts = audioProcessor.getValueTreeState();
+    const bool link1 = safeGetParam("modFilter1LinkToMaster") > 0.5f;
+    const bool link2 = safeGetParam("modFilter2LinkToMaster") > 0.5f;
+
+    using SliderAtt = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using ComboAtt  = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
+    using ButtonAtt = juce::AudioProcessorValueTreeState::ButtonAttachment;
+
+    auto setSlider = [&](std::unique_ptr<SliderAtt>& att, juce::Slider& s, const juce::String& id)
+    { att.reset(); att = std::make_unique<SliderAtt>(vts, id, s); };
+    auto setCombo = [&](std::unique_ptr<ComboAtt>& att, juce::ComboBox& c, const juce::String& id)
+    { att.reset(); att = std::make_unique<ComboAtt>(vts, id, c); };
+    auto setButton = [&](std::unique_ptr<ButtonAtt>& att, juce::Button& b, const juce::String& id)
+    { att.reset(); att = std::make_unique<ButtonAtt>(vts, id, b); };
+
+    // Linked  -> attach to the MASTER filter params, so the linked filter is literally the same
+    //            automatable parameter as the master (one automation lane moves both knobs;
+    //            moving either knob edits the same param).
+    // Unlinked -> attach to the filter's OWN params, for fully independent automation.
+    // Recreating an attachment only reads the target param to set the widget; it never writes a
+    // param, so this is safe to call any time and never re-enters the host's automation engine.
+    setCombo (modFilter1ModeAttachment,      modFilter1ModeCombo,       link1 ? "filterMode"           : "modFilter1Mode");
+    setSlider(modFilter1CutoffAttachment,    modFilter1CutoffSlider,    link1 ? "filterCutoff"         : "modFilter1Cutoff");
+    setSlider(modFilter1ResonanceAttachment, modFilter1ResonanceSlider, link1 ? "filterResonance"      : "modFilter1Resonance");
+    setButton(warmSaturationMod1Attachment,  warmSaturationMod1Button,  link1 ? "warmSaturationMaster" : "warmSaturationMod1");
+
+    setCombo (modFilter2ModeAttachment,      modFilter2ModeCombo,       link2 ? "filterMode"           : "modFilter2Mode");
+    setSlider(modFilter2CutoffAttachment,    modFilter2CutoffSlider,    link2 ? "filterCutoff"         : "modFilter2Cutoff");
+    setSlider(modFilter2ResonanceAttachment, modFilter2ResonanceSlider, link2 ? "filterResonance"      : "modFilter2Resonance");
+    setButton(warmSaturationMod2Attachment,  warmSaturationMod2Button,  link2 ? "warmSaturationMaster" : "warmSaturationMod2");
 }
 
 void SpaceDustAudioProcessorEditor::syncLinkedFilterParams(const juce::String& parameterID, float /*newValue*/)
 {
-    if (isSyncingFilterParams) return;
-    isSyncingFilterParams = true;
-
-    auto& apvts = audioProcessor.getValueTreeState();
-    const bool link1 = safeGetParam("modFilter1LinkToMaster") > 0.5f;
-    const bool link2 = safeGetParam("modFilter2LinkToMaster") > 0.5f;
-
-    struct ParamMapping { const char* master; const char* mod1; const char* mod2; };
-    static const ParamMapping mappings[] = {
-        { "filterMode",             "modFilter1Mode",      "modFilter2Mode" },
-        { "filterCutoff",           "modFilter1Cutoff",    "modFilter2Cutoff" },
-        { "filterResonance",        "modFilter1Resonance", "modFilter2Resonance" },
-        { "warmSaturationMaster",   "warmSaturationMod1",  "warmSaturationMod2" },
-    };
-
-    auto syncNormalizedMasterToTarget = [&](const juce::String& masterId, const juce::String& targetId)
-    {
-        auto* src = apvts.getParameter(masterId);
-        auto* tgt = apvts.getParameter(targetId);
-        if (src == nullptr || tgt == nullptr) return;
-        const float n = src->getValue();
-        if (std::abs(tgt->getValue() - n) > 1.0e-5f)
-            tgt->setValueNotifyingHost(n);
-    };
-
-    if (parameterID == "modFilter1LinkToMaster")
-    {
-        // Only pull master values into the mod filter when the link is being turned ON.
-        // When unlinking (or restoring an unlinked preset), the mod filter must keep its
-        // own saved mode/cutoff/res — otherwise it gets clobbered by the master's values.
-        if (link1)
-            for (auto& m : mappings)
-                syncNormalizedMasterToTarget(m.master, m.mod1);
-    }
-    else if (parameterID == "modFilter2LinkToMaster")
-    {
-        if (link2)
-            for (auto& m : mappings)
-                syncNormalizedMasterToTarget(m.master, m.mod2);
-    }
-    else if (parameterID == "filterMode" || parameterID == "filterCutoff" || parameterID == "filterResonance"
-             || parameterID == "warmSaturationMaster")
-    {
-        if (link1 || link2)
-            mirrorMasterFilterWidgetsToLinkedModPages(link1, link2);
-    }
-
-    isSyncingFilterParams = false;
+    // The only thing to handle now is a "Link to Master" toggle flipping: repoint that filter's
+    // knobs at the master params (linked) or its own params (unlinked). Master-filter edits reach
+    // a linked knob automatically because the knob shares the master parameter. No param is ever
+    // written from here, so nothing can re-enter Live's automation pass.
+    if (parameterID == "modFilter1LinkToMaster" || parameterID == "modFilter2LinkToMaster")
+        rebuildLinkedFilterAttachments();
 }
 
 //==============================================================================
 // -- Slider Listener (linked mod filter -> master, pitch bend snap-back) --
 
-void SpaceDustAudioProcessorEditor::sliderDragStarted(juce::Slider* slider)
+void SpaceDustAudioProcessorEditor::sliderDragStarted(juce::Slider* /*slider*/)
 {
-    linkedModFilterDragSource = nullptr;
-    auto& apvts = audioProcessor.getValueTreeState();
-
-    if (slider == &modFilter1CutoffSlider || slider == &modFilter1ResonanceSlider)
-    {
-        if (safeGetParam("modFilter1LinkToMaster") > 0.5f)
-            linkedModFilterDragSource = slider;
-    }
-    else if (slider == &modFilter2CutoffSlider || slider == &modFilter2ResonanceSlider)
-    {
-        if (safeGetParam("modFilter2LinkToMaster") > 0.5f)
-            linkedModFilterDragSource = slider;
-    }
+    // No-op: linked mod-filter knobs share the master parameter via their attachment, so there
+    // is no drag-driven mod->master push to arm here.
 }
 
-void SpaceDustAudioProcessorEditor::sliderValueChanged(juce::Slider* slider)
+void SpaceDustAudioProcessorEditor::sliderValueChanged(juce::Slider* /*slider*/)
 {
-    if (isBeingDestroyed.load() || isSyncingFilterParams) return;
-    if (slider != linkedModFilterDragSource) return;
-
-    auto& apvts = audioProcessor.getValueTreeState();
-
-    auto pushModToMaster = [&](const char* masterId, const char* modId)
-    {
-        auto* m = apvts.getParameter(masterId);
-        auto* r = apvts.getParameter(modId);
-        if (m == nullptr || r == nullptr) return;
-        const float n = r->getValue();
-        if (std::abs(m->getValue() - n) > 1.0e-5f)
-            m->setValueNotifyingHost(n);
-    };
-
-    if (slider == &modFilter1CutoffSlider)       pushModToMaster("filterCutoff", "modFilter1Cutoff");
-    else if (slider == &modFilter1ResonanceSlider) pushModToMaster("filterResonance", "modFilter1Resonance");
-    else if (slider == &modFilter2CutoffSlider)    pushModToMaster("filterCutoff", "modFilter2Cutoff");
-    else if (slider == &modFilter2ResonanceSlider) pushModToMaster("filterResonance", "modFilter2Resonance");
+    // No-op: mod-filter <-> master coupling is handled by attachment retargeting
+    // (see rebuildLinkedFilterAttachments), not by pushing values between parameters.
 }
 
 void SpaceDustAudioProcessorEditor::sliderDragEnded(juce::Slider* slider)
 {
-    if (slider == linkedModFilterDragSource)
-        linkedModFilterDragSource = nullptr;
-
     if (slider == &pitchBendSlider)
     {
         // Trigger processor-based ramp: smooth linear return to 0 over 0.05s (no stepped sound)
@@ -5555,29 +5469,10 @@ void SpaceDustAudioProcessorEditor::sliderDragEnded(juce::Slider* slider)
 
 void SpaceDustAudioProcessorEditor::buttonClicked(juce::Button* button)
 {
-    // Only handle clicks on the mod-tab Warm Saturation toggles. We use buttonClicked
-    // (not buttonStateChanged) so hover/mouse-over and visibility-driven state changes
-    // never trigger this — only real user clicks. The mirror function uses
-    // dontSendNotification, so master->mod widget mirroring won't loop back through here.
-    if (isBeingDestroyed.load() || button == nullptr || isSyncingFilterParams) return;
-    if (button != &warmSaturationMod1Button && button != &warmSaturationMod2Button) return;
-
-    auto& apvts = audioProcessor.getValueTreeState();
-    const char* modId = (button == &warmSaturationMod1Button) ? "warmSaturationMod1" : "warmSaturationMod2";
-    const char* linkId = (button == &warmSaturationMod1Button) ? "modFilter1LinkToMaster" : "modFilter2LinkToMaster";
-    if (safeGetParam(linkId) <= 0.5f) return;
-
-    auto* m   = apvts.getParameter("warmSaturationMaster");
-    auto* mod = apvts.getParameter(modId);
-    if (m == nullptr || mod == nullptr) return;
-
-    const float want = mod->getValue();
-    if (std::abs(m->getValue() - want) > 1.0e-5f)
-    {
-        m->beginChangeGesture();
-        m->setValueNotifyingHost(want);
-        m->endChangeGesture();
-    }
+    // No-op: the mod-tab Warm Saturation toggles are attached directly to "warmSaturationMaster"
+    // when linked (and to their own param when not), so a click edits the correct parameter with
+    // no manual mod->master push. Kept as an empty override in case future buttons need it.
+    juce::ignoreUnused(button);
 }
 
 void SpaceDustAudioProcessorEditor::buttonStateChanged(juce::Button* button)

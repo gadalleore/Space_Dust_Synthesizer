@@ -977,7 +977,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     float modFilter2Cutoff = modFilter2Link ? filterCutoffHz : safeGetParam(apvts, "modFilter2Cutoff");
     float modFilter2Resonance = modFilter2Link ? filterResonance : safeGetParam(apvts, "modFilter2Resonance");
     bool warmSaturationMod2 = modFilter2Link ? warmSaturationMaster : safeGetParam(apvts, "warmSaturationMod2") > 0.5f;
-    
+
     // Filter envelope: read directly from parameters each block (guarantees label matches decay)
     // Uses plain param ID strings to match SliderAttachment; p->get() returns exact displayed value
     float filterEnvAttack = 0.01f, filterEnvDecay = 0.8f, filterEnvRelease = 3.0f;

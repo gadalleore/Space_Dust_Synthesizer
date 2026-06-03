@@ -277,11 +277,15 @@ private:
     // Flag to prevent timerCallback from accessing components during destruction
     std::atomic<bool> isBeingDestroyed{false};
 
-    // Master / mod filter "Link to Master": sync state without fighting host automation
+    // Master / mod filter "Link to Master": when a Mod-tab filter is linked, its knobs are
+    // repointed at the MASTER filter parameters so the linked filter is literally the same
+    // automatable parameter as the master (one automation lane drives both knobs). When
+    // unlinked, the knobs point back at the filter's own params for independent automation.
+    // This deliberately avoids any param-to-param syncing (setValueNotifyingHost), which
+    // re-enters Live's automation engine and crashes it.
     bool isSyncingFilterParams = false;
     void syncLinkedFilterParams(const juce::String& parameterID, float newValue);
-    void mirrorMasterFilterWidgetsToLinkedModPages(bool link1, bool link2);
-    juce::Slider* linkedModFilterDragSource = nullptr;
+    void rebuildLinkedFilterAttachments();
 
     // Pitch bend snap-back: poll processor ramp and sync display
     bool pitchBendSnapActive{false};

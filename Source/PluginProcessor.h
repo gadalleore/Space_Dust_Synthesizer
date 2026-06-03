@@ -201,7 +201,7 @@ private:
     // the note stack desyncs from the host across a loop → wrong / stuck notes.
     bool   wasPlayingState = false;
     double lastPpqPosition = 0.0;
-    
+
     //==============================================================================
     // -- Reverb Effect State --
     SpaceDustReverb reverb_;
