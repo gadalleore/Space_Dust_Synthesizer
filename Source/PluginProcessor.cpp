@@ -2721,6 +2721,7 @@ void SpaceDustAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
             // Save persistent UI state alongside parameters
             xml->setAttribute("presetName", currentPresetName);
             xml->setAttribute("cheezeGuyActivated", cheezeGuyActivated);
+            xml->setAttribute("lastActiveTabIndex", lastActiveTabIndex);
             copyXmlToBinary(*xml, destData);
         }
     }
@@ -2760,6 +2761,7 @@ void SpaceDustAudioProcessor::setStateInformation(const void* data, int sizeInBy
             // Restore persistent UI state
             currentPresetName = xmlState->getStringAttribute("presetName", "Init");
             cheezeGuyActivated = xmlState->getBoolAttribute("cheezeGuyActivated", false);
+            lastActiveTabIndex = xmlState->getIntAttribute("lastActiveTabIndex", 0);
 
             apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
             updateVoicesWithParameters();

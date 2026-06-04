@@ -148,6 +148,8 @@ public:
     // Persistent UI state (survives editor close/reopen, saved in DAW session)
     juce::String currentPresetName { "Init" };
     bool cheezeGuyActivated = false;
+    // Last tab the user had open, so reopening the editor returns to it instead of Main.
+    int lastActiveTabIndex = 0;
 
 private:
     //==============================================================================

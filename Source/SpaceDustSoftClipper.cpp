@@ -92,13 +92,24 @@ float SpaceDustSoftClipper::clipGuitar(float x, float k, float t) const
 }
 
 //==============================================================================
-void SpaceDustSoftClipper::ensureOversampler(int factor)
+void SpaceDustSoftClipper::ensureOversampler(int factor, int requiredBlockSize)
 {
-    if (oversampler_ != nullptr && currentOversampleFactor_ == factor)
+    // The oversampler's internal buffers must cover the largest block we will feed
+    // processSamplesUp. Never go below the prepared maximum, and grow if a bigger
+    // block ever arrives (e.g. a host re-preparing at a larger size, or a block
+    // larger than maximumBlockSize). Missing this overruns the oversampler's heap
+    // buffers — ASan: heap-buffer-overflow in Oversampling::processSamplesUp.
+    const size_t neededBlock = static_cast<size_t>(
+        juce::jmax(1, requiredBlockSize, static_cast<int>(spec_.maximumBlockSize)));
+
+    if (oversampler_ != nullptr
+        && currentOversampleFactor_ == factor
+        && initializedBlockSize_ >= neededBlock)
         return;
 
     currentOversampleFactor_ = factor;
     oversampler_.reset();
+    initializedBlockSize_ = 0;
 
     if (factor <= 1)
         return;
@@ -117,8 +128,9 @@ void SpaceDustSoftClipper::ensureOversampler(int factor)
         true,
         false);
 
-    oversampler_->initProcessing(static_cast<size_t>(spec_.maximumBlockSize));
+    oversampler_->initProcessing(neededBlock);
     oversampler_->reset();
+    initializedBlockSize_ = neededBlock;
 }
 
 //==============================================================================
@@ -149,7 +161,7 @@ void SpaceDustSoftClipper::prepare(const juce::dsp::ProcessSpec& spec)
     tapeFilterL_.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
     tapeFilterR_.setType(juce::dsp::StateVariableTPTFilterType::lowpass);
 
-    ensureOversampler(params_.oversample);
+    ensureOversampler(params_.oversample, static_cast<int>(spec_.maximumBlockSize));
 }
 
 void SpaceDustSoftClipper::reset()
@@ -189,7 +201,7 @@ void SpaceDustSoftClipper::process(juce::AudioBuffer<float>& buffer)
     if (needDry)
         dryBuffer.makeCopyOf(buffer);
 
-    ensureOversampler(params_.oversample);
+    ensureOversampler(params_.oversample, numSamples);
 
     if (oversampler_ != nullptr && params_.oversample >= 2)
     {

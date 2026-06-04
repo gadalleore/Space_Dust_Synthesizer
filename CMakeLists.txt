@@ -162,7 +162,13 @@ if(ENABLE_ASAN)
         target_compile_options(SpaceDust PRIVATE /fsanitize=address /Zi)
         # ASan in MSVC requires disabling /RTC* and /INCREMENTAL; CMake handles RTC.
         target_link_options(SpaceDust PRIVATE /INCREMENTAL:NO)
-        target_compile_definitions(SpaceDust PRIVATE SPACEDUST_ASAN=1)
+        # JUCE's VST3 wrapper object is built by a separate target WITHOUT ASan, so its
+        # STL container-overflow annotations (annotate_vector/annotate_string) are off.
+        # Disable them here too or the link fails: LNK2038 mismatch '1' vs '0'.
+        # Heap-buffer-overflow / use-after-free / double-free detection is unaffected.
+        target_compile_definitions(SpaceDust PRIVATE SPACEDUST_ASAN=1
+                                   _DISABLE_STRING_ANNOTATION
+                                   _DISABLE_VECTOR_ANNOTATION)
         message(STATUS "AddressSanitizer ENABLED for SpaceDust target.")
     else()
         message(WARNING "ENABLE_ASAN currently only wired up for MSVC; ignored.")

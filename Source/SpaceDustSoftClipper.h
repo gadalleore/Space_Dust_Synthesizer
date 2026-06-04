@@ -61,6 +61,10 @@ private:
 
     std::unique_ptr<Oversampler> oversampler_;
     int currentOversampleFactor_{2};
+    // Block size the oversampler's internal buffers were initialised for. We must
+    // re-initProcessing if a larger block ever arrives, or processSamplesUp writes
+    // past those buffers (heap-buffer-overflow — confirmed via ASan 2026-06-04).
+    size_t initializedBlockSize_{0};
 
     juce::dsp::StateVariableTPTFilter<float> tapeFilterL_;
     juce::dsp::StateVariableTPTFilter<float> tapeFilterR_;
@@ -72,7 +76,7 @@ private:
     float clipTape(float x, float k, float t) const;
     float clipGuitar(float x, float k, float t) const;
 
-    void ensureOversampler(int factor);
+    void ensureOversampler(int factor, int requiredBlockSize);
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpaceDustSoftClipper)
 };

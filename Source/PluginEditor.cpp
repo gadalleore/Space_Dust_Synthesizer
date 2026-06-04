@@ -4967,6 +4967,12 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         addAndMakeVisible(tabbedComponent);
         tabbedComponent.setOpaque(false);
         tabbedComponent.getTabbedButtonBar().setOpaque(false);
+
+        // Restore the tab the user last had open (survives editor close/reopen).
+        if (tabbedComponent.getNumTabs() > 0)
+            tabbedComponent.setCurrentTabIndex(
+                juce::jlimit(0, tabbedComponent.getNumTabs() - 1,
+                             audioProcessor.lastActiveTabIndex));
         tabGlowOverlay = std::make_unique<TabGlowOverlayComponent>(*this);
         addAndMakeVisible(tabGlowOverlay.get());
         bottomTabGlowOverlay = std::make_unique<BottomTabGlowOverlayComponent>(*this);
@@ -5541,6 +5547,10 @@ void SpaceDustAudioProcessorEditor::timerCallback()
 {
     if (isBeingDestroyed.load())
         return;
+
+    // Remember the active tab so closing/reopening the editor returns here, not Main.
+    if (tabbedComponent.getNumTabs() > 0)
+        audioProcessor.lastActiveTabIndex = tabbedComponent.getCurrentTabIndex();
 
     // Pitch bend snap-back: sync display with processor ramp, then set to 0 when complete
     if (pitchBendSnapActive)
