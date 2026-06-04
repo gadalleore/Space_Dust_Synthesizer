@@ -62,7 +62,14 @@ void PresetManager::loadInitPreset()
     for (auto* param : params)
     {
         if (auto* rangedParam = dynamic_cast<juce::RangedAudioParameter*>(param))
+        {
+            // Wrap each reset in a balanced gesture. A burst of naked
+            // setValueNotifyingHost (performEdit) calls corrupts FL Studio's
+            // "Last Tweaked" tracking, which breaks subsequently-created automation.
+            rangedParam->beginChangeGesture();
             rangedParam->setValueNotifyingHost(rangedParam->getDefaultValue());
+            rangedParam->endChangeGesture();
+        }
     }
 
     currentPresetName = "Init";

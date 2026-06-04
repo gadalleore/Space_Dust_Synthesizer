@@ -309,6 +309,15 @@ void FinalEQComponent::mouseDown(const juce::MouseEvent& e)
         dragStartFreq_ = cachedFreq_[draggedBand_];
         dragStartGain_ = cachedGain_[draggedBand_];
         dragStartPos_  = pos;
+
+        // Open a balanced host-automation gesture for the params this drag will move.
+        // mouseDrag streams setValueNotifyingHost (performEdit) calls; without a
+        // surrounding begin/endChangeGesture the host receives naked, unbalanced edits.
+        // FL Studio's "Last Tweaked" tracking relies on balanced gestures to know which
+        // parameter the user touched — naked edits corrupt it, so automation lanes
+        // created for any later-tweaked parameter latch onto the wrong target.
+        if (auto* fp = apvts_.getParameter(freqId(draggedBand_))) fp->beginChangeGesture();
+        if (auto* gp = apvts_.getParameter(gainId(draggedBand_))) gp->beginChangeGesture();
     }
 }
 
@@ -326,6 +335,12 @@ void FinalEQComponent::mouseDrag(const juce::MouseEvent& e)
 
 void FinalEQComponent::mouseUp(const juce::MouseEvent&)
 {
+    // Close the gestures opened in mouseDown (balanced begin/end per drag).
+    if (draggedBand_ >= 0)
+    {
+        if (auto* fp = apvts_.getParameter(freqId(draggedBand_))) fp->endChangeGesture();
+        if (auto* gp = apvts_.getParameter(gainId(draggedBand_))) gp->endChangeGesture();
+    }
     draggedBand_ = -1;
 }
 
@@ -339,7 +354,14 @@ void FinalEQComponent::mouseWheelMove(const juce::MouseEvent& e,
     // Q only adjustable for peak bands; shelf slope via Q still works visually
     const float delta = wheel.deltaY * 0.5f;  // sensitivity
     const float newQ  = juce::jlimit(0.1f, 10.0f, cachedQ_[b] + delta);
-    setParam(qId(b), newQ);
+
+    // Balanced gesture around the single edit (see mouseDown for why this matters).
+    if (auto* qp = apvts_.getParameter(qId(b)))
+    {
+        qp->beginChangeGesture();
+        setParam(qId(b), newQ);
+        qp->endChangeGesture();
+    }
 }
 
 //==============================================================================
