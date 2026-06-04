@@ -3482,9 +3482,14 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             // Switch to the game tab
             tabbedComponent.setCurrentTabIndex(tabbedComponent.getNumTabs() - 1);
 
-            // Grab keyboard focus for arrow key controls
-            juce::Timer::callAfterDelay(100, [this]()
+            // Grab keyboard focus for arrow key controls. Guard with a SafePointer:
+            // callAfterDelay can't be cancelled, so if the editor dies within 100ms
+            // this would fire on a freed `this` (heap-use-after-free).
+            juce::Component::SafePointer<SpaceDustAudioProcessorEditor> safeThis(this);
+            juce::Timer::callAfterDelay(100, [this, safeThis]()
             {
+                if (safeThis == nullptr)
+                    return;
                 if (cheezeGuyGame != nullptr)
                     cheezeGuyGame->grabKeyboardFocus();
             });
@@ -5026,7 +5031,15 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // Defer setSize() until after constructor completes using a one-shot timer
     // This prevents resized()/paint() from firing during construction
     DBG("Space Dust: Editor ctor - Scheduling setSize() via timer");
-    juce::Timer::callAfterDelay(10, [this]() {
+    // callAfterDelay CANNOT be cancelled: if the editor is destroyed within these
+    // 10ms (host opens/closes the view quickly) the lambda fires on a freed `this`.
+    // A SafePointer goes null on destruction; check it WITHOUT dereferencing `this`
+    // first, or we read freed memory (heap-use-after-free, confirmed via ASan).
+    // (The old isBeingDestroyed flag check was itself the use-after-free.)
+    juce::Component::SafePointer<SpaceDustAudioProcessorEditor> safeThis(this);
+    juce::Timer::callAfterDelay(10, [this, safeThis]() {
+        if (safeThis == nullptr)
+            return;  // editor already gone — do not touch `this`
         DBG("Space Dust: Timer callback - About to set window size");
         #if JUCE_DEBUG
         try
