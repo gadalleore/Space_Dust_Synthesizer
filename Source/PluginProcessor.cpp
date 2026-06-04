@@ -946,6 +946,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     float osc1Level = safeGetParam(apvts, "osc1Level");
     float osc2Level = safeGetParam(apvts, "osc2Level");
     float noiseLevel = safeGetParam(apvts, "noiseLevel");
+    int noiseTypeVal = (int)safeGetParam(apvts, "noiseType");  // 0=White, 1=Pink
     
     int filterMode = (int)safeGetParam(apvts, "filterMode");
     float filterCutoffHz = 8000.0f;
@@ -1064,7 +1065,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setOsc1Pan(safeGetParam(apvts, "osc1Pan"));
             voice->setOsc2Pan(safeGetParam(apvts, "osc2Pan"));
             voice->setNoiseLevel(noiseLevel);
-            voice->setNoiseType(noiseType.load());  // Get noise type from atomic
+            voice->setNoiseType(noiseTypeVal);  // 0=White, 1=Pink (automatable param)
             float lowShelfAmount = safeGetParam(apvts, "lowShelfAmount");
             float highShelfAmount = safeGetParam(apvts, "highShelfAmount");
             voice->setLowShelfAmount(lowShelfAmount);
@@ -2829,7 +2830,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     //   - "osc2Level" (Float: 0.0 to 1.0)
     // Noise:
     //   - "noiseLevel" (Float: 0.0 to 1.0)
-    //   NOTE: noiseColor/noiseType is NOT a parameter - it's a UI-only control
+    //   - "noiseType" (Choice: White, Pink)
     // Filter:
     //   - "filterMode" (Choice: Low Pass, Band Pass, High Pass)
     //   - "filterCutoff" (Float: 20.0 to 20000.0 Hz, log-scaled)
@@ -2942,7 +2943,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"noiseLevel", 1}, "Noise Level",
             juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f),
         "noiseLevel");
-    
+
+    // Noise type (White / Pink) — a real parameter so it can be automated and saved.
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"noiseType", 1}, "Noise Type",
+            juce::StringArray(safeString("White"), safeString("Pink")), 0),
+        safeString("noiseType"));
+
     // Noise EQ: Low Shelf/Cut (affects frequencies below 200 Hz)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(

@@ -3186,17 +3186,11 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // Noise
     noiseColorCombo.addItem(safeString("White"), 1);
     noiseColorCombo.addItem(safeString("Pink"), 2);
-    // Initialize combo box to match current noiseType (0=White, 1=Pink)
-    int currentNoiseType = audioProcessor.getNoiseType();
-    noiseColorCombo.setSelectedId(currentNoiseType == 1 ? 2 : 1); // Pink=2, White=1
     noiseColorCombo.setLookAndFeel(&customLookAndFeel);
-    // Add listener to update noiseType when selection changes (noiseColor is UI-only, not a parameter)
-    noiseColorCombo.onChange = [this] {
-        int selectedId = noiseColorCombo.getSelectedId();
-        // Map combo box IDs to noise types: 1=White (0), 2=Pink (1)
-        int noiseType = (selectedId == 2) ? 1 : 0; // Pink=1, White=0
-        audioProcessor.setNoiseType(noiseType);
-    };
+    // Attach to the "noiseType" parameter (White=0, Pink=1) so it can be automated
+    // and saved like any other control. Items must be added before the attachment.
+    noiseColorAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.getValueTreeState(), "noiseType", noiseColorCombo);
     noiseColorLabel.setText(safeString("Noize Type"), juce::dontSendNotification);
     noiseColorLabel.setJustificationType(juce::Justification::centred);
     noiseColorLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue

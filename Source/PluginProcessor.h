@@ -121,10 +121,6 @@ public:
     std::atomic<float> pitchBendRampCurrentValue{0.0f};  // For UI display sync
     std::atomic<bool> pitchBendRampComplete{false};
     std::atomic<bool> pitchBendRampReset{false};  // Editor sets to reset elapsed when starting
-    
-    // Noise type getter/setter (UI-only control)
-    void setNoiseType(int type) { noiseType = type; updateVoicesWithParameters(); }
-    int getNoiseType() const { return noiseType; }
 
     /** Debug/diagnostics: times voices had to fix NaN/Inf (e.g. after investigating glitches). */
     std::uint32_t getDspSanitizeEventCount() const noexcept { return dspSanitizeEventCount.load(std::memory_order_relaxed); }
@@ -178,9 +174,6 @@ private:
     std::atomic<float> currentFilterEnvAttack{0.01f};
     std::atomic<float> currentFilterEnvDecay{0.8f};
     std::atomic<float> currentFilterEnvRelease{3.0f};
-    
-    // UI-only noise type (0=White, 1=Pink)
-    std::atomic<int> noiseType{0};  // Default to White
     
     // Reentrancy guard for filter Link sync (prevents crash from modFilter<->master feedback loop)
     std::atomic<bool> filterSyncInProgress{false};
