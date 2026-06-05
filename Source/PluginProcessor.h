@@ -178,6 +178,14 @@ private:
     // Reentrancy guard for filter Link sync (prevents crash from modFilter<->master feedback loop)
     std::atomic<bool> filterSyncInProgress{false};
 
+    // MPE zone-layout reconfig is REQUESTED from the message thread (parameterChanged on
+    // mpeMode / mpePitchBendRange) but APPLIED on the audio thread (top of processBlock),
+    // so it can't race the synth's note rendering. setZoneLayout()/enableLegacyMode()
+    // release notes and aren't thread-safe against renderNextBlock (JUCE's noteStateLock
+    // is private, so we serialise by doing the reconfig on the audio thread instead).
+    std::atomic<bool> mpeReconfigPending{false};
+    void applyPendingMpeReconfig();
+
     float pitchBendRampSamplesElapsed{0.0f};  // Audio thread only (pitch bend ramp)
     
     //==============================================================================

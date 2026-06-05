@@ -146,8 +146,10 @@ void SpaceDustSynthesiser::setMpeZoneLayoutLower(int memberChannels,
                         juce::jlimit(0, 96, notePitchBendRange),
                         juce::jlimit(0, 96, masterPitchBendRange));
 
-    // setZoneLayout() implicitly disables legacy mode.  Any currently playing
-    // notes will be released by JUCE before the new layout takes effect.
+    // setZoneLayout() implicitly disables legacy mode and releases currently-playing
+    // notes (mutates the MPE note array). MUST be called on the audio thread only —
+    // the processor defers MPE reconfig to applyPendingMpeReconfig() at the top of
+    // processBlock so this never races renderNextBlock.
     setZoneLayout(layout);
 }
 

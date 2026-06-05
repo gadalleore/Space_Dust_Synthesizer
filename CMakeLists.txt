@@ -235,3 +235,37 @@ target_link_libraries(SpaceDust
         juce::juce_recommended_warning_flags
 )
 
+#==============================================================================
+# Parameter-flood stress harness (ASan builds only). A console app that floods
+# every parameter from one thread while processBlock runs on another, to catch
+# host-automation-flood heap corruption that pluginval/the editor can't trigger.
+# Build:  cmake -B build-asan -DENABLE_ASAN=ON ; cmake --build build-asan --target SpaceDustStress
+#==============================================================================
+if(ENABLE_ASAN AND MSVC)
+    juce_add_console_app(SpaceDustStress PRODUCT_NAME "SpaceDustStress")
+    target_sources(SpaceDustStress PRIVATE tools/stress/stress_main.cpp)
+    target_compile_options(SpaceDustStress PRIVATE /fsanitize=address /Zi)
+    target_link_options(SpaceDustStress PRIVATE /INCREMENTAL:NO)
+    # Match SpaceDust's container-annotation setting so the ASan objects link.
+    target_compile_definitions(SpaceDustStress PRIVATE
+                               _DISABLE_STRING_ANNOTATION
+                               _DISABLE_VECTOR_ANNOTATION)
+    # Link the plugin's shared code (provides createPluginFilter + all DSP) + JUCE.
+    target_link_libraries(SpaceDustStress PRIVATE
+        SpaceDust
+        SpaceDustBinaryData
+        juce::juce_audio_basics
+        juce::juce_audio_devices
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        juce::juce_gui_extra)
+    message(STATUS "SpaceDustStress harness ENABLED (ASan).")
+endif()
+

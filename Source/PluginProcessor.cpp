@@ -728,6 +728,9 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     {
         synth.setCurrentPlaybackSampleRate(sampleRate);
         currentSampleRate = sampleRate;
+        // Establish the MPE layout on the first audio block (applied audio-thread-side
+        // by applyPendingMpeReconfig() so it never races note rendering).
+        mpeReconfigPending.store(true, std::memory_order_release);
         
         // Initialize LFO buffers for per-sample processing
         lfo1Buffer.setSize(1, samplesPerBlock);
@@ -1172,24 +1175,15 @@ void SpaceDustAudioProcessor::parameterChanged(const juce::String& parameterID, 
         if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter(parameterID)))
             currentFilterEnvRelease.store(juce::jlimit(0.01f, 20.0f, p->get()));
     }
-    // -- MPE mode / bend range: reconfigure the synth's MPE layout in real time --
-    else if (parameterID == juce::ParameterID{"mpeMode", 1}.getParamID())
+    // -- MPE mode / bend range: request a reconfig, APPLIED on the audio thread --
+    // parameterChanged can run on the message thread; doing the MPE zone-layout change
+    // here would race the audio thread's renderNextBlock (it releases notes / mutates the
+    // note array). Instead just flag it; processBlock applies it before rendering. See
+    // applyPendingMpeReconfig().
+    else if (parameterID == juce::ParameterID{"mpeMode", 1}.getParamID()
+          || parameterID == juce::ParameterID{"mpePitchBendRange", 1}.getParamID())
     {
-        if (newValue > 0.5f)
-            synth.setMpeZoneLayoutLower();   // Lower Zone (proper MPE spec)
-        else
-        {
-            float bendRange = safeGetParam(apvts, "mpePitchBendRange");
-            synth.setLegacyModeWithPitchBendRange(static_cast<int>(bendRange));
-        }
-    }
-    else if (parameterID == juce::ParameterID{"mpePitchBendRange", 1}.getParamID())
-    {
-        // Only applies in Legacy mode — Lower Zone has fixed 48/2 ranges.
-        auto* modeParam = dynamic_cast<juce::AudioParameterChoice*>(
-            apvts.getParameter(juce::ParameterID{"mpeMode", 1}.getParamID()));
-        if (modeParam && modeParam->getIndex() == 0)
-            synth.setLegacyModeWithPitchBendRange(static_cast<int>(newValue));
+        mpeReconfigPending.store(true, std::memory_order_release);
     }
     // Filter link params: no sync needed. updateVoicesWithParameters() reads master
     // values directly when linked, bypassing the mod filter parameters entirely.
@@ -1206,6 +1200,25 @@ void SpaceDustAudioProcessor::handleAsyncUpdate()
     // when a mod filter is linked to master, the voice uses master filter values directly.
     // No parameter-level sync is needed, which avoids setValueNotifyingHost calls
     // that were causing automation to grey out in Ableton (VST3 performEdit issue).
+}
+
+//==============================================================================
+// Applies a pending MPE zone-layout change on the AUDIO THREAD (called from the top
+// of processBlock). Doing the reconfig here — rather than in the message-thread
+// parameterChanged — keeps it serialised with renderNextBlock, since setZoneLayout()/
+// enableLegacyMode() release notes and mutate the MPE note array (not thread-safe
+// against rendering; JUCE's noteStateLock is private). Reads the current parameter
+// values atomically, so it always applies the latest mpeMode / bend range.
+void SpaceDustAudioProcessor::applyPendingMpeReconfig()
+{
+    if (! mpeReconfigPending.exchange(false, std::memory_order_acquire))
+        return;
+
+    if (safeGetParam(apvts, "mpeMode") > 0.5f)
+        synth.setMpeZoneLayoutLower();   // Lower Zone (proper MPE spec)
+    else
+        synth.setLegacyModeWithPitchBendRange(
+            static_cast<int>(safeGetParam(apvts, "mpePitchBendRange")));
 }
 
 void SpaceDustAudioProcessor::releaseResources()
@@ -1392,6 +1405,11 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // Tag this OS thread as the audio thread for the safety logger.
     // Cheap thread-local bool; entries from this thread will carry [RT] in the log.
     SAFETY_MARK_AUDIO_THREAD();
+
+    // Apply any pending MPE zone-layout reconfig HERE (audio thread), never from the
+    // message-thread parameterChanged, so it can't race note rendering. No-op unless
+    // mpeMode/mpePitchBendRange changed since the last block.
+    applyPendingMpeReconfig();
 
     //==============================================================================
     // -- CRITICAL: Bulletproof Buffer Guard for Ableton/Reaper Compatibility --
@@ -2992,7 +3010,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     // Warm saturation (Moog-style tanh saturation and resonance behavior when ON)
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"warmSaturationMaster", 1}, "Warm Saturation", false),
+            juce::ParameterID{"warmSaturationMaster", 1}, "Filter Warm Sat", false),
         "warmSaturationMaster");
     
     //==============================================================================
@@ -3390,7 +3408,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"warmSaturationMod1", 1}, "Warm Saturation", false),
+            juce::ParameterID{"warmSaturationMod1", 1}, "Mod 1 Warm Sat", false),
         "warmSaturationMod1");
     
     addParameterWithLogging(params,
@@ -3413,7 +3431,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"warmSaturationMod2", 1}, "Warm Saturation", false),
+            juce::ParameterID{"warmSaturationMod2", 1}, "Mod 2 Warm Sat", false),
         "warmSaturationMod2");
     
     //==============================================================================
