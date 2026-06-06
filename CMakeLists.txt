@@ -15,6 +15,16 @@ endif()
 
 project(SpaceDust VERSION 1.0.0)
 
+# --- Windows: statically link the MSVC C Run-Time (CRT) ---
+# Bakes VCRUNTIME140/MSVCP140 into the binaries so the plugin loads on a clean
+# Windows machine WITHOUT the "Visual C++ 2015-2022 Redistributable" installed.
+# Must be set BEFORE add_subdirectory(JUCE) below so JUCE's static libraries use
+# the same (/MT) runtime and we don't hit a CRT-mismatch link error. Relies on
+# policy CMP0091 (NEW by default since CMake 3.15; we require 3.22).
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 # Set C++ standard
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
