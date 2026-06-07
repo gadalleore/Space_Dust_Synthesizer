@@ -1458,7 +1458,15 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         buffer.clear();
         return;
     }
-    
+
+    // STANDALONE ONLY: merge the on-screen / computer-keyboard notes into the incoming
+    // MIDI before the synth consumes it. Gated on wrapperType so it is never executed in
+    // the VST3/AU plugin (where the keyboard component is never created anyway). JUCE
+    // compiles this shared code once for all formats, so the guard - not an #ifdef - is
+    // how we keep the behaviour exclusive to the Standalone build.
+    if (wrapperType == wrapperType_Standalone)
+        keyboardState.processNextMidiBuffer(midiMessages, 0, numSamples, true);
+
     juce::ScopedNoDenormals noDenormals;
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();

@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_audio_utils/juce_audio_utils.h>   // juce::MidiKeyboardComponent (Standalone keyboard)
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
 #include "SpaceDustLookAndFeel.h"
@@ -296,6 +297,14 @@ private:
 
     // TooltipWindow required for setTooltip() to display (e.g. Pan labels)
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
+
+    // STANDALONE-ONLY playable keyboard strip at the bottom of the window (mouse + QWERTY
+    // computer keys). Created only when wrapperType == wrapperType_Standalone; null in the
+    // VST3, where resized() leaves the layout untouched. Bound to processor.keyboardState
+    // (which outlives the editor). Declared after customLookAndFeel so it is destroyed
+    // before the LookAndFeel it inherits from the editor.
+    std::unique_ptr<juce::MidiKeyboardComponent> standaloneKeyboard;
+    static constexpr int standaloneKeyboardHeight = 78;
 
     //==============================================================================
     // -- Easter Egg: Cheeze Guy Game --

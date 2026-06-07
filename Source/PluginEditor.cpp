@@ -2796,6 +2796,49 @@ void SpectralPageComponent::drawLissajous(juce::Graphics& g, juce::Rectangle<int
 }
 
 //==============================================================================
+// -- Standalone playable keyboard with Z/X octave shift --
+// Standalone-only helper: a MidiKeyboardComponent that adds Z = octave down,
+// X = octave up to the default QWERTY note mapping. resetAnyKeysInUse() is called
+// before each shift so a key held across an octave change can't strand a note-on
+// (the note-off would otherwise be computed at the new octave and never match).
+namespace
+{
+    class StandaloneKeyboard : public juce::MidiKeyboardComponent
+    {
+    public:
+        StandaloneKeyboard(juce::MidiKeyboardState& s, Orientation o)
+            : juce::MidiKeyboardComponent(s, o), kbState(s) {}
+
+        bool keyPressed(const juce::KeyPress& key) override
+        {
+            const auto c = key.getTextCharacter();
+            if (c == 'z' || c == 'Z') { shiftOctave(-1); return true; }
+            if (c == 'x' || c == 'X') { shiftOctave(+1); return true; }
+            return juce::MidiKeyboardComponent::keyPressed(key);
+        }
+
+    private:
+        juce::MidiKeyboardState& kbState;
+        int baseOctave = 4;  // matches setKeyPressBaseOctave(4) in the editor ctor
+
+        void shiftOctave(int delta)
+        {
+            // Clamp so the QWERTY range (offset 0..16) stays within MIDI 0..127.
+            const int newOctave = juce::jlimit(0, 9, baseOctave + delta);
+            if (newOctave == baseOctave)
+                return;
+
+            kbState.allNotesOff(getMidiChannel());  // release anything held so it can't hang
+            baseOctave = newOctave;
+            setKeyPressBaseOctave(baseOctave);
+            // Scroll the visible keys so the new playable range is on-screen,
+            // with about one octave of context below it.
+            setLowestVisibleKey(juce::jlimit(0, 108, 12 * baseOctave - 12));
+        }
+    };
+}
+
+//==============================================================================
 // -- Constructor --
 
 SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProcessor& p)
@@ -5005,7 +5048,23 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     addAndMakeVisible(legatoGlideLabel);
     if (stereoLevelMeter != nullptr)
         addAndMakeVisible(stereoLevelMeter.get());
-    
+
+    //==============================================================================
+    // -- Standalone-only playable keyboard --
+    // In the Standalone app there's no DAW to send MIDI, so add an on-screen keyboard
+    // (also playable via the QWERTY computer keys when it has focus). Skipped entirely
+    // in the VST3 build, so the plugin UI/layout is unchanged.
+    if (audioProcessor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+    {
+        standaloneKeyboard = std::make_unique<StandaloneKeyboard>(
+            audioProcessor.keyboardState, juce::MidiKeyboardComponent::horizontalKeyboard);
+        standaloneKeyboard->setLowestVisibleKey(36);          // start at C2
+        standaloneKeyboard->setKeyPressBaseOctave(4);         // QWERTY row plays around C4
+        // Z = octave down, X = octave up (handled by StandaloneKeyboard::keyPressed)
+        standaloneKeyboard->setWantsKeyboardFocus(true);
+        addAndMakeVisible(standaloneKeyboard.get());
+    }
+
     //==============================================================================
     // -- Set Window Size (DEFERRED VIA TIMER CALLBACK) --
     // CRITICAL: In Ableton Live, setSize() immediately triggers resized()/paint()
@@ -5097,8 +5156,10 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         
         // Calculate the correct window height for tabbed interface
         // Effects tab needs extra height when Delay/Grain Delay filter is toggled on (controls must stay visible)
-        const int calculatedHeight = 857;  // Original height
-        
+        // Standalone build reserves an extra strip at the bottom for the playable keyboard.
+        const int calculatedHeight = 857                                       // Original height
+                                   + (standaloneKeyboard != nullptr ? standaloneKeyboardHeight : 0);
+
         DBG("Space Dust: Timer callback - Calling setSize(1120, " + juce::String(calculatedHeight) + ")");
         try
         {
@@ -5180,7 +5241,20 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         {
             DBG("Space Dust: Unknown exception in setResizable()");
         }
-        
+
+        // Standalone: give the on-screen keyboard focus so the QWERTY computer keys work
+        // immediately, without the user having to click a note first. (Guarded SafePointer
+        // re-grab in case the window isn't on-screen yet at this point.)
+        if (standaloneKeyboard != nullptr)
+        {
+            standaloneKeyboard->grabKeyboardFocus();
+            juce::Component::SafePointer<SpaceDustAudioProcessorEditor> kbSafe(this);
+            juce::Timer::callAfterDelay(250, [kbSafe]() {
+                if (kbSafe != nullptr && kbSafe->standaloneKeyboard != nullptr)
+                    kbSafe->standaloneKeyboard->grabKeyboardFocus();
+            });
+        }
+
         DBG("Space Dust: Timer callback - Window size set successfully");
         #if JUCE_DEBUG
         try
@@ -6072,16 +6146,24 @@ void SpaceDustAudioProcessorEditor::resized()
     const int actualMasterGap = 40;  // Reduced by 50% - actual gap between tab and Master
     
     // TabbedComponent: left side, below title, leaving space for Master on right
+    // Standalone reserves a strip at the very bottom for the playable keyboard; the rest
+    // of the layout uses the height above it. In the plugin (no keyboard) this is 0 and
+    // the layout is identical to before.
+    const int kbStripH = (standaloneKeyboard != nullptr) ? standaloneKeyboardHeight : 0;
+    const int layoutHeight = getHeight() - kbStripH;
+
     // Expand tab width by 10%
     int tabbedWidth = static_cast<int>((getWidth() - masterWidth - masterGap) * 0.9 * 1.1);
-    tabbedComponent.setBounds(0, titleHeight, tabbedWidth, getHeight() - titleHeight);
+    tabbedComponent.setBounds(0, titleHeight, tabbedWidth, layoutHeight - titleHeight);
     // Tab glow overlay: sits on top of tab bar so parabolic glow shines through (drawn above tabs)
     const int tabBarHeight = 36;
     const int bottomGlowHeight = 90;
     if (tabGlowOverlay != nullptr)
         tabGlowOverlay->setBounds(0, titleHeight, tabbedWidth, tabBarHeight);
     if (bottomTabGlowOverlay != nullptr)
-        bottomTabGlowOverlay->setBounds(0, getHeight() - bottomGlowHeight, tabbedWidth, bottomGlowHeight);
+        bottomTabGlowOverlay->setBounds(0, layoutHeight - bottomGlowHeight, tabbedWidth, bottomGlowHeight);
+    if (standaloneKeyboard != nullptr)
+        standaloneKeyboard->setBounds(0, layoutHeight, getWidth(), kbStripH);
     
     //==============================================================================
     // -- Master Section Layout (Always Visible, Right Side) --

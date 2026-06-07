@@ -147,6 +147,13 @@ public:
     // Last tab the user had open, so reopening the editor returns to it instead of Main.
     int lastActiveTabIndex = 0;
 
+    // On-screen / computer-keyboard MIDI input for the STANDALONE build (dev auditioning
+    // without a DAW). The editor adds a juce::MidiKeyboardComponent bound to this state
+    // ONLY when wrapperType == wrapperType_Standalone; processBlock merges its notes into
+    // the MIDI stream. In a plugin (VST3) no keys are ever pressed, so the merge is a
+    // harmless no-op. Lives in the processor so it survives editor open/close.
+    juce::MidiKeyboardState keyboardState;
+
 private:
     //==============================================================================
     // -- Parameter Management --
