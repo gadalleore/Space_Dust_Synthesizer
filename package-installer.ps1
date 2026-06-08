@@ -93,15 +93,22 @@ if ($Sign) {
     } else {
         foreach ($d in @(
             $env:DLIB_PATH,
+            # winget Microsoft.Azure.TrustedSigningClientTools installs HERE (per-user):
+            "$env:LOCALAPPDATA\Microsoft\MicrosoftTrustedSigningClientTools\Azure.CodeSigning.Dlib.dll",
             "$env:ProgramFiles\Microsoft\Azure.CodeSigning.Dlib\Azure.CodeSigning.Dlib.dll",
             "${env:ProgramFiles(x86)}\Microsoft\Azure.CodeSigning.Dlib\Azure.CodeSigning.Dlib.dll"
         )) {
             if ($d -and (Test-Path $d)) { $dlib = $d; break }
         }
         if (-not $dlib) {
-            $dlib = Get-ChildItem "$env:ProgramFiles\Microsoft*\Azure.CodeSigning.Dlib.dll" -Recurse `
-                        -ErrorAction SilentlyContinue |
-                    Select-Object -First 1 -ExpandProperty FullName
+            foreach ($root in @("$env:LOCALAPPDATA\Microsoft", "$env:ProgramFiles", "${env:ProgramFiles(x86)}")) {
+                if (Test-Path $root) {
+                    $hit = Get-ChildItem $root -Recurse -Filter "Azure.CodeSigning.Dlib.dll" `
+                               -ErrorAction SilentlyContinue |
+                           Select-Object -First 1 -ExpandProperty FullName
+                    if ($hit) { $dlib = $hit; break }
+                }
+            }
         }
     }
     if (-not $dlib) {
