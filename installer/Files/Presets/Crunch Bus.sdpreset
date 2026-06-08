@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<PARAMETERS presetName="The Single Cigarette">
+<PARAMETERS presetName="Crunch Bus" cheezeGuyActivated="0">
   <PARAM id="analogDrift" value="0.0"/>
   <PARAM id="bitCrusherAmount" value="0.5"/>
   <PARAM id="bitCrusherEnabled" value="0.0"/>
@@ -10,12 +10,12 @@
   <PARAM id="compressorAttack" value="2.999999761581421"/>
   <PARAM id="compressorAutoRelease" value="0.0"/>
   <PARAM id="compressorEnabled" value="1.0"/>
-  <PARAM id="compressorMakeup" value="10.0"/>
-  <PARAM id="compressorMix" value="0.8299999833106995"/>
-  <PARAM id="compressorRatio" value="1.5"/>
+  <PARAM id="compressorMakeup" value="6.200000286102295"/>
+  <PARAM id="compressorMix" value="1.0"/>
+  <PARAM id="compressorRatio" value="4.0"/>
   <PARAM id="compressorRelease" value="99.99999237060547"/>
   <PARAM id="compressorSoftClip" value="0.0"/>
-  <PARAM id="compressorThreshold" value="-13.09999847412109"/>
+  <PARAM id="compressorThreshold" value="-12.0"/>
   <PARAM id="compressorType" value="0.0"/>
   <PARAM id="delayDecay" value="40.0"/>
   <PARAM id="delayDryWet" value="50.0"/>
@@ -31,29 +31,29 @@
   <PARAM id="delaySync" value="1.0"/>
   <PARAM id="delayTripletEnabled" value="0.0"/>
   <PARAM id="delayTripletStraightToggle" value="0.0"/>
-  <PARAM id="envAttack" value="0.009999999776482582"/>
-  <PARAM id="envDecay" value="0.6299999952316284"/>
-  <PARAM id="envRelease" value="0.1270000040531158"/>
-  <PARAM id="envSustain" value="0.6800000071525574"/>
-  <PARAM id="filterCutoff" value="179.0"/>
-  <PARAM id="filterEnvAmount" value="36.90000915527344"/>
-  <PARAM id="filterEnvAttack" value="0.01099999994039536"/>
-  <PARAM id="filterEnvDecay" value="0.3589999973773956"/>
-  <PARAM id="filterEnvRelease" value="3.986000061035156"/>
+  <PARAM id="envAttack" value="0.0130000002682209"/>
+  <PARAM id="envDecay" value="0.2000000178813934"/>
+  <PARAM id="envRelease" value="0.1610000133514404"/>
+  <PARAM id="envSustain" value="0.699999988079071"/>
+  <PARAM id="filterCutoff" value="195.0"/>
+  <PARAM id="filterEnvAmount" value="34.30000305175781"/>
+  <PARAM id="filterEnvAttack" value="0.1730000078678131"/>
+  <PARAM id="filterEnvDecay" value="0.2120000123977661"/>
+  <PARAM id="filterEnvRelease" value="1.425999999046326"/>
   <PARAM id="filterEnvSustain" value="0.699999988079071"/>
   <PARAM id="filterMode" value="0.0"/>
-  <PARAM id="filterResonance" value="0.08999999612569809"/>
-  <PARAM id="finalEQB1Freq" value="65.0"/>
-  <PARAM id="finalEQB1Gain" value="-15.0"/>
+  <PARAM id="filterResonance" value="0.04999999701976776"/>
+  <PARAM id="finalEQB1Freq" value="103.0"/>
+  <PARAM id="finalEQB1Gain" value="-8.239999771118164"/>
   <PARAM id="finalEQB1Q" value="0.7100000977516174"/>
-  <PARAM id="finalEQB2Freq" value="235.0"/>
-  <PARAM id="finalEQB2Gain" value="-7.78000020980835"/>
+  <PARAM id="finalEQB2Freq" value="250.0"/>
+  <PARAM id="finalEQB2Gain" value="0.0"/>
   <PARAM id="finalEQB2Q" value="0.9999999403953552"/>
-  <PARAM id="finalEQB3Freq" value="1726.0"/>
-  <PARAM id="finalEQB3Gain" value="2.75"/>
+  <PARAM id="finalEQB3Freq" value="999.9999389648438"/>
+  <PARAM id="finalEQB3Gain" value="0.0"/>
   <PARAM id="finalEQB3Q" value="0.9999999403953552"/>
-  <PARAM id="finalEQB4Freq" value="4446.0"/>
-  <PARAM id="finalEQB4Gain" value="1.829999923706055"/>
+  <PARAM id="finalEQB4Freq" value="3892.0"/>
+  <PARAM id="finalEQB4Gain" value="-3.890000343322754"/>
   <PARAM id="finalEQB4Q" value="0.9999999403953552"/>
   <PARAM id="finalEQB5Freq" value="10000.0009765625"/>
   <PARAM id="finalEQB5Gain" value="0.0"/>
@@ -106,11 +106,11 @@
   <PARAM id="lofiAmount" value="0.0"/>
   <PARAM id="lofiEnabled" value="0.0"/>
   <PARAM id="lowShelfAmount" value="0.0"/>
-  <PARAM id="masterVolume" value="0.3700000047683716"/>
-  <PARAM id="modFilter1Cutoff" value="28.0"/>
+  <PARAM id="masterVolume" value="0.6599999666213989"/>
+  <PARAM id="modFilter1Cutoff" value="8000.00048828125"/>
   <PARAM id="modFilter1LinkToMaster" value="1.0"/>
   <PARAM id="modFilter1Mode" value="0.0"/>
-  <PARAM id="modFilter1Resonance" value="0.03999999910593033"/>
+  <PARAM id="modFilter1Resonance" value="0.2999999821186066"/>
   <PARAM id="modFilter1Show" value="0.0"/>
   <PARAM id="modFilter2Cutoff" value="8000.00048828125"/>
   <PARAM id="modFilter2LinkToMaster" value="1.0"/>
@@ -122,15 +122,15 @@
   <PARAM id="mpePressureDepth" value="100.0"/>
   <PARAM id="mpeTimbreDepth" value="100.0"/>
   <PARAM id="noiseLevel" value="0.0"/>
-  <PARAM id="osc1CoarseTune" value="0.0"/>
-  <PARAM id="osc1Detune" value="2.100002288818359"/>
+  <PARAM id="osc1CoarseTune" value="7.0"/>
+  <PARAM id="osc1Detune" value="-5.5"/>
   <PARAM id="osc1Level" value="0.7999999523162842"/>
-  <PARAM id="osc1Pan" value="0.1999999284744263"/>
+  <PARAM id="osc1Pan" value="0.0"/>
   <PARAM id="osc1Waveform" value="2.0"/>
   <PARAM id="osc2CoarseTune" value="0.0"/>
-  <PARAM id="osc2Detune" value="-2.5"/>
+  <PARAM id="osc2Detune" value="4.600002288818359"/>
   <PARAM id="osc2Level" value="0.7999999523162842"/>
-  <PARAM id="osc2Pan" value="-0.1500000357627869"/>
+  <PARAM id="osc2Pan" value="0.0"/>
   <PARAM id="osc2Waveform" value="2.0"/>
   <PARAM id="phaserCentre" value="400.0"/>
   <PARAM id="phaserDepth" value="0.699999988079071"/>
@@ -144,9 +144,9 @@
   <PARAM id="phaserVintageMode" value="0.0"/>
   <PARAM id="pitchBend" value="0.0"/>
   <PARAM id="pitchBendAmount" value="0.0"/>
-  <PARAM id="pitchEnvAmount" value="0.0"/>
-  <PARAM id="pitchEnvPitch" value="0.0"/>
-  <PARAM id="pitchEnvTime" value="0.0"/>
+  <PARAM id="pitchEnvAmount" value="100.0"/>
+  <PARAM id="pitchEnvPitch" value="24.0"/>
+  <PARAM id="pitchEnvTime" value="0.00800000037997961"/>
   <PARAM id="reverbDecayTime" value="16.0"/>
   <PARAM id="reverbEnabled" value="0.0"/>
   <PARAM id="reverbFilterHPCutoff" value="99.99999237060547"/>
@@ -157,16 +157,16 @@
   <PARAM id="reverbFilterWarmSaturation" value="0.0"/>
   <PARAM id="reverbType" value="0.0"/>
   <PARAM id="reverbWetMix" value="0.3299999833106995"/>
-  <PARAM id="softClipperDrive" value="0.0"/>
+  <PARAM id="softClipperDrive" value="0.6899999976158142"/>
   <PARAM id="softClipperEnabled" value="1.0"/>
-  <PARAM id="softClipperKnee" value="1.0"/>
-  <PARAM id="softClipperMix" value="0.4199999868869781"/>
+  <PARAM id="softClipperKnee" value="0.4099999964237213"/>
+  <PARAM id="softClipperMix" value="1.0"/>
   <PARAM id="softClipperMode" value="4.0"/>
-  <PARAM id="softClipperOversample" value="3.0"/>
+  <PARAM id="softClipperOversample" value="1.0"/>
   <PARAM id="subOscCoarse" value="12.0"/>
   <PARAM id="subOscLevel" value="0.5"/>
   <PARAM id="subOscOn" value="1.0"/>
-  <PARAM id="subOscWaveform" value="2.0"/>
+  <PARAM id="subOscWaveform" value="1.0"/>
   <PARAM id="tranceGateAttack" value="1.99999988079071"/>
   <PARAM id="tranceGateEnabled" value="0.0"/>
   <PARAM id="tranceGateMix" value="1.0"/>
@@ -198,8 +198,8 @@
   <PARAM id="transientMix" value="0.5"/>
   <PARAM id="transientPostEffect" value="0.0"/>
   <PARAM id="transientType" value="0.0"/>
-  <PARAM id="voiceMode" value="0.0"/>
-  <PARAM id="warmSaturationMaster" value="1.0"/>
-  <PARAM id="warmSaturationMod1" value="1.0"/>
+  <PARAM id="voiceMode" value="1.0"/>
+  <PARAM id="warmSaturationMaster" value="0.0"/>
+  <PARAM id="warmSaturationMod1" value="0.0"/>
   <PARAM id="warmSaturationMod2" value="0.0"/>
 </PARAMETERS>

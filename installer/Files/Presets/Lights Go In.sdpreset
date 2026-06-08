@@ -65,7 +65,7 @@
   <PARAM id="flangerMix" value="0.1599999964237213"/>
   <PARAM id="flangerRate" value="0.09000000357627869"/>
   <PARAM id="flangerWidth" value="0.09999999403953552"/>
-  <PARAM id="glideTime" value="0.0"/>
+  <PARAM id="glideTime" value="0.04100000113248825"/>
   <PARAM id="grainDelayDecay" value="0.0"/>
   <PARAM id="grainDelayDensity" value="1.0"/>
   <PARAM id="grainDelayEnabled" value="0.0"/>
@@ -146,7 +146,7 @@
   <PARAM id="pitchBendAmount" value="0.0"/>
   <PARAM id="pitchEnvAmount" value="-100.0"/>
   <PARAM id="pitchEnvPitch" value="24.0"/>
-  <PARAM id="pitchEnvTime" value="0.0"/>
+  <PARAM id="pitchEnvTime" value="0.210099995136261"/>
   <PARAM id="reverbDecayTime" value="16.0"/>
   <PARAM id="reverbEnabled" value="0.0"/>
   <PARAM id="reverbFilterHPCutoff" value="99.99999237060547"/>

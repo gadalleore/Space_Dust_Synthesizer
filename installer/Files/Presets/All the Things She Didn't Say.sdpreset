@@ -33,7 +33,7 @@
   <PARAM id="delayTripletStraightToggle" value="0.0"/>
   <PARAM id="envAttack" value="0.009999999776482582"/>
   <PARAM id="envDecay" value="20.0"/>
-  <PARAM id="envRelease" value="0.009999999776482582"/>
+  <PARAM id="envRelease" value="0.1083999946713448"/>
   <PARAM id="envSustain" value="0.699999988079071"/>
   <PARAM id="filterCutoff" value="119.0"/>
   <PARAM id="filterEnvAmount" value="33.40000915527344"/>
