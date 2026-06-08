@@ -29,7 +29,12 @@
 param(
     [switch]$SkipBuild,
     [switch]$SkipPresets,
-    [string]$PresetsSource
+    [string]$PresetsSource,
+    # -- Code signing (Azure Artifact Signing / Trusted Signing) -----------
+    [switch]$Sign,
+    [string]$SignToolPath,
+    [string]$DlibPath,
+    [string]$SigningMetadata = "installer\trusted-signing.json"
 )
 
 $ErrorActionPreference = "Stop"
@@ -56,6 +61,86 @@ if (-not $iscc) {
     exit 1
 }
 Write-Host "[Package] ISCC: $iscc" -ForegroundColor Gray
+
+# -- Resolve code-signing tooling (only when -Sign) ------------------------
+# When -Sign is passed we sign the staged VST3 binary AND the final installer
+# .exe with signtool + the Azure CodeSigning dlib. Auth comes from your Azure
+# login ('az login') or AZURE_TENANT_ID/AZURE_CLIENT_ID/AZURE_CLIENT_SECRET
+# env vars. Resolve everything up front so we fail fast BEFORE a long build.
+# Every signature is timestamped (/tr) so it stays valid after the short-lived
+# Trusted Signing cert rotates (~3 days).
+$signtool = $null
+$dlib     = $null
+$meta     = $null
+if ($Sign) {
+    # signtool.exe: explicit path > newest installed Windows SDK.
+    if ($SignToolPath -and (Test-Path $SignToolPath)) {
+        $signtool = $SignToolPath
+    } else {
+        $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" `
+                        -ErrorAction SilentlyContinue |
+                    Sort-Object FullName -Descending |
+                    Select-Object -First 1 -ExpandProperty FullName
+    }
+    if (-not $signtool) {
+        Write-Host "[Sign] signtool.exe not found. Install the Windows SDK, or pass -SignToolPath." -ForegroundColor Red
+        exit 1
+    }
+
+    # Azure CodeSigning dlib: explicit path > env > default install locations.
+    if ($DlibPath -and (Test-Path $DlibPath)) {
+        $dlib = $DlibPath
+    } else {
+        foreach ($d in @(
+            $env:DLIB_PATH,
+            "$env:ProgramFiles\Microsoft\Azure.CodeSigning.Dlib\Azure.CodeSigning.Dlib.dll",
+            "${env:ProgramFiles(x86)}\Microsoft\Azure.CodeSigning.Dlib\Azure.CodeSigning.Dlib.dll"
+        )) {
+            if ($d -and (Test-Path $d)) { $dlib = $d; break }
+        }
+        if (-not $dlib) {
+            $dlib = Get-ChildItem "$env:ProgramFiles\Microsoft*\Azure.CodeSigning.Dlib.dll" -Recurse `
+                        -ErrorAction SilentlyContinue |
+                    Select-Object -First 1 -ExpandProperty FullName
+        }
+    }
+    if (-not $dlib) {
+        Write-Host "[Sign] Azure.CodeSigning.Dlib.dll not found." -ForegroundColor Red
+        Write-Host "       Install it:  winget install -e --id Microsoft.Azure.TrustedSigningClientTools" -ForegroundColor Red
+        Write-Host "       or pass -DlibPath C:\path\to\Azure.CodeSigning.Dlib.dll" -ForegroundColor Red
+        exit 1
+    }
+
+    # Metadata (account endpoint / name / certificate profile). No secrets.
+    $meta = $SigningMetadata
+    if (-not (Test-Path $meta)) {
+        Write-Host "[Sign] Signing metadata not found: $meta" -ForegroundColor Red
+        Write-Host "       Copy installer\trusted-signing.json.example to installer\trusted-signing.json" -ForegroundColor Red
+        Write-Host "       and fill in your Endpoint / CodeSigningAccountName / CertificateProfileName." -ForegroundColor Red
+        exit 1
+    }
+
+    Write-Host "[Sign] signtool : $signtool" -ForegroundColor Gray
+    Write-Host "[Sign] dlib     : $dlib"     -ForegroundColor Gray
+    Write-Host "[Sign] metadata : $meta"     -ForegroundColor Gray
+}
+
+# Sign a single file with signtool + the Azure dlib. Reads $signtool/$dlib/$meta
+# from script scope (resolved above). Aborts the whole package on any failure -
+# we never ship a half-signed installer.
+function Invoke-CodeSign {
+    param([Parameter(Mandatory)][string]$Path)
+    Write-Host "[Sign] Signing $Path" -ForegroundColor Cyan
+    & $signtool sign /v /fd SHA256 `
+        /tr "http://timestamp.acs.microsoft.com" /td SHA256 `
+        /dlib $dlib /dmdf $meta `
+        $Path
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "[Sign] signtool failed for $Path (exit $LASTEXITCODE)." -ForegroundColor Red
+        exit 1
+    }
+    Write-Host "[Sign] Signed OK: $Path" -ForegroundColor Green
+}
 
 # ── Step 1: Build Release VST3 with ALL logging compiled out ──────────────
 # This is the single source of truth for installer builds: we ALWAYS re-run
@@ -136,6 +221,13 @@ if ($found) {
 }
 Write-Host "[Package] Clean: no logger symbols in shipped binary." -ForegroundColor Green
 
+# ── Step 2.6: Sign the staged VST3 binary (before it's packaged) ──────────
+# Signs the inner PE that the safety scan located, so the plugin DLL that DAWs
+# load is itself trusted - not just the installer wrapping it.
+if ($Sign) {
+    Invoke-CodeSign -Path $stagedDll.FullName
+}
+
 # ── Step 3: Sync factory presets ──────────────────────────────────────────
 if (-not $SkipPresets) {
     if (-not $PresetsSource) {
@@ -186,6 +278,11 @@ if ($LASTEXITCODE -ne 0) {
 # ── Step 5: Report ────────────────────────────────────────────────────────
 $exe = "installer\Output\SpaceDust-Synthesizer-1.0-Setup.exe"
 if (Test-Path $exe) {
+    # Sign the installer the user downloads from Gumroad - this is the binary
+    # SmartScreen judges, so it matters most. (VST3 inside was already signed.)
+    if ($Sign) {
+        Invoke-CodeSign -Path $exe
+    }
     $info = Get-Item $exe
     Write-Host ""
     Write-Host "[Package] Installer ready:" -ForegroundColor Green

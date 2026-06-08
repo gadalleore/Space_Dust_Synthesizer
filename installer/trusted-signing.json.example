@@ -1,0 +1,7 @@
+{
+  "_comment": "Copy this file to trusted-signing.json (same folder) and fill in the three values from your Azure Artifact Signing account. trusted-signing.json is gitignored. Contains NO secrets - auth comes from 'az login' or AZURE_* env vars, not this file.",
+
+  "Endpoint": "https://REGION.codesigning.azure.net/",
+  "CodeSigningAccountName": "your-artifact-signing-account-name",
+  "CertificateProfileName": "your-certificate-profile-name"
+}

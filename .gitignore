@@ -54,6 +54,9 @@ Thumbs.db
 # Local configuration (don't commit personal paths)
 juce_path.local
 
+# Azure Artifact Signing account config (account-specific; .example is tracked)
+installer/trusted-signing.json
+
 # Debug logs / pitch traces (written to user Documents during runtime)
 SpaceDust_DebugLog.txt
 SpaceDustPitchTrace.csv
