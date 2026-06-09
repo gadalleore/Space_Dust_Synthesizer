@@ -225,7 +225,8 @@ class SpaceDustAudioProcessorEditor : public juce::AudioProcessorEditor,
                                       public juce::Timer,
                                       public juce::Slider::Listener,
                                       public juce::Button::Listener,
-                                      public juce::AudioProcessorValueTreeState::Listener
+                                      public juce::AudioProcessorValueTreeState::Listener,
+                                      public juce::FocusChangeListener
 {
     // Allow page components to access private members for layout
     friend class MainPageComponent;
@@ -241,6 +242,7 @@ public:
     ~SpaceDustAudioProcessorEditor() override;
     
     void timerCallback() override;
+    void globalFocusChanged(juce::Component* focusedComponent) override;
     void sliderDragStarted(juce::Slider* slider) override;
     void sliderValueChanged(juce::Slider* slider) override;
     void sliderDragEnded(juce::Slider* slider) override;

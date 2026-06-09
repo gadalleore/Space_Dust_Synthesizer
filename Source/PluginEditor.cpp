@@ -5084,6 +5084,10 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         // Z = octave down, X = octave up (handled by StandaloneKeyboard::keyPressed)
         standaloneKeyboard->setWantsKeyboardFocus(true);
         addAndMakeVisible(standaloneKeyboard.get());
+
+        // Keep the keyboard playable while clicking knobs: when focus moves to a
+        // non-text control inside our editor, globalFocusChanged() hands it back.
+        juce::Desktop::getInstance().addFocusChangeListener(this);
     }
 
     //==============================================================================
@@ -5333,12 +5337,35 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
 //==============================================================================
 // -- Destructor --
 
+//==============================================================================
+// Standalone: keep the on-screen keyboard playable while clicking knobs. Whenever
+// focus moves to a non-text control inside our editor, hand it straight back to the
+// keyboard so the QWERTY computer keys keep working. (Knob drags use mouse capture,
+// not keyboard focus, so the knob you grabbed still drags normally - true
+// play-and-twist at the same time.) Registered only in the standalone build.
+void SpaceDustAudioProcessorEditor::globalFocusChanged(juce::Component* focusedComponent)
+{
+    if (standaloneKeyboard == nullptr || focusedComponent == nullptr)
+        return;
+    if (focusedComponent == standaloneKeyboard.get())
+        return;
+    if (! isParentOf(focusedComponent))   // focus left our window (popup / other app) - don't fight it
+        return;
+    if (dynamic_cast<juce::TextEditor*>(focusedComponent) != nullptr)  // user is typing - leave it
+        return;
+    standaloneKeyboard->grabKeyboardFocus();
+}
+
 SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
 {
     DBG("Space Dust: Processor destructor START");
 
     isBeingDestroyed.store(true);
     stopTimer();
+
+    // Stop receiving focus-change callbacks before teardown (standalone only;
+    // harmless if it was never registered).
+    juce::Desktop::getInstance().removeFocusChangeListener(this);
 
     // Easter egg cleanup
     cheezeGuyGame.reset();
