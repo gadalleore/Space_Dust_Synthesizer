@@ -2836,6 +2836,27 @@ namespace
             setLowestVisibleKey(juce::jlimit(0, 108, 12 * baseOctave - 12));
         }
     };
+
+    // Standalone: stop knobs / buttons / combos from grabbing keyboard focus when
+    // clicked, so the QWERTY computer-keyboard keeps playing notes while the user
+    // twists controls. Text fields are intentionally left alone so typing (preset
+    // names, search) still works. Applied recursively to every descendant.
+    void preventControlsStealingKeyboardFocus(juce::Component& parent)
+    {
+        for (int i = 0; i < parent.getNumChildComponents(); ++i)
+        {
+            if (auto* child = parent.getChildComponent(i))
+            {
+                if (dynamic_cast<juce::Slider*>  (child) != nullptr
+                 || dynamic_cast<juce::Button*>  (child) != nullptr
+                 || dynamic_cast<juce::ComboBox*>(child) != nullptr)
+                {
+                    child->setMouseClickGrabsKeyboardFocus(false);
+                }
+                preventControlsStealingKeyboardFocus(*child);
+            }
+        }
+    }
 }
 
 //==============================================================================
@@ -5248,6 +5269,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         if (standaloneKeyboard != nullptr)
         {
             standaloneKeyboard->grabKeyboardFocus();
+            // Knobs/buttons must not steal that focus when clicked, so the QWERTY keys
+            // keep playing while the user twists controls. (Text fields keep focus-grab.)
+            preventControlsStealingKeyboardFocus(*this);
             juce::Component::SafePointer<SpaceDustAudioProcessorEditor> kbSafe(this);
             juce::Timer::callAfterDelay(250, [kbSafe]() {
                 if (kbSafe != nullptr && kbSafe->standaloneKeyboard != nullptr)

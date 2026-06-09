@@ -65,6 +65,14 @@ jobs:
           path: build/SpaceDust_artefacts/Release/VST3/Space Dust.vst3/**
           if-no-files-found: warn
 
+      - name: Upload Standalone artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpaceDust-Standalone
+          path: build/SpaceDust_artefacts/Release/Standalone/Space Dust.exe
+          if-no-files-found: warn
+
       - name: Upload pluginval log
         if: always()
         uses: actions/upload-artifact@v4
@@ -93,6 +101,12 @@ jobs:
         with:
           name: SpaceDust-VST3
           path: installer/Files/VST3/Space Dust.vst3
+
+      - name: Download Standalone artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: SpaceDust-Standalone
+          path: installer/Files/Standalone
 
       - name: Compile installer
         shell: pwsh
