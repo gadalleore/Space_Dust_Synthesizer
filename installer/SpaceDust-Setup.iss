@@ -58,8 +58,8 @@ InfoBeforeFile=
 InfoAfterFile=
 OutputDir=Output
 OutputBaseFilename=SpaceDust-Synthesizer-{#MyAppVersion}-Setup
-SetupIconFile=
-UninstallDisplayIcon={sys}\imageres.dll,196
+SetupIconFile=AppIcon.ico
+UninstallDisplayIcon={app}\AppIcon.ico
 Compression=lzma2/max
 SolidCompression=yes
 LZMAUseSeparateProcess=yes
@@ -99,6 +99,8 @@ Source: "Files\VST3\Space Dust.vst3\*"; DestDir: "{code:GetVST3Dir}\Space Dust.v
 Source: "Files\Standalone\Space Dust.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: standalone
 ; Third-party notices (JUCE GPL + Glitch Goblin OFL font) — always installed, satisfies OFL.
 Source: "THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
+; App icon — installed so UninstallDisplayIcon has a stable target regardless of components.
+Source: "AppIcon.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; Factory presets — copied into the user's chosen preset folder.
 ;   onlyifdoesntexist: never overwrite a user's modified copy on reinstall/upgrade.
 ;   skipifsourcedoesntexist: don't fail the compile when the staging folder is empty

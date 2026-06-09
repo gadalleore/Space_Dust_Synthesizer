@@ -51,6 +51,7 @@ juce_add_plugin(SpaceDust
     FORMATS VST3 AU Standalone
     BUNDLE_ID "com.63c.SpaceDust"
     PRODUCT_NAME "Space Dust"
+    ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/AppIcon.png"
     DESCRIPTION "Cosmic particles of sound"
     VERSION 1.0.0
     IS_SYNTH TRUE
