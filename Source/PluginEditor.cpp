@@ -5192,9 +5192,22 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             // resized() must NOT call setSize() again to prevent infinite recursion
             setSize(1120, calculatedHeight);
 
-            // Scale entire UI down 5% — everything (knobs, labels, groups) shrinks uniformly.
+            // Scale the entire UI uniformly (knobs, labels, groups all shrink together).
             // setTransform handles both rendering AND mouse input mapping.
-            setTransform(juce::AffineTransform::scale(0.95f));
+            // Default is a slight 5% shrink, BUT never let the window be taller/wider than
+            // the user's screen: auto-fit to the available display so the whole synth stays
+            // visible on small screens (laptops, VMs, low-res monitors). On a normal 1080p+
+            // display the fit factors exceed 0.95, so nothing changes there.
+            float uiScale = 0.95f;
+            if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
+            {
+                const auto area    = display->userArea;   // excludes the taskbar
+                const float margin = 0.92f;                // breathing room for title bar / DAW chrome
+                const float fitW   = (float) area.getWidth()  * margin / 1120.0f;
+                const float fitH   = (float) area.getHeight() * margin / (float) calculatedHeight;
+                uiScale = juce::jlimit(0.40f, 0.95f, juce::jmin(uiScale, fitW, fitH));
+            }
+            setTransform(juce::AffineTransform::scale(uiScale));
 
             DBG("Space Dust: Timer callback - setSize() completed");
             #if JUCE_DEBUG
