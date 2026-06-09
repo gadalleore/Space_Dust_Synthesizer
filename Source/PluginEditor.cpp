@@ -6053,7 +6053,12 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
         };
         auto drawBottomGlow = [&](float layerHeight, float alphaScale)
         {
-            float yBase = static_cast<float>(h);
+            // In the Standalone build a playable keyboard occupies the bottom strip; anchor
+            // the bottom edge-glow to the bottom of the CONTENT area (above the keys) so it
+            // stays visible instead of being hidden behind the keyboard. kbH == 0 in the
+            // VST3 (no keyboard), so the glow sits at the window bottom there, unchanged.
+            const int kbH = (standaloneKeyboard != nullptr) ? standaloneKeyboardHeight : 0;
+            float yBase = static_cast<float>(h - kbH);
             juce::Path path;
             path.startNewSubPath(0.0f, yBase);
             path.lineTo(static_cast<float>(w), yBase);
