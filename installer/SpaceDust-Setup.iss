@@ -3,9 +3,14 @@
 ; =============================================================================
 ; Staging layout (next to this .iss file):
 ;   Files\VST3\Space Dust.vst3\   ← full VST3 bundle (folder with .vst3 extension)
-;   License-MIT.txt               ← MIT text for the license wizard page
+;   Files\Standalone\Space Dust.exe ← standalone desktop app
+;   Files\Presets\*.sdpreset      ← factory presets
+;   License-GPLv3.txt             ← GPLv3 text for the license wizard page
+;   THIRD-PARTY-NOTICES.txt       ← JUCE (GPL) + Glitch Goblin font (OFL) notices
 ;   Support\README-Presets.txt    ← copied into the preset folder as README.txt
 ;
+; Components: the user ticks VST3 and/or Standalone (see [Components] + the
+; SelectComponentsLabel2 message). Presets/config install if EITHER is chosen.
 ; The plug-in reads presetFolder from config.xml (see PresetManager.cpp).
 ; =============================================================================
 
@@ -48,7 +53,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ; every Windows DAW scans by default.
 PrivilegesRequired=admin
 ; --- Wizard copy --------------------------------------------------------------
-LicenseFile=License-MIT.txt
+LicenseFile=License-GPLv3.txt
 InfoBeforeFile=
 InfoAfterFile=
 OutputDir=Output
@@ -65,16 +70,35 @@ CloseApplications=no
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
+[Types]
+Name: "full";       Description: "Both (VST3 plug-in + Standalone app)"
+Name: "vst3";       Description: "VST3 plug-in only"
+Name: "standalone"; Description: "Standalone app only"
+Name: "custom";     Description: "Custom"; Flags: iscustom
+
+[Components]
+Name: "vst3";       Description: "VST3 plug-in - for use inside a DAW (Ableton, FL Studio, Cubase, ...)"; Types: full vst3 custom
+Name: "standalone"; Description: "Standalone app - a desktop synthesizer, no DAW required";              Types: full standalone custom
+
+[Messages]
+; The instructional blurb shown above the component checkboxes.
+SelectComponentsLabel2=Choose what to install. To use Space Dust inside a Digital Audio Workstation (DAW) such as Ableton, FL Studio, or Cubase, select the VST3 plug-in. If you just want a fun standalone desktop synthesizer, select the Standalone app. Tick both boxes to install both.
+
 [Tasks]
-; (Reserved) Add Start Menu items here if you ship a standalone editor later.
+; Desktop shortcut for the Standalone app (only offered when Standalone is selected).
+Name: "desktopicon"; Description: "Create a desktop shortcut for the Standalone app"; Components: standalone; Flags: unchecked
 
 [Dirs]
 ; Create the preset directory the user chose (user data — keep on uninstall).
 Name: "{code:GetPresetsDir}"; Flags: uninsneveruninstall
 
 [Files]
-; Entire VST3 bundle: recursive copy preserving inner layout.
-Source: "Files\VST3\Space Dust.vst3\*"; DestDir: "{code:GetVST3Dir}\Space Dust.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Entire VST3 bundle: recursive copy preserving inner layout. (VST3 component only.)
+Source: "Files\VST3\Space Dust.vst3\*"; DestDir: "{code:GetVST3Dir}\Space Dust.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: vst3
+; Standalone desktop app -> {app} (Program Files\Space Dust Synthesizer). (Standalone component only.)
+Source: "Files\Standalone\Space Dust.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: standalone
+; Third-party notices (JUCE GPL + Glitch Goblin OFL font) — always installed, satisfies OFL.
+Source: "THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 ; Factory presets — copied into the user's chosen preset folder.
 ;   onlyifdoesntexist: never overwrite a user's modified copy on reinstall/upgrade.
 ;   skipifsourcedoesntexist: don't fail the compile when the staging folder is empty
@@ -86,13 +110,14 @@ Source: "Files\VST3\Space Dust.vst3\*"; DestDir: "{code:GetVST3Dir}\Space Dust.v
 ;     does not protect the files. Keep this flag.
 ; Extension must match PresetManager::presetExtension (".sdpreset"). DO NOT change
 ; without also updating PresetManager.h.
-Source: "Files\Presets\*.sdpreset"; DestDir: "{code:GetPresetsDir}"; Flags: ignoreversion onlyifdoesntexist skipifsourcedoesntexist uninsneveruninstall
+Source: "Files\Presets\*.sdpreset"; DestDir: "{code:GetPresetsDir}"; Flags: ignoreversion onlyifdoesntexist skipifsourcedoesntexist uninsneveruninstall; Components: vst3 standalone
 ; Documentation placed inside the preset folder.
-Source: "Support\README-Presets.txt"; DestDir: "{code:GetPresetsDir}"; DestName: "README.txt"; Flags: ignoreversion confirmoverwrite
+Source: "Support\README-Presets.txt"; DestDir: "{code:GetPresetsDir}"; DestName: "README.txt"; Flags: ignoreversion confirmoverwrite; Components: vst3 standalone
 
 [Icons]
-; Optional: uncomment to add an uninstall shortcut on the desktop or Start Menu.
-; Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
+; Standalone app shortcuts (only created when the Standalone component is selected).
+Name: "{autoprograms}\Space Dust"; Filename: "{app}\Space Dust.exe"; Components: standalone
+Name: "{autodesktop}\Space Dust";  Filename: "{app}\Space Dust.exe"; Components: standalone; Tasks: desktopicon
 
 [Run]
 ; Silent install — no post-install programs required for a VST3.
@@ -140,7 +165,7 @@ end;
 (* Wizard page: VST3 destination (standard default = Common Files x64\VST3). *)
 procedure InitVST3Page;
 begin
-  VST3DirPage := CreateInputDirPage(wpLicense,
+  VST3DirPage := CreateInputDirPage(wpSelectComponents,
     'VST3 Plug-in Location',
     'Where should the installer place the Space Dust VST3 bundle?',
     'Select the folder that should contain Space Dust.vst3 (your DAW''s VST3 scan path).',
@@ -195,6 +220,14 @@ end;
 function GetPresetsDir(Param: string): string;
 begin
   Result := Trim(PresetsDirPage.Values[0]);
+end;
+
+(* Skip the VST3 folder page when the user did not tick the VST3 component. *)
+function ShouldSkipPage(PageID: Integer): Boolean;
+begin
+  Result := False;
+  if PageID = VST3DirPage.ID then
+    Result := not WizardIsComponentSelected('vst3');
 end;
 
 function NextButtonClick(CurPageID: Integer): Boolean;

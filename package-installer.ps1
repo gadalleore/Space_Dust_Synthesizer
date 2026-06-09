@@ -149,6 +149,22 @@ function Invoke-CodeSign {
     Write-Host "[Sign] Signed OK: $Path" -ForegroundColor Green
 }
 
+# Returns $true if the file contains the ASCII string "MemorySafetyLogger" -
+# i.e. a logging-enabled build leaked into Release. Used to refuse shipping it.
+function Test-LoggerSymbol {
+    param([Parameter(Mandatory)][string]$Path)
+    $bytes  = [System.IO.File]::ReadAllBytes($Path)
+    $needle = [System.Text.Encoding]::ASCII.GetBytes("MemorySafetyLogger")
+    for ($i = 0; $i -le ($bytes.Length - $needle.Length); $i++) {
+        $hit = $true
+        for ($j = 0; $j -lt $needle.Length; $j++) {
+            if ($bytes[$i+$j] -ne $needle[$j]) { $hit = $false; break }
+        }
+        if ($hit) { return $true }
+    }
+    return $false
+}
+
 # ── Step 1: Build Release VST3 with ALL logging compiled out ──────────────
 # This is the single source of truth for installer builds: we ALWAYS re-run
 # CMake configure with logging explicitly OFF so the cache can't drift to a
@@ -173,10 +189,10 @@ if (-not $SkipBuild) {
         exit 1
     }
 
-    Write-Host "[Package] Building Release VST3..." -ForegroundColor Cyan
-    & cmake --build $buildDir --config Release --target SpaceDust_VST3 --parallel
+    Write-Host "[Package] Building Release VST3 + Standalone..." -ForegroundColor Cyan
+    & cmake --build $buildDir --config Release --target SpaceDust_VST3 SpaceDust_Standalone --parallel
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "[Package] VST3 build failed (exit $LASTEXITCODE)." -ForegroundColor Red
+        Write-Host "[Package] Build failed (exit $LASTEXITCODE)." -ForegroundColor Red
         exit 1
     }
 } else {
@@ -233,6 +249,32 @@ Write-Host "[Package] Clean: no logger symbols in shipped binary." -ForegroundCo
 # load is itself trusted - not just the installer wrapping it.
 if ($Sign) {
     Invoke-CodeSign -Path $stagedDll.FullName
+}
+
+# ── Step 2.7: Stage, scan, and sign the standalone .exe ───────────────────
+# The standalone app links the same SharedCode as the VST3, so it gets the same
+# logger safety-net scan and the same Azure signature before packaging.
+$saSrc = "build\SpaceDust_artefacts\Release\Standalone\Space Dust.exe"
+$saDst = "installer\Files\Standalone\Space Dust.exe"
+if (-not (Test-Path $saSrc)) {
+    Write-Host "[Package] Standalone artifact missing: $saSrc" -ForegroundColor Red
+    Write-Host "          Run without -SkipBuild." -ForegroundColor Red
+    exit 1
+}
+New-Item -ItemType Directory -Force -Path (Split-Path $saDst) | Out-Null
+Copy-Item -Force $saSrc $saDst
+Write-Host "[Package] Staged Standalone -> $saDst" -ForegroundColor Green
+
+Write-Host "[Package] Scanning staged Standalone for logger symbols..." -ForegroundColor Cyan
+if (Test-LoggerSymbol $saDst) {
+    Write-Host "[Package] ABORT: 'MemorySafetyLogger' symbol present in staged Standalone." -ForegroundColor Red
+    Write-Host "          Logging leaked into the Release build. Refusing to package." -ForegroundColor Red
+    exit 2
+}
+Write-Host "[Package] Clean: no logger symbols in standalone binary." -ForegroundColor Green
+
+if ($Sign) {
+    Invoke-CodeSign -Path $saDst
 }
 
 # ── Step 3: Sync factory presets ──────────────────────────────────────────
