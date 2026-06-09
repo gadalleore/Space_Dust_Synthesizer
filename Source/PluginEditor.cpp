@@ -5353,6 +5353,10 @@ void SpaceDustAudioProcessorEditor::globalFocusChanged(juce::Component* focusedC
         return;
     if (dynamic_cast<juce::TextEditor*>(focusedComponent) != nullptr)  // user is typing - leave it
         return;
+    // The CheezeGuy easter-egg game needs the arrow keys, so let it keep focus.
+    if (cheezeGuyGame != nullptr
+        && (focusedComponent == cheezeGuyGame.get() || cheezeGuyGame->isParentOf(focusedComponent)))
+        return;
     standaloneKeyboard->grabKeyboardFocus();
 }
 
