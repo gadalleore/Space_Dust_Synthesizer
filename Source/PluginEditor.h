@@ -313,6 +313,17 @@ private:
     juce::int64 masterKnobClickTimes[7] = {};
     int masterKnobClickCount = 0;
     std::unique_ptr<CheezeGuyGameComponent> cheezeGuyGame;
+
+    // -- Drag-resize scaling --
+    // The whole UI is authored at a fixed design size (kDesignWidth x designHeight_)
+    // and rendered through a single uniform scale. mainView is a transparent container
+    // that holds every control and is scaled by k = getWidth()/kDesignWidth; paint()
+    // scales its background/decorations by the same k via g.addTransform. The editor is
+    // resizable with a locked aspect ratio, so dragging a corner grows/shrinks everything
+    // together without moving any item relative to another.
+    static constexpr int kDesignWidth = 1120;
+    int designHeight_ = 857;          // set in the ctor timer (+ keyboard strip in standalone)
+    juce::Component mainView;         // scalable container parenting the entire UI
     bool cheezeGuyTabAdded = false;
 
     //==============================================================================

@@ -5091,6 +5091,27 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     }
 
     //==============================================================================
+    // -- Drag-resize: move the whole UI into the scalable mainView container --
+    // Every control added above is currently a direct child of the editor. Re-parent
+    // them all into mainView (preserving visibility) so one transform on mainView scales
+    // the entire UI uniformly. Done after all addAndMakeVisible() calls and BEFORE
+    // setResizable() (in the timer) so the resizable corner stays a child of the editor.
+    addChildComponent(mainView);
+    mainView.setInterceptsMouseClicks(false, true);   // transparent container; children stay clickable
+    {
+        auto existingChildren = getChildren();         // snapshot (we mutate parentage below)
+        for (auto* child : existingChildren)
+        {
+            if (child == &mainView)
+                continue;
+            const bool wasVisible = child->isVisible();
+            mainView.addChildComponent(child);         // re-parents into mainView
+            child->setVisible(wasVisible);
+        }
+    }
+    mainView.setVisible(true);
+
+    //==============================================================================
     // -- Set Window Size (DEFERRED VIA TIMER CALLBACK) --
     // CRITICAL: In Ableton Live, setSize() immediately triggers resized()/paint()
     // which may access LookAndFeel or components before the constructor completes.
@@ -5190,24 +5211,24 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         {
             // CRITICAL: setSize() triggers resized() which will layout components
             // resized() must NOT call setSize() again to prevent infinite recursion
-            setSize(1120, calculatedHeight);
+            designHeight_ = calculatedHeight;
 
-            // Scale the entire UI uniformly (knobs, labels, groups all shrink together).
-            // setTransform handles both rendering AND mouse input mapping.
-            // Default is a slight 5% shrink, BUT never let the window be taller/wider than
-            // the user's screen: auto-fit to the available display so the whole synth stays
-            // visible on small screens (laptops, VMs, low-res monitors). On a normal 1080p+
-            // display the fit factors exceed 0.95, so nothing changes there.
-            float uiScale = 0.95f;
+            // Auto-fit the INITIAL window size to the display (the user can then drag-resize).
+            // Largest scale <= 0.95 that fits the primary display's user area; on a normal
+            // 1080p+ screen the fit factors exceed 0.95 so it opens at the design 0.95.
+            float initScale = 0.95f;
             if (auto* display = juce::Desktop::getInstance().getDisplays().getPrimaryDisplay())
             {
                 const auto area    = display->userArea;   // excludes the taskbar
                 const float margin = 0.92f;                // breathing room for title bar / DAW chrome
-                const float fitW   = (float) area.getWidth()  * margin / 1120.0f;
-                const float fitH   = (float) area.getHeight() * margin / (float) calculatedHeight;
-                uiScale = juce::jlimit(0.40f, 0.95f, juce::jmin(uiScale, fitW, fitH));
+                const float fitW   = (float) area.getWidth()  * margin / (float) kDesignWidth;
+                const float fitH   = (float) area.getHeight() * margin / (float) designHeight_;
+                initScale = juce::jlimit(0.40f, 0.95f, juce::jmin(initScale, fitW, fitH));
             }
-            setTransform(juce::AffineTransform::scale(uiScale));
+            // The editor's LOGICAL size is now the on-screen size (no transform on the editor);
+            // resized() scales mainView + the painted background by getWidth()/kDesignWidth.
+            setSize(juce::roundToInt(kDesignWidth  * initScale),
+                    juce::roundToInt(designHeight_ * initScale));
 
             DBG("Space Dust: Timer callback - setSize() completed");
             #if JUCE_DEBUG
@@ -5268,8 +5289,18 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         DBG("Space Dust: Timer callback - Calling setResizable(false, false)");
         try
         {
-            setResizable(false, false);  // Lock window size - no resizing
-            DBG("Space Dust: Timer callback - setResizable() completed");
+            // Resizable with a locked aspect ratio: dragging a corner scales the whole UI
+            // (mainView + painted background) uniformly - no distortion, nothing repositioned.
+            setResizable(true, true);
+            if (auto* constrainer = getConstrainer())
+            {
+                constrainer->setFixedAspectRatio((double) kDesignWidth / (double) designHeight_);
+                constrainer->setSizeLimits(juce::roundToInt(kDesignWidth  * 0.45f),
+                                           juce::roundToInt(designHeight_ * 0.45f),
+                                           juce::roundToInt(kDesignWidth  * 1.60f),
+                                           juce::roundToInt(designHeight_ * 1.60f));
+            }
+            DBG("Space Dust: Timer callback - setResizable(true) + aspect lock completed");
         }
         catch (const std::exception& e)
         {
@@ -5956,8 +5987,14 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
     if (isBeingDestroyed.load())
         return;
 
-    const int w = getWidth();
-    const int h = getHeight();
+    // Scale the painted background + decorations by the same factor as mainView so they
+    // align with the (scaled) controls and fill the resized window. Everything below is
+    // drawn in DESIGN coordinates (kDesignWidth x designHeight_); the transform maps it to
+    // the on-screen size. fillAll still fills the whole clip region regardless of transform.
+    const float paintScale = (getWidth() > 0) ? getWidth() / (float) kDesignWidth : 1.0f;
+    g.addTransform(juce::AffineTransform::scale(paintScale));
+    const int w = kDesignWidth;
+    const int h = designHeight_;
 
     g.fillAll(juce::Colour(0xff0a0a1f));
     {
@@ -6186,6 +6223,16 @@ void SpaceDustAudioProcessorEditor::resized()
         #endif
     
     //==============================================================================
+    // -- Drag-resize: size + scale the container holding the whole UI --
+    // mainView is laid out at the fixed design size; one uniform transform scales it to the
+    // editor's current (resizable) size. All layout below positions controls in design space.
+    {
+        const float viewScale = (getWidth() > 0) ? getWidth() / (float) kDesignWidth : 1.0f;
+        mainView.setBounds(0, 0, kDesignWidth, designHeight_);
+        mainView.setTransform(juce::AffineTransform::scale(viewScale));
+    }
+
+    //==============================================================================
     // -- Preset Controls Layout (Top Header Bar) --
     const int titleHeight = 48;  // Compact: title + tab bar
     {
@@ -6218,10 +6265,10 @@ void SpaceDustAudioProcessorEditor::resized()
     // of the layout uses the height above it. In the plugin (no keyboard) this is 0 and
     // the layout is identical to before.
     const int kbStripH = (standaloneKeyboard != nullptr) ? standaloneKeyboardHeight : 0;
-    const int layoutHeight = getHeight() - kbStripH;
+    const int layoutHeight = designHeight_ - kbStripH;   // design space (mainView is scaled, not this)
 
     // Expand tab width by 10%
-    int tabbedWidth = static_cast<int>((getWidth() - masterWidth - masterGap) * 0.9 * 1.1);
+    int tabbedWidth = static_cast<int>((kDesignWidth - masterWidth - masterGap) * 0.9 * 1.1);
     tabbedComponent.setBounds(0, titleHeight, tabbedWidth, layoutHeight - titleHeight);
     // Tab glow overlay: sits on top of tab bar so parabolic glow shines through (drawn above tabs)
     const int tabBarHeight = 36;
@@ -6231,7 +6278,7 @@ void SpaceDustAudioProcessorEditor::resized()
     if (bottomTabGlowOverlay != nullptr)
         bottomTabGlowOverlay->setBounds(0, layoutHeight - bottomGlowHeight, tabbedWidth, bottomGlowHeight);
     if (standaloneKeyboard != nullptr)
-        standaloneKeyboard->setBounds(0, layoutHeight, getWidth(), kbStripH);
+        standaloneKeyboard->setBounds(0, layoutHeight, kDesignWidth, kbStripH);
     
     //==============================================================================
     // -- Master Section Layout (Always Visible, Right Side) --
