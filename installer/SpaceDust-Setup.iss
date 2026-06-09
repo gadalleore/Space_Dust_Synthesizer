@@ -79,9 +79,14 @@ Source: "Files\VST3\Space Dust.vst3\*"; DestDir: "{code:GetVST3Dir}\Space Dust.v
 ;   onlyifdoesntexist: never overwrite a user's modified copy on reinstall/upgrade.
 ;   skipifsourcedoesntexist: don't fail the compile when the staging folder is empty
 ;     (lets the installer build before any factory presets exist).
+;   uninsneveruninstall: CRITICAL — do NOT delete presets on uninstall. The preset
+;     folder is the user's sound library (often inside Documents) and is frequently the
+;     SAME folder the user curates. Without this flag Inno records each installed preset
+;     and removes it on uninstall, gutting the user's library. The [Dirs] entry alone
+;     does not protect the files. Keep this flag.
 ; Extension must match PresetManager::presetExtension (".sdpreset"). DO NOT change
 ; without also updating PresetManager.h.
-Source: "Files\Presets\*.sdpreset"; DestDir: "{code:GetPresetsDir}"; Flags: ignoreversion onlyifdoesntexist skipifsourcedoesntexist
+Source: "Files\Presets\*.sdpreset"; DestDir: "{code:GetPresetsDir}"; Flags: ignoreversion onlyifdoesntexist skipifsourcedoesntexist uninsneveruninstall
 ; Documentation placed inside the preset folder.
 Source: "Support\README-Presets.txt"; DestDir: "{code:GetPresetsDir}"; DestName: "README.txt"; Flags: ignoreversion confirmoverwrite
 
