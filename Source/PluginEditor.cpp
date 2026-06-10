@@ -5112,6 +5112,27 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     mainView.setVisible(true);
 
     //==============================================================================
+    // -- Make the editor resizable NOW (synchronously, in the ctor) --
+    // The host queries IPlugView::canResize() -> editor->isResizable() at attach time,
+    // which is BEFORE the deferred timer below fires. If resizability isn't set yet the
+    // host caches "fixed size" (confirmed on macOS after a clean .pkg install + rescan;
+    // Windows only won the timing race). setResizable() is safe here: it just sets the
+    // flag and adds the corner child - it does NOT trigger resized()/paint(), so the
+    // Ableton crash that forced us to defer setSize() does not apply. (setSize() itself
+    // stays deferred below.) This MUST come after the re-parent above so the resizable
+    // corner stays a direct child of the editor, outside mainView's scale transform.
+    designHeight_ = 857 + (standaloneKeyboard != nullptr ? standaloneKeyboardHeight : 0);
+    setResizable(true, true);   // dragging the corner scales the whole UI (locked aspect)
+    if (auto* constrainer = getConstrainer())
+    {
+        constrainer->setFixedAspectRatio((double) kDesignWidth / (double) designHeight_);
+        constrainer->setSizeLimits(juce::roundToInt(kDesignWidth  * 0.45f),
+                                   juce::roundToInt(designHeight_ * 0.45f),
+                                   juce::roundToInt(kDesignWidth  * 1.60f),
+                                   juce::roundToInt(designHeight_ * 1.60f));
+    }
+
+    //==============================================================================
     // -- Set Window Size (DEFERRED VIA TIMER CALLBACK) --
     // CRITICAL: In Ableton Live, setSize() immediately triggers resized()/paint()
     // which may access LookAndFeel or components before the constructor completes.
@@ -5286,30 +5307,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             #endif
         }
         
-        DBG("Space Dust: Timer callback - Calling setResizable(false, false)");
-        try
-        {
-            // Resizable with a locked aspect ratio: dragging a corner scales the whole UI
-            // (mainView + painted background) uniformly - no distortion, nothing repositioned.
-            setResizable(true, true);
-            if (auto* constrainer = getConstrainer())
-            {
-                constrainer->setFixedAspectRatio((double) kDesignWidth / (double) designHeight_);
-                constrainer->setSizeLimits(juce::roundToInt(kDesignWidth  * 0.45f),
-                                           juce::roundToInt(designHeight_ * 0.45f),
-                                           juce::roundToInt(kDesignWidth  * 1.60f),
-                                           juce::roundToInt(designHeight_ * 1.60f));
-            }
-            DBG("Space Dust: Timer callback - setResizable(true) + aspect lock completed");
-        }
-        catch (const std::exception& e)
-        {
-            DBG("Space Dust: Exception in setResizable(): " + juce::String(e.what()));
-        }
-        catch (...)
-        {
-            DBG("Space Dust: Unknown exception in setResizable()");
-        }
+        // (setResizable + aspect-lock constrainer now happen synchronously in the ctor,
+        // before the host queries canResize() - see the re-parent section above.)
 
         // Standalone: give the on-screen keyboard focus so the QWERTY computer keys work
         // immediately, without the user having to click a note first. (Guarded SafePointer
