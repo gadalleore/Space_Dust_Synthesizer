@@ -992,20 +992,23 @@ void MainPageComponent::resized()
     int filterResonanceKnobY = filterKnobStartY + labelHeight + filterLabelGap;
     parentEditor.filterResonanceSlider.setBounds(filterKnobX, filterResonanceKnobY, knobDiameter, knobDiameter);
 
-    // Key Track toggle: in the open space to the right of the Resonance knob,
-    // vertically centred on the knob.
+    // Key Tracking toggle: in the open space to the right of the Resonance knob.
+    // Height matches the Sub Oscillator button (22). The button centre lines up with
+    // the knob's CIRCLE centre — the rotary sits above its value box, so the circle
+    // centre is higher than the bounds centre by half the text-box height.
     {
-        const int keyTrackW = 62;
-        const int keyTrackH = 20;
+        const int keyTrackW = 86;
+        const int keyTrackH = 22;
+        const int resTextBoxH = 20;  // matches filterResonanceSlider TextBoxBelow height
         int keyTrackX = filterKnobX + knobDiameter + horizontalSpacing;
-        int keyTrackY = filterResonanceKnobY + (knobDiameter - keyTrackH) / 2;
+        int keyTrackY = filterResonanceKnobY + (knobDiameter - resTextBoxH) / 2 - keyTrackH / 2;
         parentEditor.filterKeyTrackButton.setBounds(keyTrackX, keyTrackY, keyTrackW, keyTrackH);
     }
 
     // Warm Saturation toggle: below resonance row, before Filter Envelope
     filterKnobX = filterContent.getX();
     int warmSatButtonY = filterResonanceKnobY + knobDiameter + 12;
-    parentEditor.warmSaturationMasterButton.setBounds(filterKnobX, warmSatButtonY, 130, 18);
+    parentEditor.warmSaturationMasterButton.setBounds(filterKnobX, warmSatButtonY, 130, 22);
     
     // ============================================================================
     // FILTER ENVELOPE: Position inside Filter box (below Cutoff/Resonance)
@@ -1477,7 +1480,7 @@ void ModulationPageComponent::resized()
             const int ktH = 18;
             int ktX = resCentre + filterKnobSize / 2 + 8;
             int ktY = lfo1CurrentY + (filterKnobSize - ktH) / 2;
-            int ktW = juce::jmin(60, lfo1Content.getRight() - ktX);
+            int ktW = juce::jmin(84, lfo1Content.getRight() - ktX);
             parentEditor.modFilter1KeyTrackButton.setBounds(ktX, ktY, ktW, ktH);
         }
         lfo1CurrentY += modRotaryTextBoxTotalH + gapValueToNextLabel;
@@ -1621,7 +1624,7 @@ void ModulationPageComponent::resized()
             const int ktH = 18;
             int ktX = resCentre + filterKnobSize / 2 + 8;
             int ktY = lfo2CurrentY + (filterKnobSize - ktH) / 2;
-            int ktW = juce::jmin(60, lfo2Content.getRight() - ktX);
+            int ktW = juce::jmin(84, lfo2Content.getRight() - ktX);
             parentEditor.modFilter2KeyTrackButton.setBounds(ktX, ktY, ktW, ktH);
         }
         lfo2CurrentY += modRotaryTextBoxTotalH + gapValueToNextLabel;
@@ -3361,7 +3364,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     warmSaturationMasterAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "warmSaturationMaster", warmSaturationMasterButton);
 
-    filterKeyTrackButton.setButtonText(safeString("Key Track"));
+    filterKeyTrackButton.setButtonText(safeString("Key Tracking"));
     filterKeyTrackButton.setTooltip(safeString("Filter cutoff follows the played key (neutral at middle C)"));
     filterKeyTrackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "filterKeyTrack", filterKeyTrackButton);
@@ -3999,7 +4002,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter1ResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     modFilter1ResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     warmSaturationMod1Button.setButtonText(safeString("Warm Saturation"));
-    modFilter1KeyTrackButton.setButtonText(safeString("Key Track"));
+    modFilter1KeyTrackButton.setButtonText(safeString("Key Tracking"));
     modFilter1KeyTrackButton.setTooltip(safeString("Filter cutoff follows the played key (neutral at middle C)"));
     // Cutoff/Resonance/Mode/WarmSat/KeyTrack attachments are created in rebuildLinkedFilterAttachments()
     // (called below and on every link toggle) so they can point at master or own params.
@@ -4029,7 +4032,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter2ResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     modFilter2ResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     warmSaturationMod2Button.setButtonText(safeString("Warm Saturation"));
-    modFilter2KeyTrackButton.setButtonText(safeString("Key Track"));
+    modFilter2KeyTrackButton.setButtonText(safeString("Key Tracking"));
     modFilter2KeyTrackButton.setTooltip(safeString("Filter cutoff follows the played key (neutral at middle C)"));
     modFilter2ModeLabel.setText(safeString("Mode"), juce::dontSendNotification);
     modFilter2CutoffLabel.setText(safeString("Cutoff"), juce::dontSendNotification);
@@ -6192,9 +6195,13 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
             // 63C wordmark in the bottom-right corner. The Master box bottom in
             // Legato (glide toggle visible) is filterBoxBottomY; the logo lives in
             // the band beneath it, sized to a fraction of the tallest height that
-            // still clears every box on all tabs.
-            const int masterBottom = (filterBoxBottomY > 0 ? filterBoxBottomY : h - 60);
-            const int band = h - masterBottom;
+            // still clears every box on all tabs. In the Standalone the playable
+            // keyboard occupies the bottom strip, so the band stops at the keyboard
+            // top (not the window bottom) — otherwise the keys cover the logo.
+            const int kbStripH = (standaloneKeyboard != nullptr) ? standaloneKeyboardHeight : 0;
+            const int contentBottom = h - kbStripH;
+            const int masterBottom = (filterBoxBottomY > 0 ? filterBoxBottomY : contentBottom - 60);
+            const int band = contentBottom - masterBottom;
             const int cleanH = juce::jlimit(24, 64, band - 9);
             const int logoH = juce::roundToInt(cleanH * 0.5985f);  // cumulative downscales
             const int logoW = juce::roundToInt(logoH * (logoImage.getWidth()
@@ -6363,7 +6370,7 @@ void SpaceDustAudioProcessorEditor::resized()
     const int pitchFaderWidth = 24;
     const int pitchFaderHeight = 80;
     const int meterBarHeight = 170;            // fixed stereo-meter height
-    const int legatoBtnH = 20;
+    const int legatoBtnH = 22;
     const int sectionGap = 20;                 // uniform gap between every section (tightened ~30% from 28)
 
     // Natural content height of each section: label + gap + control. Rotary value
