@@ -142,11 +142,131 @@ Load the AU in **Logic/GarageBand** and the VST3 in a VST3 host (Live, Reaper). 
 
 ---
 
+## 6. Package the installer (bundle factory presets + choice UI)
+
+This step produces a professional macOS installer (`.pkg` + optional `.dmg`) that:
+
+- Installs the **VST3** and **AU** plug-ins to the standard system locations
+  (`/Library/Audio/Plug-Ins/...`) when that choice is selected.
+- Optionally installs the **Standalone** app to `/Applications` when that choice
+  is selected.
+- **Always** installs the easy "Space Dust Uninstaller.command" to /Applications
+  (background / not a user-visible choice).
+- Bundles **all 50+ factory presets** (the exact set that ships with the Windows
+  installer, taken from the shared `installer/Files/Presets/` folder).
+- Runs a `postinstall` script that copies the factory `.sdpreset` files into the
+  user's `~/Documents/Space Dust/Presets` (never overwriting existing user
+  presets) and writes the `config.xml` that `PresetManager` reads on first launch.
+- Presents two user-visible choices (the Windows `.iss` offers similar optionality).
+
+The packaging script (`package-macos.sh`) is the direct macOS counterpart to
+`package-installer.ps1`. It shares the preset source tree and the same
+release-discipline mindset (clean build with logging off).
+
+### Run the packager (after a successful Release build)
+
+```bash
+# Fast path — reuse the artefacts you just built (the ones in build-release/
+# or build/ after the steps above)
+./package-macos.sh --skip-build
+
+# Full clean path (forces a logging-OFF Release build first, like the Windows side)
+./package-macos.sh
+
+# With signing (once you have the certs installed — see section 4)
+./package-macos.sh --sign
+
+# Other useful flags
+./package-macos.sh --skip-build --skip-dmg --out-dir /tmp
+```
+
+Outputs land in:
+
+```
+installer/Output/
+├── SpaceDust-Synthesizer-1.0-Mac.pkg
+└── SpaceDust-Synthesizer-1.0-Mac.dmg   (unless --skip-dmg)
+```
+
+The `.pkg` presents two user-visible selectable choices (the uninstaller is
+always installed in the background and is never shown as an option):
+
+- **VST3 + Audio Unit plug-ins** (selected by default)
+- **Standalone application** (selected by default)
+
+The choices are independent:
+- Standalone checked + plugins unchecked → only the app (+ uninstaller) is installed.
+- Plugins checked + standalone unchecked → only the plugins (+ uninstaller) are installed.
+- Both checked → both are installed (+ uninstaller).
+
+The postinstall always runs for whichever visible component(s) the user installs,
+so even a "standalone only" install still gets the factory presets and a working
+config.
+
+### Local testing of the installer (no notarization needed on your own Mac)
+
+```bash
+open installer/Output/SpaceDust-Synthesizer-1.0-Mac.pkg
+```
+
+After installation:
+
+- Plugins: `/Library/Audio/Plug-Ins/VST3/Space Dust.vst3` and
+  `.../Components/Space Dust.component`
+- Standalone: `/Applications/Space Dust.app`
+- Your personal presets + config: `~/Documents/Space Dust/Presets/` and
+  `~/Library/Application Support/Space Dust/config.xml`
+- Run `auval -v aumu SpDs YcPl` again (or just launch your DAW) to confirm the
+  installed AU is visible.
+
+### Notarization (do this *after* package preparation)
+
+As you requested: prepare the package first, notarize afterwards.
+
+Once your Apple Developer login / app-specific password is working:
+
+```bash
+# One-time credential storage (use an app-specific password, not your account password)
+xcrun notarytool store-credentials "spacedust-notary" \
+  --apple-id "you@example.com" --team-id "TEAMID" --password "abcd-efgh-ijkl-mnop"
+
+# Notarize + staple the .pkg (recommended) or the .dmg
+xcrun notarytool submit "installer/Output/SpaceDust-Synthesizer-1.0-Mac.pkg" \
+  --keychain-profile "spacedust-notary" --wait
+xcrun stapler staple "installer/Output/SpaceDust-Synthesizer-1.0-Mac.pkg"
+
+# If you prefer to ship the .dmg, notarize the .dmg (it will include the already-built .pkg)
+```
+
+See the end of the script output for the exact commands it prints.
+
+### Sharing the preset set between Windows and macOS
+
+- Factory presets live in `installer/Files/Presets/*.sdpreset` (plus the
+  developer-oriented `README.md` that explains the workflow).
+- Both `package-installer.ps1` (Windows) and `package-macos.sh` (macOS) pull from
+  this single source when they run.
+- The user-facing `installer/Support/README-Presets.txt` is installed as
+  `README.txt` inside the user's preset folder on both platforms.
+
+This keeps the "all of the presets that are on the Github page" in one place and
+guarantees the two installers ship an identical factory library.
+
+---
+
 ## Quick reference
 
 ```bash
-# Build → validate → install → sign → notarize (full release pass)
+# Build (universal) → validate → (optionally sign the raw plugins) → package
 cmake -B build -G Xcode -DJUCE_DIR=/path/to/JUCE
 cmake --build build --config Release
 auval -v aumu SpDs YcPl
+
+# Prepare the installer (presets bundled, choices for plugins vs. standalone)
+./package-macos.sh --skip-build
+
+# Later, when notarization is ready
+xcrun notarytool submit "installer/Output/SpaceDust-Synthesizer-1.0-Mac.pkg" \
+  --keychain-profile "spacedust-notary" --wait
+xcrun stapler staple "installer/Output/SpaceDust-Synthesizer-1.0-Mac.pkg"
 ```

@@ -78,7 +78,7 @@ install_vst_admin.bat
 # MCP servers (development tooling)
 mcp-servers-jos/
 
-# Inno Setup installer output (built .exe) - never commit
+# Installer output (built .pkg, .dmg, .exe) - never commit
 installer/Output/
 
 # Inno Setup installer binary staging (dropped here by build script) - never commit.
@@ -86,6 +86,11 @@ installer/Output/
 # contain factory content that ships with the installer.
 installer/Files/VST3/
 installer/Files/Standalone/
+
+# macOS installer binary staging area (populated by package-macos.sh - never commit)
+installer/macos/payload/
+installer/macos/scripts/Presets/
+installer/macos/scripts/README.txt
 
 # Scratch files
 Untitled

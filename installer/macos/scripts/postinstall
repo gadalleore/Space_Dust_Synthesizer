@@ -1,0 +1,124 @@
+#!/bin/bash
+#
+# Space Dust — postinstall script for macOS .pkg installer
+#
+# This runs (with root privileges) after the chosen components have been
+# installed. Its job is to:
+#   - Copy the factory .sdpreset files into the *user's* Documents preset folder
+#     (never overwriting files the user may have already saved or edited).
+#   - Write the config.xml so the plugin knows where to find presets on first run.
+#   - Drop the user-facing README.txt into the preset folder.
+#
+# The script targets the GUI console user (the person who double-clicked the
+# .pkg), not root. This matches the default behavior of PresetManager on macOS
+# (userDocumentsDirectory / "Space Dust" / "Presets" and userApplicationDataDirectory
+# for config.xml).
+#
+# Idempotent: safe to run multiple times (e.g. if both plugins and standalone
+# components trigger it).
+#
+# Arguments passed by the Installer:
+#   $1  Volume mount point (target volume, usually "/")
+#   $2  Full path to the package being installed
+#   $3  Installation destination (e.g. "/")
+#
+
+set -euo pipefail
+
+TARGET_VOLUME="${1:-/}"
+PACKAGE_PATH="${2:-}"
+DESTINATION="${3:-/}"
+
+log() { echo "[Space Dust installer] $*"; }
+
+# --- Determine the real GUI user (not root) ---------------------------------
+CONSOLE_USER="$(stat -f "%Su" /dev/console 2>/dev/null || echo "")"
+if [[ -z "$CONSOLE_USER" || "$CONSOLE_USER" == "root" ]]; then
+    # Fallback: owner of /dev/console
+    CONSOLE_USER="$(ls -l /dev/console 2>/dev/null | awk '{print $3}' || echo "")"
+fi
+if [[ -z "$CONSOLE_USER" || "$CONSOLE_USER" == "root" ]]; then
+    # Last resort – current $USER (may still be root in some automation)
+    CONSOLE_USER="${USER:-$(id -un)}"
+fi
+
+# Resolve the user's home directory reliably (works even if run as root)
+if [[ "$CONSOLE_USER" == "root" ]]; then
+    USER_HOME="/var/root"
+else
+    USER_HOME="$(dscl . -read "/Users/$CONSOLE_USER" NFSHomeDirectory 2>/dev/null | awk -F': ' '{print $2}' | head -1)"
+    if [[ -z "$USER_HOME" ]]; then
+        USER_HOME="/Users/$CONSOLE_USER"
+    fi
+fi
+
+PRESETS_DIR="$USER_HOME/Documents/Space Dust/Presets"
+CONFIG_DIR="$USER_HOME/Library/Application Support/Space Dust"
+CONFIG_FILE="$CONFIG_DIR/config.xml"
+
+log "Preparing presets & config for console user: $CONSOLE_USER"
+log "  Presets : $PRESETS_DIR"
+log "  Config  : $CONFIG_FILE"
+
+# Create directories (user-writable)
+mkdir -p "$PRESETS_DIR"
+mkdir -p "$CONFIG_DIR"
+
+# --- Locate factory content bundled inside this package ----------------------
+# When the .pkg was built with --scripts pointing at installer/macos/scripts,
+# everything under that directory (including the "Presets/" subfolder and
+# README.txt) travels with the package and is expanded next to this postinstall.
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+FACTORY_PRESETS_DIR="$SCRIPT_DIR/Presets"
+FACTORY_README="$SCRIPT_DIR/README.txt"
+
+# Copy factory presets (only new ones; preserve anything the user already has)
+if [[ -d "$FACTORY_PRESETS_DIR" ]]; then
+    shopt -s nullglob
+    for src in "$FACTORY_PRESETS_DIR"/*.sdpreset; do
+        base="$(basename "$src")"
+        dest="$PRESETS_DIR/$base"
+        if [[ ! -f "$dest" ]]; then
+            cp -p "$src" "$dest"
+            log "  + $base"
+        fi
+    done
+    shopt -u nullglob
+else
+    log "Warning: factory Presets/ directory not found inside package (looked in $FACTORY_PRESETS_DIR)"
+fi
+
+# Install/refresh the README only if the user doesn't have one yet.
+if [[ -f "$FACTORY_README" && ! -f "$PRESETS_DIR/README.txt" ]]; then
+    cp -p "$FACTORY_README" "$PRESETS_DIR/README.txt"
+    log "  + README.txt"
+fi
+
+# --- Write the config file that PresetManager reads on startup ---------------
+# Exact shape expected by loadPresetFolderConfig():
+#   <?xml version="1.0" encoding="UTF-8"?>
+#   <SpaceDustConfig presetFolder="...absolute path..."/>
+#
+# We deliberately overwrite on (re)install so that a changed preset location
+# chosen in a future installer version is picked up. The plugin itself can
+# later call setPresetFolder() which will rewrite the *user* config.
+cat > "$CONFIG_FILE" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<SpaceDustConfig presetFolder="$PRESETS_DIR"/>
+EOF
+
+# Make sure the user owns their data (in case we created dirs as root)
+if [[ "$CONSOLE_USER" != "root" ]]; then
+    chown -R "$CONSOLE_USER:staff" "$PRESETS_DIR" 2>/dev/null || true
+    chown -R "$CONSOLE_USER:staff" "$CONFIG_DIR" 2>/dev/null || true
+fi
+chmod 755 "$PRESETS_DIR" 2>/dev/null || true
+chmod 644 "$CONFIG_FILE" 2>/dev/null || true
+
+log "Done. Factory presets and configuration are ready."
+log "Launch your DAW (or the Standalone app) and the presets should appear."
+log "NOTE: You do NOT need to restart your entire Mac."
+log "      Just restart your DAW, or run:  killall -9 AudioComponentRegistrar"
+log "      to make hosts rescan the newly installed plug-ins."
+
+exit 0

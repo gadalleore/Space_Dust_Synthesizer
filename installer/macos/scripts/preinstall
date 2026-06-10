@@ -1,0 +1,31 @@
+#!/bin/bash
+#
+# Space Dust — preinstall script (attached to VST3 and Standalone components)
+#
+# Purpose: When the Standalone component package is being installed
+# (i.e. the user checked the "Standalone application" choice), remove
+# any existing "Space Dust.app" in the destination first.
+# This guarantees that the payload from this package is placed cleanly.
+# This is especially important on developer machines that often have
+# a manually copied/built copy of the app in /Applications for testing.
+#
+# It does nothing (no removal) when only the plugins choice is selected.
+#
+# Standard .pkg script arguments:
+#   $1  Volume mount point (target volume)
+#   $2  Full path to the package being installed (the component .pkg)
+#   $3  Installation destination for this component (e.g. /Applications)
+#
+
+set -euo pipefail
+
+TARGET_VOLUME="${1:-/}"
+PACKAGE_PATH="${2:-}"
+DESTINATION="${3:-/}"
+
+if [[ "$DESTINATION" == */Applications* ]]; then
+    echo "[Space Dust preinstall] Ensuring clean placement of Space Dust.app (removing any previous copy)..."
+    rm -rf "${DESTINATION}/Space Dust.app" 2>/dev/null || true
+fi
+
+exit 0
