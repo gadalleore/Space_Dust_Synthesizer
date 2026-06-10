@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   qa-windows:
-    runs-on: windows-latest
+    runs-on: windows-2022   # pinned: windows-latest (now Server 2025) breaks the "Visual Studio 17 2022" generator
     timeout-minutes: 50
 
     env:
@@ -136,7 +136,7 @@ jobs:
           if-no-files-found: warn
 
   qa-installer:
-    runs-on: windows-latest
+    runs-on: windows-2022
     needs: qa-windows
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     timeout-minutes: 30

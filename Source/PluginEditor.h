@@ -12,6 +12,13 @@
 #include "PresetManager.h"
 #include "CheezeGuyGame.h"
 
+// Glow overlays are defined in PluginEditor.cpp; forward-declare them here so the
+// unique_ptr members below resolve under ordinary name lookup. (A `friend class`
+// declaration alone is not visible to ordinary lookup — MSVC tolerates it, Clang
+// does not, which previously broke the macOS/Xcode build.)
+class TabGlowOverlayComponent;
+class BottomTabGlowOverlayComponent;
+
 //==============================================================================
 /**
     SpaceDust Audio Processor Editor
