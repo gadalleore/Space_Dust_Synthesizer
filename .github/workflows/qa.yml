@@ -81,6 +81,60 @@ jobs:
           path: build/pluginval-report.log
           if-no-files-found: ignore
 
+  qa-macos:
+    runs-on: macos-latest   # Apple Silicon runner — catches Clang/MSVC divergence + validates the AU
+    timeout-minutes: 50
+
+    env:
+      JUCE_REF: 8.0.4   # keep in lockstep with qa-windows
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Checkout JUCE
+        uses: actions/checkout@v4
+        with:
+          repository: juce-framework/JUCE
+          ref: ${{ env.JUCE_REF }}
+          path: JUCE
+
+      - name: Configure CMake (Xcode)
+        run: |
+          cmake -B build -G Xcode \
+                -DJUCE_DIR="${{ github.workspace }}/JUCE" \
+                -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
+
+      - name: Build (Release)
+        run: cmake --build build --config Release
+
+      - name: Install AU for validation
+        run: |
+          mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
+          cp -R "build/SpaceDust_artefacts/Release/AU/Space Dust.component" \
+                "$HOME/Library/Audio/Plug-Ins/Components/"
+          killall -9 AudioComponentRegistrar 2>/dev/null || true
+
+      - name: Validate AU (auval)
+        run: auval -v aumu SpDs YcPl
+
+      - name: Upload AU artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpaceDust-AU
+          path: build/SpaceDust_artefacts/Release/AU/Space Dust.component/**
+          if-no-files-found: warn
+
+      - name: Upload macOS VST3 artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: SpaceDust-VST3-macOS
+          path: build/SpaceDust_artefacts/Release/VST3/Space Dust.vst3/**
+          if-no-files-found: warn
+
   qa-installer:
     runs-on: windows-latest
     needs: qa-windows
