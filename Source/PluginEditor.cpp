@@ -556,7 +556,8 @@ MainPageComponent::MainPageComponent(SpaceDustAudioProcessorEditor& editor)
     addAndMakeVisible(parentEditor.filterResonanceSlider);
     addAndMakeVisible(parentEditor.filterResonanceLabel);
     addAndMakeVisible(parentEditor.warmSaturationMasterButton);
-    
+    addAndMakeVisible(parentEditor.filterKeyTrackButton);
+
     addAndMakeVisible(parentEditor.filterEnvGroup);
     addAndMakeVisible(parentEditor.filterEnvAttackSlider);
     addAndMakeVisible(parentEditor.filterEnvAttackLabel);
@@ -990,7 +991,17 @@ void MainPageComponent::resized()
     parentEditor.filterResonanceLabel.setBounds(resonanceLabelX, filterKnobStartY, resonanceLabelWidth, labelHeight);
     int filterResonanceKnobY = filterKnobStartY + labelHeight + filterLabelGap;
     parentEditor.filterResonanceSlider.setBounds(filterKnobX, filterResonanceKnobY, knobDiameter, knobDiameter);
-    
+
+    // Key Track toggle: in the open space to the right of the Resonance knob,
+    // vertically centred on the knob.
+    {
+        const int keyTrackW = 62;
+        const int keyTrackH = 20;
+        int keyTrackX = filterKnobX + knobDiameter + horizontalSpacing;
+        int keyTrackY = filterResonanceKnobY + (knobDiameter - keyTrackH) / 2;
+        parentEditor.filterKeyTrackButton.setBounds(keyTrackX, keyTrackY, keyTrackW, keyTrackH);
+    }
+
     // Warm Saturation toggle: below resonance row, before Filter Envelope
     filterKnobX = filterContent.getX();
     int warmSatButtonY = filterResonanceKnobY + knobDiameter + 12;
@@ -1145,6 +1156,7 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     addAndMakeVisible(parentEditor.modFilter1CutoffSlider);
     addAndMakeVisible(parentEditor.modFilter1ResonanceSlider);
     addAndMakeVisible(parentEditor.warmSaturationMod1Button);
+    addAndMakeVisible(parentEditor.modFilter1KeyTrackButton);
     addAndMakeVisible(parentEditor.modFilter1ModeLabel);
     addAndMakeVisible(parentEditor.modFilter1CutoffLabel);
     addAndMakeVisible(parentEditor.modFilter1ResonanceLabel);
@@ -1154,6 +1166,7 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     addAndMakeVisible(parentEditor.modFilter2CutoffSlider);
     addAndMakeVisible(parentEditor.modFilter2ResonanceSlider);
     addAndMakeVisible(parentEditor.warmSaturationMod2Button);
+    addAndMakeVisible(parentEditor.modFilter2KeyTrackButton);
     addAndMakeVisible(parentEditor.modFilter2ModeLabel);
     addAndMakeVisible(parentEditor.modFilter2CutoffLabel);
     addAndMakeVisible(parentEditor.modFilter2ResonanceLabel);
@@ -1459,6 +1472,14 @@ void ModulationPageComponent::resized()
         lfo1CurrentY += modLabelHeight + modLabelGap;
         parentEditor.modFilter1CutoffSlider.setBounds(filterPairLeft, lfo1CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
         parentEditor.modFilter1ResonanceSlider.setBounds(resX, lfo1CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
+        // Key Track toggle: in the open space to the right of the Resonance knob, centred on the rotary.
+        {
+            const int ktH = 18;
+            int ktX = resCentre + filterKnobSize / 2 + 8;
+            int ktY = lfo1CurrentY + (filterKnobSize - ktH) / 2;
+            int ktW = juce::jmin(60, lfo1Content.getRight() - ktX);
+            parentEditor.modFilter1KeyTrackButton.setBounds(ktX, ktY, ktW, ktH);
+        }
         lfo1CurrentY += modRotaryTextBoxTotalH + gapValueToNextLabel;
         parentEditor.modFilter1ModeLabel.setBounds(lfo1CentreX - filterComboW / 2, lfo1CurrentY, filterComboW, 12);
         lfo1CurrentY += 14;
@@ -1473,6 +1494,7 @@ void ModulationPageComponent::resized()
         parentEditor.modFilter1ModeCombo.setVisible(true);
         parentEditor.modFilter1ModeLabel.setVisible(true);
         parentEditor.modFilter1LinkButton.setVisible(true);
+        parentEditor.modFilter1KeyTrackButton.setVisible(true);
     }
     else
     {
@@ -1483,6 +1505,7 @@ void ModulationPageComponent::resized()
         parentEditor.modFilter1ModeCombo.setVisible(false);
         parentEditor.modFilter1ModeLabel.setVisible(false);
         parentEditor.modFilter1LinkButton.setVisible(false);
+        parentEditor.modFilter1KeyTrackButton.setVisible(false);
     }
     
     // Shrink LFO1 box to fit its actual content
@@ -1593,6 +1616,14 @@ void ModulationPageComponent::resized()
         lfo2CurrentY += modLabelHeight + modLabelGap;
         parentEditor.modFilter2CutoffSlider.setBounds(filterPairLeft, lfo2CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
         parentEditor.modFilter2ResonanceSlider.setBounds(resX, lfo2CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
+        // Key Track toggle: in the open space to the right of the Resonance knob, centred on the rotary.
+        {
+            const int ktH = 18;
+            int ktX = resCentre + filterKnobSize / 2 + 8;
+            int ktY = lfo2CurrentY + (filterKnobSize - ktH) / 2;
+            int ktW = juce::jmin(60, lfo2Content.getRight() - ktX);
+            parentEditor.modFilter2KeyTrackButton.setBounds(ktX, ktY, ktW, ktH);
+        }
         lfo2CurrentY += modRotaryTextBoxTotalH + gapValueToNextLabel;
         parentEditor.modFilter2ModeLabel.setBounds(lfo2CentreX - filterComboW / 2, lfo2CurrentY, filterComboW, 12);
         lfo2CurrentY += 14;
@@ -1607,6 +1638,7 @@ void ModulationPageComponent::resized()
         parentEditor.modFilter2ModeCombo.setVisible(true);
         parentEditor.modFilter2ModeLabel.setVisible(true);
         parentEditor.modFilter2LinkButton.setVisible(true);
+        parentEditor.modFilter2KeyTrackButton.setVisible(true);
     }
     else
     {
@@ -1617,6 +1649,7 @@ void ModulationPageComponent::resized()
         parentEditor.modFilter2ModeCombo.setVisible(false);
         parentEditor.modFilter2ModeLabel.setVisible(false);
         parentEditor.modFilter2LinkButton.setVisible(false);
+        parentEditor.modFilter2KeyTrackButton.setVisible(false);
     }
     
     // Shrink LFO2 box to fit its actual content
@@ -3327,7 +3360,12 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     warmSaturationMasterButton.setButtonText(safeString("Warm Saturation"));
     warmSaturationMasterAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "warmSaturationMaster", warmSaturationMasterButton);
-    
+
+    filterKeyTrackButton.setButtonText(safeString("Key Track"));
+    filterKeyTrackButton.setTooltip(safeString("Filter cutoff follows the played key (neutral at middle C)"));
+    filterKeyTrackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "filterKeyTrack", filterKeyTrackButton);
+
     // Filter Envelope
     filterEnvAttackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     filterEnvAttackSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
@@ -3961,7 +3999,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter1ResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     modFilter1ResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     warmSaturationMod1Button.setButtonText(safeString("Warm Saturation"));
-    // Cutoff/Resonance/Mode/WarmSat attachments are created in rebuildLinkedFilterAttachments()
+    modFilter1KeyTrackButton.setButtonText(safeString("Key Track"));
+    modFilter1KeyTrackButton.setTooltip(safeString("Filter cutoff follows the played key (neutral at middle C)"));
+    // Cutoff/Resonance/Mode/WarmSat/KeyTrack attachments are created in rebuildLinkedFilterAttachments()
     // (called below and on every link toggle) so they can point at master or own params.
     modFilter1ModeLabel.setText(safeString("Mode"), juce::dontSendNotification);
     modFilter1CutoffLabel.setText(safeString("Cutoff"), juce::dontSendNotification);
@@ -3989,6 +4029,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter2ResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     modFilter2ResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     warmSaturationMod2Button.setButtonText(safeString("Warm Saturation"));
+    modFilter2KeyTrackButton.setButtonText(safeString("Key Track"));
+    modFilter2KeyTrackButton.setTooltip(safeString("Filter cutoff follows the played key (neutral at middle C)"));
     modFilter2ModeLabel.setText(safeString("Mode"), juce::dontSendNotification);
     modFilter2CutoffLabel.setText(safeString("Cutoff"), juce::dontSendNotification);
     modFilter2ResonanceLabel.setText(safeString("Resonance"), juce::dontSendNotification);
@@ -5595,11 +5637,13 @@ void SpaceDustAudioProcessorEditor::rebuildLinkedFilterAttachments()
     setSlider(modFilter1CutoffAttachment,    modFilter1CutoffSlider,    link1 ? "filterCutoff"         : "modFilter1Cutoff");
     setSlider(modFilter1ResonanceAttachment, modFilter1ResonanceSlider, link1 ? "filterResonance"      : "modFilter1Resonance");
     setButton(warmSaturationMod1Attachment,  warmSaturationMod1Button,  link1 ? "warmSaturationMaster" : "warmSaturationMod1");
+    setButton(modFilter1KeyTrackAttachment,  modFilter1KeyTrackButton,  link1 ? "filterKeyTrack"       : "modFilter1KeyTrack");
 
     setCombo (modFilter2ModeAttachment,      modFilter2ModeCombo,       link2 ? "filterMode"           : "modFilter2Mode");
     setSlider(modFilter2CutoffAttachment,    modFilter2CutoffSlider,    link2 ? "filterCutoff"         : "modFilter2Cutoff");
     setSlider(modFilter2ResonanceAttachment, modFilter2ResonanceSlider, link2 ? "filterResonance"      : "modFilter2Resonance");
     setButton(warmSaturationMod2Attachment,  warmSaturationMod2Button,  link2 ? "warmSaturationMaster" : "warmSaturationMod2");
+    setButton(modFilter2KeyTrackAttachment,  modFilter2KeyTrackButton,  link2 ? "filterKeyTrack"       : "modFilter2KeyTrack");
 }
 
 void SpaceDustAudioProcessorEditor::syncLinkedFilterParams(const juce::String& parameterID, float /*newValue*/)

@@ -13,6 +13,12 @@ namespace
         if (proc != nullptr)
             proc->dspSanitizeEventCount.fetch_add(1u, std::memory_order_relaxed);
     }
+
+    // Keyboard tracking reference note: the played key at which key-track adds no
+    // offset (cutoff == knob). MIDI 60 = middle C. Above it the cutoff rises, below
+    // it falls, at 100% tracking (cutoff doubles per octave of keyboard).
+    constexpr int   kFilterKeyTrackRefNote = 60;
+    const     float kFilterKeyTrackLogPerSemi = static_cast<float>(std::log(2.0) / 12.0);
 }
 
 // Set to 1 to trace MIDI vs Hz in mono/legato: appends CSV rows to
@@ -984,7 +990,20 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
     
     // Track how many samples we actually process (in case ADSR finishes mid-block)
     int samplesProcessed = 0;
-    
+
+    // -- Keyboard tracking --
+    // The played key is fixed for the whole block, so compute the cutoff shift once
+    // here rather than per sample. keyTrackLogOffset is added in log-frequency space
+    // for the master filter; keyTrackMultiplier (= e^offset = 2^((note-ref)/12)) scales
+    // the unlinked mod-filter cutoffs. Each filter only applies these when its own
+    // key-track flag is on. Default 0 / 1.0 = no change (full backward compatibility).
+    const int keyTrackNote = currentlyPlayingNote.isValid()
+                                 ? static_cast<int>(currentlyPlayingNote.initialNote)
+                                 : kFilterKeyTrackRefNote;
+    const float keyTrackLogOffset = static_cast<float>(keyTrackNote - kFilterKeyTrackRefNote)
+                                        * kFilterKeyTrackLogPerSemi;
+    const float keyTrackMultiplier = std::exp(keyTrackLogOffset);
+
     // Generate oscillator waveforms, mix, and apply envelope
     for (int i = 0; i < maxSamples; ++i)
     {
@@ -1289,7 +1308,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // ±2 octaves = ±ln(4) ≈ ±1.386 in natural-log units.
         const float timbreLogOffset = timbreBipolar * static_cast<float>(std::log(4.0));
 
-        float modulatedCutoff = std::exp(juce::jlimit(logMin, logMax, logModulated + timbreLogOffset)) * lfoFactor;
+        const float masterKeyTrackOffset = filterKeyTrack ? keyTrackLogOffset : 0.0f;
+        float modulatedCutoff = std::exp(juce::jlimit(logMin, logMax, logModulated + timbreLogOffset + masterKeyTrackOffset)) * lfoFactor;
         modulatedCutoff = juce::jlimit(20.0f, 20000.0f, modulatedCutoff);
 
         // Apply normal cutoff smoothing, but use a much slower slew (extra damping)
@@ -1352,7 +1372,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         if (modFilter1Show && !modFilter1Linked)
         {
             float mod1LfoFactor = juce::jmax(0.0f, 1.0f + modFilter1LfoMod * 0.5f);
-            float modCutoff = juce::jlimit(20.0f, 20000.0f, modFilter1Cutoff * mod1LfoFactor);
+            float mod1KeyTrack = modFilter1KeyTrack ? keyTrackMultiplier : 1.0f;
+            float modCutoff = juce::jlimit(20.0f, 20000.0f, modFilter1Cutoff * mod1LfoFactor * mod1KeyTrack);
             modFilter1.setCutoffFrequency(modCutoff);
             modFilter1.process(context);
             if (warmSaturationMod1)
@@ -1365,7 +1386,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         if (modFilter2Show && !modFilter2Linked)
         {
             float mod2LfoFactor = juce::jmax(0.0f, 1.0f + modFilter2LfoMod * 0.5f);
-            float modCutoff = juce::jlimit(20.0f, 20000.0f, modFilter2Cutoff * mod2LfoFactor);
+            float mod2KeyTrack = modFilter2KeyTrack ? keyTrackMultiplier : 1.0f;
+            float modCutoff = juce::jlimit(20.0f, 20000.0f, modFilter2Cutoff * mod2LfoFactor * mod2KeyTrack);
             modFilter2.setCutoffFrequency(modCutoff);
             modFilter2.process(context);
             if (warmSaturationMod2)
@@ -1932,6 +1954,13 @@ void SynthVoice::setWarmSaturationMaster(bool enabled)
     warmSaturationMaster = enabled;
 }
 
+void SynthVoice::setFilterKeyTrack(bool enabled)
+{
+    // No filter rebuild needed: the offset is applied per-block in renderNextBlock,
+    // where the played note number is known.
+    filterKeyTrack = enabled;
+}
+
 void SynthVoice::setModFilter1(bool show, bool linkToMaster, int mode, float cutoffHz, float resonance)
 {
     modFilter1Show = show;
@@ -1947,6 +1976,11 @@ void SynthVoice::setWarmSaturationMod1(bool enabled)
     warmSaturationMod1 = enabled;
 }
 
+void SynthVoice::setModFilter1KeyTrack(bool enabled)
+{
+    modFilter1KeyTrack = enabled;
+}
+
 void SynthVoice::setModFilter2(bool show, bool linkToMaster, int mode, float cutoffHz, float resonance)
 {
     modFilter2Show = show;
@@ -1960,6 +1994,11 @@ void SynthVoice::setModFilter2(bool show, bool linkToMaster, int mode, float cut
 void SynthVoice::setWarmSaturationMod2(bool enabled)
 {
     warmSaturationMod2 = enabled;
+}
+
+void SynthVoice::setModFilter2KeyTrack(bool enabled)
+{
+    modFilter2KeyTrack = enabled;
 }
 
 //==============================================================================

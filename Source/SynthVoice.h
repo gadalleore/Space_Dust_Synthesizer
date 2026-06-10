@@ -176,12 +176,15 @@ public:
     void setFilterCutoff(float cutoffHz);
     void setFilterResonance(float resonance);
     void setWarmSaturationMaster(bool enabled);  // Moog-style saturation when ON
-    
+    void setFilterKeyTrack(bool enabled);        // Cutoff follows the played key when ON
+
     // Mod tab filters (show=enabled in UI, linkToMaster=use main filter params)
     void setModFilter1(bool show, bool linkToMaster, int mode, float cutoffHz, float resonance);
     void setWarmSaturationMod1(bool enabled);
+    void setModFilter1KeyTrack(bool enabled);
     void setModFilter2(bool show, bool linkToMaster, int mode, float cutoffHz, float resonance);
     void setWarmSaturationMod2(bool enabled);
+    void setModFilter2KeyTrack(bool enabled);
     
     // Filter envelope parameters
     void setFilterEnvAttack(float seconds);
@@ -311,7 +314,8 @@ private:
     float baseFilterCutoff = 8000.0f; // Base cutoff value (unmodulated, from parameter)
     float filterResonance = 0.3f;     // Normalized (0.0-1.0, maps to Q 0.1-20.0)
     bool warmSaturationMaster = false; // Moog-style tanh saturation when ON
-    
+    bool filterKeyTrack = false;       // Master filter cutoff follows the played key when ON
+
     // Mod tab filters (show=Filter toggle on, linkToMaster=use main filter params)
     bool modFilter1Show = false;
     bool modFilter1Linked = true;
@@ -319,12 +323,14 @@ private:
     float modFilter1Cutoff = 8000.0f;
     float modFilter1Resonance = 0.3f;
     bool warmSaturationMod1 = false;
+    bool modFilter1KeyTrack = false;
     bool modFilter2Show = false;
     bool modFilter2Linked = true;
     int modFilter2Mode = 0;
     float modFilter2Cutoff = 8000.0f;
     float modFilter2Resonance = 0.3f;
     bool warmSaturationMod2 = false;
+    bool modFilter2KeyTrack = false;
     
     // -- Filter Envelope (ADSR) --
     juce::ADSR filterAdsr;            // Filter envelope processor

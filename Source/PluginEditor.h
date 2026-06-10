@@ -429,7 +429,8 @@ private:
     juce::Slider filterCutoffSlider;
     juce::Slider filterResonanceSlider;
     juce::ToggleButton warmSaturationMasterButton;
-    
+    juce::ToggleButton filterKeyTrackButton;
+
     // Filter Envelope controls
     juce::GroupComponent filterEnvGroup;
     juce::Slider filterEnvAttackSlider;
@@ -584,6 +585,7 @@ private:
     juce::Slider modFilter1CutoffSlider;
     juce::Slider modFilter1ResonanceSlider;
     juce::ToggleButton warmSaturationMod1Button;
+    juce::ToggleButton modFilter1KeyTrackButton;
     juce::Label modFilter1ModeLabel;
     juce::Label modFilter1CutoffLabel;
     juce::Label modFilter1ResonanceLabel;
@@ -644,6 +646,7 @@ private:
     juce::Slider modFilter2CutoffSlider;
     juce::Slider modFilter2ResonanceSlider;
     juce::ToggleButton warmSaturationMod2Button;
+    juce::ToggleButton modFilter2KeyTrackButton;
     juce::Label modFilter2ModeLabel;
     juce::Label modFilter2CutoffLabel;
     juce::Label modFilter2ResonanceLabel;
@@ -866,6 +869,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> filterCutoffAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> filterResonanceAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> warmSaturationMasterAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> filterKeyTrackAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> filterEnvAttackAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> filterEnvDecayAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> filterEnvSustainAttachment;
@@ -919,11 +923,13 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> modFilter1CutoffAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> modFilter1ResonanceAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> warmSaturationMod1Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter1KeyTrackAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter2LinkAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modFilter2ModeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> modFilter2CutoffAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> modFilter2ResonanceAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> warmSaturationMod2Attachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter2KeyTrackAttachment;
     
     // Listeners for sync rate combos (must be destroyed before components)
     std::unique_ptr<SyncRateComboListener> lfo1SyncRateListener;

@@ -968,6 +968,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     bool modFilter1Link = safeGetParam(apvts, "modFilter1LinkToMaster") > 0.5f;
     bool modFilter2Link = safeGetParam(apvts, "modFilter2LinkToMaster") > 0.5f;
     bool warmSaturationMaster = safeGetParam(apvts, "warmSaturationMaster") > 0.5f;
+    bool filterKeyTrack = safeGetParam(apvts, "filterKeyTrack") > 0.5f;
 
     // When linked, use master filter values directly instead of mod filter values.
     // This avoids calling setValueNotifyingHost for sync, which triggers performEdit
@@ -976,11 +977,13 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     float modFilter1Cutoff = modFilter1Link ? filterCutoffHz : safeGetParam(apvts, "modFilter1Cutoff");
     float modFilter1Resonance = modFilter1Link ? filterResonance : safeGetParam(apvts, "modFilter1Resonance");
     bool warmSaturationMod1 = modFilter1Link ? warmSaturationMaster : safeGetParam(apvts, "warmSaturationMod1") > 0.5f;
+    bool modFilter1KeyTrack = modFilter1Link ? filterKeyTrack : safeGetParam(apvts, "modFilter1KeyTrack") > 0.5f;
 
     int modFilter2Mode = modFilter2Link ? filterMode : (int)safeGetParam(apvts, "modFilter2Mode");
     float modFilter2Cutoff = modFilter2Link ? filterCutoffHz : safeGetParam(apvts, "modFilter2Cutoff");
     float modFilter2Resonance = modFilter2Link ? filterResonance : safeGetParam(apvts, "modFilter2Resonance");
     bool warmSaturationMod2 = modFilter2Link ? warmSaturationMaster : safeGetParam(apvts, "warmSaturationMod2") > 0.5f;
+    bool modFilter2KeyTrack = modFilter2Link ? filterKeyTrack : safeGetParam(apvts, "modFilter2KeyTrack") > 0.5f;
 
     // Filter envelope: read directly from parameters each block (guarantees label matches decay)
     // Uses plain param ID strings to match SliderAttachment; p->get() returns exact displayed value
@@ -1077,10 +1080,13 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setFilterCutoff(filterCutoffHz);
             voice->setFilterResonance(filterResonance);
             voice->setWarmSaturationMaster(warmSaturationMaster);
+            voice->setFilterKeyTrack(filterKeyTrack);
             voice->setModFilter1(modFilter1Show, modFilter1Link, modFilter1Mode, modFilter1Cutoff, modFilter1Resonance);
             voice->setWarmSaturationMod1(warmSaturationMod1);
+            voice->setModFilter1KeyTrack(modFilter1KeyTrack);
             voice->setModFilter2(modFilter2Show, modFilter2Link, modFilter2Mode, modFilter2Cutoff, modFilter2Resonance);
             voice->setWarmSaturationMod2(warmSaturationMod2);
+            voice->setModFilter2KeyTrack(modFilter2KeyTrack);
             voice->setFilterEnvAttack(filterEnvAttack);
             voice->setFilterEnvDecay(filterEnvDecay);
             voice->setFilterEnvSustain(filterEnvSustain);
@@ -3020,7 +3026,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{"warmSaturationMaster", 1}, "Filter Warm Sat", false),
         "warmSaturationMaster");
-    
+
+    // Keyboard tracking: when ON, the filter cutoff follows the played key
+    // (one octave of cutoff per octave of keyboard, neutral at middle C).
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"filterKeyTrack", 1}, "Filter Key Track", false),
+        "filterKeyTrack");
+
     //==============================================================================
     // -- Filter Envelope Parameters (ADSR) --
     // Filter envelope modulates filter cutoff with bipolar amount control
@@ -3418,7 +3431,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{"warmSaturationMod1", 1}, "Mod 1 Warm Sat", false),
         "warmSaturationMod1");
-    
+
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"modFilter1KeyTrack", 1}, "Mod 1 Key Track", false),
+        "modFilter1KeyTrack");
+
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"modFilter2Mode", 1}, "Mod Filter 2 Mode",
@@ -3441,7 +3459,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{"warmSaturationMod2", 1}, "Mod 2 Warm Sat", false),
         "warmSaturationMod2");
-    
+
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"modFilter2KeyTrack", 1}, "Mod 2 Key Track", false),
+        "modFilter2KeyTrack");
+
     //==============================================================================
     // -- Delay Effect Parameters --
     ADD_PARAM_WITH_LOG(params,
