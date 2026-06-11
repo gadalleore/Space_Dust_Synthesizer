@@ -992,15 +992,17 @@ void MainPageComponent::resized()
     int filterResonanceKnobY = filterKnobStartY + labelHeight + filterLabelGap;
     parentEditor.filterResonanceSlider.setBounds(filterKnobX, filterResonanceKnobY, knobDiameter, knobDiameter);
 
-    // Key Tracking toggle: in the open space to the right of the Resonance knob.
-    // Height matches the Sub Oscillator button (22). The button centre lines up with
-    // the knob's CIRCLE centre — the rotary sits above its value box, so the circle
-    // centre is higher than the bounds centre by half the text-box height.
+    // Key Tracking toggle: centred horizontally over the Filter-Envelope "Amount"
+    // knob column (one column right of Resonance), sitting above it. Height matches
+    // the Sub Oscillator button (22). Vertically the button centre lines up with the
+    // Resonance knob's CIRCLE centre — the rotary sits above its value box, so the
+    // circle centre is higher than the bounds centre by half the text-box height.
     {
         const int keyTrackW = 86;
         const int keyTrackH = 22;
         const int resTextBoxH = 20;  // matches filterResonanceSlider TextBoxBelow height
-        int keyTrackX = filterKnobX + knobDiameter + horizontalSpacing;
+        int amountColX = filterKnobX + knobDiameter + horizontalSpacing;  // Amount env-knob column
+        int keyTrackX = amountColX + (knobDiameter - keyTrackW) / 2;       // centre button over that column
         int keyTrackY = filterResonanceKnobY + (knobDiameter - resTextBoxH) / 2 - keyTrackH / 2;
         parentEditor.filterKeyTrackButton.setBounds(keyTrackX, keyTrackY, keyTrackW, keyTrackH);
     }
@@ -1475,9 +1477,10 @@ void ModulationPageComponent::resized()
         lfo1CurrentY += modLabelHeight + modLabelGap;
         parentEditor.modFilter1CutoffSlider.setBounds(filterPairLeft, lfo1CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
         parentEditor.modFilter1ResonanceSlider.setBounds(resX, lfo1CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
-        // Key Track toggle: in the open space to the right of the Resonance knob, centred on the rotary.
+        // Key Tracking toggle: in the open space to the right of the Resonance knob, centred on the
+        // rotary. Height matches the Filter / Warm Saturation buttons (modButtonHeight).
         {
-            const int ktH = 18;
+            const int ktH = modButtonHeight;
             int ktX = resCentre + filterKnobSize / 2 + 8;
             int ktY = lfo1CurrentY + (filterKnobSize - ktH) / 2;
             int ktW = juce::jmin(84, lfo1Content.getRight() - ktX);
@@ -1619,9 +1622,10 @@ void ModulationPageComponent::resized()
         lfo2CurrentY += modLabelHeight + modLabelGap;
         parentEditor.modFilter2CutoffSlider.setBounds(filterPairLeft, lfo2CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
         parentEditor.modFilter2ResonanceSlider.setBounds(resX, lfo2CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
-        // Key Track toggle: in the open space to the right of the Resonance knob, centred on the rotary.
+        // Key Tracking toggle: in the open space to the right of the Resonance knob, centred on the
+        // rotary. Height matches the Filter / Warm Saturation buttons (modButtonHeight).
         {
-            const int ktH = 18;
+            const int ktH = modButtonHeight;
             int ktX = resCentre + filterKnobSize / 2 + 8;
             int ktY = lfo2CurrentY + (filterKnobSize - ktH) / 2;
             int ktW = juce::jmin(84, lfo2Content.getRight() - ktX);
