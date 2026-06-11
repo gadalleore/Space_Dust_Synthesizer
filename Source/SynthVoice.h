@@ -4,6 +4,7 @@
 // MPE support: juce_audio_basics provides MPESynthesiserVoice, MPENote, MPEValue
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
+#include "NonlinearSVF.h" // Self-oscillating state-variable filter (master + mod filters)
 #include "SynthSound.h"   // Kept for build compatibility (some headers still include it indirectly)
 #include <array>
 #include <numeric>
@@ -302,9 +303,11 @@ private:
     float analogDriftWalkCoeff = 0.0f; // One-pole coeff toward white noise (~10 s time constant at 44.1 kHz)
     
     // -- Filter --
-    juce::dsp::StateVariableTPTFilter<float> filter;
-    juce::dsp::StateVariableTPTFilter<float> modFilter1;  // Second filter when modFilter1 unlinked
-    juce::dsp::StateVariableTPTFilter<float> modFilter2;  // Third filter when modFilter2 unlinked
+    // Self-oscillating SVF: identical to a clean TPT filter for the lower ~80% of
+    // the resonance knob; the top of the knob drives it into self-oscillation.
+    NonlinearSVF filter;
+    NonlinearSVF modFilter1;  // Second filter when modFilter1 unlinked
+    NonlinearSVF modFilter2;  // Third filter when modFilter2 unlinked
     
     // Noise EQ filters: simple 1-pole shelf filters for low and high frequency shaping
     juce::dsp::IIR::Filter<float> lowShelfFilter;

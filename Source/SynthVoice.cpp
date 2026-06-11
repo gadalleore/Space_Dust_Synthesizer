@@ -727,55 +727,31 @@ void SynthVoice::updateOsc2Frequency(double baseFrequency)
 void SynthVoice::updateModFilter1()
 {
     if (modFilter1Linked || sampleRate <= 0.0f) return;
-    float q = 0.1f + modFilter1Resonance * 19.9f;
     float clampedCutoff = juce::jlimit(20.0f, 20000.0f, modFilter1Cutoff);
-    switch (modFilter1Mode)
-    {
-        case 0: modFilter1.setType(juce::dsp::StateVariableTPTFilterType::lowpass); break;
-        case 1: modFilter1.setType(juce::dsp::StateVariableTPTFilterType::bandpass); break;
-        case 2: modFilter1.setType(juce::dsp::StateVariableTPTFilterType::highpass); break;
-        default: modFilter1.setType(juce::dsp::StateVariableTPTFilterType::lowpass); break;
-    }
+    modFilter1.setMode(modFilter1Mode);
     modFilter1.setCutoffFrequency(clampedCutoff);
-    modFilter1.setResonance(q);
+    modFilter1.setResonanceNormalized(modFilter1Resonance);
 }
 
 void SynthVoice::updateModFilter2()
 {
     if (modFilter2Linked || sampleRate <= 0.0f) return;
-    float q = 0.1f + modFilter2Resonance * 19.9f;
     float clampedCutoff = juce::jlimit(20.0f, 20000.0f, modFilter2Cutoff);
-    switch (modFilter2Mode)
-    {
-        case 0: modFilter2.setType(juce::dsp::StateVariableTPTFilterType::lowpass); break;
-        case 1: modFilter2.setType(juce::dsp::StateVariableTPTFilterType::bandpass); break;
-        case 2: modFilter2.setType(juce::dsp::StateVariableTPTFilterType::highpass); break;
-        default: modFilter2.setType(juce::dsp::StateVariableTPTFilterType::lowpass); break;
-    }
+    modFilter2.setMode(modFilter2Mode);
     modFilter2.setCutoffFrequency(clampedCutoff);
-    modFilter2.setResonance(q);
+    modFilter2.setResonanceNormalized(modFilter2Resonance);
 }
 
 void SynthVoice::updateFilter()
 {
-    // Map resonance (0.0-1.0) to Q (0.1-20.0) for StateVariableTPTFilter
-    float q = 0.1f + filterResonance * 19.9f;
-    
     // Clamp cutoff to valid range
     float clampedCutoff = juce::jlimit(20.0f, 20000.0f, filterCutoff);
-    
-    // Update filter based on mode (only set type if changed to avoid internal state reset)
-    static const juce::dsp::StateVariableTPTFilterType types[] = {
-        juce::dsp::StateVariableTPTFilterType::lowpass,
-        juce::dsp::StateVariableTPTFilterType::bandpass,
-        juce::dsp::StateVariableTPTFilterType::highpass
-    };
-    int clampedMode = juce::jlimit(0, 2, filterMode);
-    if (filter.getType() != types[clampedMode])
-        filter.setType(types[clampedMode]);
-    
+
+    // Resonance is passed normalized (0.0-1.0); NonlinearSVF owns the Q curve and
+    // the self-oscillation region at the top of the knob.
+    filter.setMode(juce::jlimit(0, 2, filterMode));
     filter.setCutoffFrequency(clampedCutoff);
-    filter.setResonance(q);
+    filter.setResonanceNormalized(filterResonance);
 }
 
 void SynthVoice::updateNoiseEqFilters()
@@ -1364,24 +1340,49 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         float leftEnv = leftMix * envelope;
         float rightEnv = rightMix * envelope;
 
-        // Step 7: Process through filter (stereo, per-sample to allow envelope modulation)
-        voiceSingleSampleBuffer.setSample(0, 0, leftEnv);
-        voiceSingleSampleBuffer.setSample(1, 0, rightEnv);
-        juce::dsp::AudioBlock<float> singleSampleBlock(voiceSingleSampleBuffer);
-        juce::dsp::ProcessContextReplacing<float> context(singleSampleBlock);
+        // Step 7: Process through filter (per-sample so the self-oscillating SVF
+        // tracks cutoff/key per sample and follows the amplitude envelope).
+        float filtL = leftEnv;
+        float filtR = rightEnv;
+
+        // MASTER filter runs FIRST. When no mod filters are active it is the only
+        // filter in the chain, so the master-only sound is bit-for-bit unchanged.
+        // When an unlinked mod filter is active it now sits AFTER the master, making
+        // the mod the last (dominant, untamed) voice — as powerful as the master,
+        // instead of having its grit smoothed away by the master downstream.
+        // (Master cutoff was already set above via smoothedFilterCutoffHz.)
+        filter.setEnvelope(envelope);
+        filtL = filter.processSample(0, filtL);
+        filtR = filter.processSample(1, filtR);
+        if (warmSaturationMaster)
+        {
+            float drive = 1.0f + filterResonance * 2.0f;
+            filtL = std::tanh(filtL * drive);
+            filtR = std::tanh(filtR * drive);
+        }
+        // Per-stage hard clip: squaring off resonant / self-oscillating peaks is what
+        // gives the aggressive, gritty bite. EVERY filter stage gets the same clip, so
+        // character is identical regardless of position in the chain.
+        filtL = juce::jlimit(-1.0f, 1.0f, filtL);
+        filtR = juce::jlimit(-1.0f, 1.0f, filtR);
+
         if (modFilter1Show && !modFilter1Linked)
         {
             float mod1LfoFactor = juce::jmax(0.0f, 1.0f + modFilter1LfoMod * 0.5f);
             float mod1KeyTrack = modFilter1KeyTrack ? keyTrackMultiplier : 1.0f;
             float modCutoff = juce::jlimit(20.0f, 20000.0f, modFilter1Cutoff * mod1LfoFactor * mod1KeyTrack);
             modFilter1.setCutoffFrequency(modCutoff);
-            modFilter1.process(context);
+            modFilter1.setEnvelope(envelope);
+            filtL = modFilter1.processSample(0, filtL);
+            filtR = modFilter1.processSample(1, filtR);
             if (warmSaturationMod1)
             {
                 float drive = 1.0f + modFilter1Resonance * 2.0f;
-                voiceSingleSampleBuffer.setSample(0, 0, std::tanh(voiceSingleSampleBuffer.getSample(0, 0) * drive));
-                voiceSingleSampleBuffer.setSample(1, 0, std::tanh(voiceSingleSampleBuffer.getSample(1, 0) * drive));
+                filtL = std::tanh(filtL * drive);
+                filtR = std::tanh(filtR * drive);
             }
+            filtL = juce::jlimit(-1.0f, 1.0f, filtL);
+            filtR = juce::jlimit(-1.0f, 1.0f, filtR);
         }
         if (modFilter2Show && !modFilter2Linked)
         {
@@ -1389,24 +1390,22 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             float mod2KeyTrack = modFilter2KeyTrack ? keyTrackMultiplier : 1.0f;
             float modCutoff = juce::jlimit(20.0f, 20000.0f, modFilter2Cutoff * mod2LfoFactor * mod2KeyTrack);
             modFilter2.setCutoffFrequency(modCutoff);
-            modFilter2.process(context);
+            modFilter2.setEnvelope(envelope);
+            filtL = modFilter2.processSample(0, filtL);
+            filtR = modFilter2.processSample(1, filtR);
             if (warmSaturationMod2)
             {
                 float drive = 1.0f + modFilter2Resonance * 2.0f;
-                voiceSingleSampleBuffer.setSample(0, 0, std::tanh(voiceSingleSampleBuffer.getSample(0, 0) * drive));
-                voiceSingleSampleBuffer.setSample(1, 0, std::tanh(voiceSingleSampleBuffer.getSample(1, 0) * drive));
+                filtL = std::tanh(filtL * drive);
+                filtR = std::tanh(filtR * drive);
             }
+            filtL = juce::jlimit(-1.0f, 1.0f, filtL);
+            filtR = juce::jlimit(-1.0f, 1.0f, filtR);
         }
-        filter.process(context);
-        if (warmSaturationMaster)
-        {
-            float drive = 1.0f + filterResonance * 2.0f;
-            voiceSingleSampleBuffer.setSample(0, 0, std::tanh(voiceSingleSampleBuffer.getSample(0, 0) * drive));
-            voiceSingleSampleBuffer.setSample(1, 0, std::tanh(voiceSingleSampleBuffer.getSample(1, 0) * drive));
-        }
-        
-        float outL = juce::jlimit(-1.0f, 1.0f, voiceSingleSampleBuffer.getSample(0, 0));
-        float outR = juce::jlimit(-1.0f, 1.0f, voiceSingleSampleBuffer.getSample(1, 0));
+
+        // Final safety clip (idempotent — each stage above already clipped).
+        float outL = juce::jlimit(-1.0f, 1.0f, filtL);
+        float outR = juce::jlimit(-1.0f, 1.0f, filtR);
         if (!std::isfinite(outL) || !std::isfinite(outR))
         {
             reportDspSanitize(processor);
