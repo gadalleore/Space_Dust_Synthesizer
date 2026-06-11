@@ -130,6 +130,13 @@ target_sources(SpaceDust PRIVATE
 target_compile_definitions(SpaceDust
     PRIVATE
         JUCE_VST3_CAN_REPLACE_VST2=0
+        # Don't expose 16*130 = 2080 phantom "MIDI CC" parameters via VST3.
+        # JUCE defaults this ON for MIDI-input instruments, which made Ableton see
+        # 2286 parameters (2080 MIDI-CC + 205 real + bypass). That huge parameter
+        # surface is implicated in heap corruption under heavy automation in Live 10,
+        # and clutters the host automation list. Space Dust receives MIDI directly
+        # (MPE), so it never needs host-automatable MIDI-CC-as-parameters.
+        JUCE_VST3_EMULATE_MIDI_CC_WITH_PARAMETERS=0
         # Force VST3 Audio Module "Class Flags" to 0.
         # JUCE defaults JucePlugin_Vst3ComponentFlags to kSimpleModeSupported (=2)
         # for synths. FL Studio interprets that flag as a second usable mode and

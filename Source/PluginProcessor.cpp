@@ -732,9 +732,14 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         // by applyPendingMpeReconfig() so it never races note rendering).
         mpeReconfigPending.store(true, std::memory_order_release);
         
-        // Initialize LFO buffers for per-sample processing
-        lfo1Buffer.setSize(1, samplesPerBlock);
-        lfo2Buffer.setSize(1, samplesPerBlock);
+        // Initialize LFO buffers for per-sample processing.
+        // Size with generous headroom (>= 8192): some hosts (e.g. Ableton during
+        // freeze/bounce/render) hand processBlock a LARGER block than the size they
+        // declared here, and the LFO fill loops write `numSamples` entries via the
+        // unchecked setSample(). Without headroom that overruns the buffer and
+        // corrupts the heap. processBlock also has a hard grow-guard as a backstop.
+        lfo1Buffer.setSize(1, juce::jmax(samplesPerBlock, 8192));
+        lfo2Buffer.setSize(1, juce::jmax(samplesPerBlock, 8192));
         lfo1Buffer.clear();
         lfo2Buffer.clear();
         // Seed Sample & Hold with initial random values (avoids first period at 0)
@@ -1485,7 +1490,18 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     //==============================================================================
     // -- LFO Processing (Per-Sample Buffers) --
     // Generate per-sample LFO values and fill buffers for voice access
-    
+
+    // SAFETY: a host may call processBlock with MORE samples than it declared to
+    // prepareToPlay (Ableton does this during freeze/bounce/render). The LFO fill
+    // loops below write `numSamples` entries via setSample(), which is unchecked in
+    // Release — an oversized block would write past the end and corrupt the heap
+    // (ASan-confirmed heap-buffer-overflow). Grow the buffers if the block exceeds
+    // their current capacity. Allocates only on growth (rare), then stays grown.
+    if (lfo1Buffer.getNumSamples() < numSamples)
+        lfo1Buffer.setSize(1, numSamples, false, false, true);
+    if (lfo2Buffer.getNumSamples() < numSamples)
+        lfo2Buffer.setSize(1, numSamples, false, false, true);
+
     // Get LFO parameters
     bool lfo1Enabled = safeGetParam(apvts, "lfo1Enabled") > 0.5f;
     float lfo1Depth = lfo1Enabled ? (safeGetParam(apvts, "lfo1Depth") * 2.0f / 100.0f) : 0.0f;  // 0-2.0 when on

@@ -950,7 +950,16 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
     
     // Denormal prevention: FTZ/DAZ for oscillators, filters, envelopes (per JUCE best practice)
     juce::ScopedNoDenormals noDenormals;
-    
+
+    // SAFETY: a host may render a block LARGER than it declared to prepareToPlay
+    // (Ableton does this during freeze/bounce/render). The per-voice scratch buffer
+    // is sized to the prepared max; the per-sample writes and clear() below address
+    // up to `numSamples`, so grow it if this block exceeds its capacity — otherwise
+    // they overrun the buffer and corrupt the heap (ASan-confirmed). Grows only on
+    // the first oversized block, then stays grown.
+    if (voiceTempBuffer.getNumSamples() < numSamples)
+        voiceTempBuffer.setSize(2, numSamples, false, false, true);
+
     //==============================================================================
     // -- DEBUG LOGGING: Voice Rendering (completely removed for production) --
     // Verbose logging removed entirely to prevent CPU spam and crashes.
