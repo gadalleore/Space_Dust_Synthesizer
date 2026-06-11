@@ -120,6 +120,12 @@ Source: "Support\README-Presets.txt"; DestDir: "{code:GetPresetsDir}"; DestName:
 ; Standalone app shortcuts (only created when the Standalone component is selected).
 Name: "{autoprograms}\Space Dust"; Filename: "{app}\Space Dust.exe"; Components: standalone
 Name: "{autodesktop}\Space Dust";  Filename: "{app}\Space Dust.exe"; Components: standalone; Tasks: desktopicon
+; NOTE: We deliberately do NOT create a Start Menu "Uninstall Space Dust" shortcut.
+; Windows 10/11 filter uninstall-target shortcuts out of the Start Menu "All apps"
+; list (by design — they route uninstalls through Settings > Apps), so such a shortcut
+; is created as a file but never shown. The discoverable, working uninstall path is the
+; auto-registered entry in Settings > Apps / Programs and Features ("Space Dust
+; Synthesizer version 1.0"), which Inno creates automatically.
 
 [Run]
 ; Silent install — no post-install programs required for a VST3.
