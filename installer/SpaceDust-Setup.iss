@@ -63,6 +63,16 @@ UninstallDisplayIcon={app}\AppIcon.ico
 Compression=lzma2/max
 SolidCompression=yes
 LZMAUseSeparateProcess=yes
+; --- Code signing -------------------------------------------------------------
+; When compiled with /DSIGN (see package-installer.ps1 -Sign), Inno signs the
+; Setup .exe AND the embedded uninstaller (unins000.exe) on the fly using the
+; "spacedust" sign tool, whose command is supplied on the ISCC command line via
+; /Sspacedust=...  SignedUninstaller defaults to "yes if a SignTool is set", so
+; merely defining this directive is what gets the uninstaller signed - otherwise
+; unins000.exe is extracted unsigned at install time and shows "unknown publisher".
+#ifdef SIGN
+SignTool=spacedust
+#endif
 ; --- Shell --------------------------------------------------------------------
 MinVersion=10.0
 CloseApplications=no

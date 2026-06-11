@@ -317,8 +317,26 @@ if (-not $SkipPresets) {
 }
 
 # ── Step 4: Compile installer ─────────────────────────────────────────────
+# When signing, hand ISCC a "spacedust" sign tool (matching the SignTool
+# directive guarded by #ifdef SIGN in the .iss). Inno then signs the Setup .exe
+# AND the embedded uninstaller on the fly, so unins000.exe is trusted instead of
+# showing "unknown publisher". $q expands to a literal quote inside ISCC, which
+# sidesteps PowerShell/ISCC quoting of the space-bearing tool/dlib/meta paths;
+# $f is auto-quoted by Inno. The same /tr timestamp keeps it valid past cert
+# rotation, mirroring Invoke-CodeSign.
+$isccArgs = @()
+if ($Sign) {
+    $metaAbs  = (Resolve-Path $meta).Path
+    $signCmd  = '/Sspacedust=$q' + $signtool + '$q sign /v /fd SHA256 ' +
+                '/tr http://timestamp.acs.microsoft.com /td SHA256 ' +
+                '/dlib $q' + $dlib + '$q /dmdf $q' + $metaAbs + '$q $f'
+    $isccArgs += "/DSIGN"
+    $isccArgs += $signCmd
+}
+$isccArgs += "installer\SpaceDust-Setup.iss"
+
 Write-Host "[Package] Compiling installer..." -ForegroundColor Cyan
-& $iscc "installer\SpaceDust-Setup.iss"
+& $iscc @isccArgs
 if ($LASTEXITCODE -ne 0) {
     Write-Host "[Package] ISCC failed (exit $LASTEXITCODE)." -ForegroundColor Red
     exit 1
