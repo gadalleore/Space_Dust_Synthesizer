@@ -1361,19 +1361,34 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // instead of having its grit smoothed away by the master downstream.
         // (Master cutoff was already set above via smoothedFilterCutoffHz.)
         filter.setEnvelope(envelope);
-        filtL = filter.processSample(0, filtL);
-        filtR = filter.processSample(1, filtR);
-        if (warmSaturationMaster)
+        // The master filter's nonlinear chain (SVF + warm-sat tanh + per-stage hard
+        // clip). This is the aliasing source under audio-rate modulation: the clip
+        // squares off resonant/self-oscillating peaks for the gritty bite, but those
+        // edges fold back below Nyquist. Wrapping the WHOLE chain (not just the SVF)
+        // in the oversampler is what removes the fold-back.
+        auto masterNL = [this](int ch, float s) noexcept -> float
         {
-            float drive = 1.0f + filterResonance * 2.0f;
-            filtL = std::tanh(filtL * drive);
-            filtR = std::tanh(filtR * drive);
+            float y = filter.processSample(ch, s);
+            if (warmSaturationMaster)
+            {
+                const float drive = 1.0f + filterResonance * 2.0f;
+                y = std::tanh(y * drive);
+            }
+            return juce::jlimit(-1.0f, 1.0f, y);
+        };
+
+        if (oversampleFilter)
+        {
+            // 4x: filter maths already run at the oversampled rate (rate-scale set
+            // in setFilterOversample); the FIRs handle anti-imaging/anti-aliasing.
+            filtL = masterFilterOS.process(0, filtL, [&](float s) noexcept { return masterNL(0, s); });
+            filtR = masterFilterOS.process(1, filtR, [&](float s) noexcept { return masterNL(1, s); });
         }
-        // Per-stage hard clip: squaring off resonant / self-oscillating peaks is what
-        // gives the aggressive, gritty bite. EVERY filter stage gets the same clip, so
-        // character is identical regardless of position in the chain.
-        filtL = juce::jlimit(-1.0f, 1.0f, filtL);
-        filtR = juce::jlimit(-1.0f, 1.0f, filtR);
+        else
+        {
+            filtL = masterNL(0, filtL);   // host rate — bit-identical to before
+            filtR = masterNL(1, filtR);
+        }
 
         if (modFilter1Show && !modFilter1Linked)
         {
@@ -1382,16 +1397,23 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             float modCutoff = juce::jlimit(20.0f, 20000.0f, modFilter1Cutoff * mod1LfoFactor * mod1KeyTrack);
             modFilter1.setCutoffFrequency(modCutoff);
             modFilter1.setEnvelope(envelope);
-            filtL = modFilter1.processSample(0, filtL);
-            filtR = modFilter1.processSample(1, filtR);
-            if (warmSaturationMod1)
+            auto mod1NL = [this](int ch, float s) noexcept -> float
             {
-                float drive = 1.0f + modFilter1Resonance * 2.0f;
-                filtL = std::tanh(filtL * drive);
-                filtR = std::tanh(filtR * drive);
+                float y = modFilter1.processSample(ch, s);
+                if (warmSaturationMod1)
+                    y = std::tanh(y * (1.0f + modFilter1Resonance * 2.0f));
+                return juce::jlimit(-1.0f, 1.0f, y);
+            };
+            if (oversampleFilter)
+            {
+                filtL = modFilter1OS.process(0, filtL, [&](float s) noexcept { return mod1NL(0, s); });
+                filtR = modFilter1OS.process(1, filtR, [&](float s) noexcept { return mod1NL(1, s); });
             }
-            filtL = juce::jlimit(-1.0f, 1.0f, filtL);
-            filtR = juce::jlimit(-1.0f, 1.0f, filtR);
+            else
+            {
+                filtL = mod1NL(0, filtL);
+                filtR = mod1NL(1, filtR);
+            }
         }
         if (modFilter2Show && !modFilter2Linked)
         {
@@ -1400,16 +1422,23 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             float modCutoff = juce::jlimit(20.0f, 20000.0f, modFilter2Cutoff * mod2LfoFactor * mod2KeyTrack);
             modFilter2.setCutoffFrequency(modCutoff);
             modFilter2.setEnvelope(envelope);
-            filtL = modFilter2.processSample(0, filtL);
-            filtR = modFilter2.processSample(1, filtR);
-            if (warmSaturationMod2)
+            auto mod2NL = [this](int ch, float s) noexcept -> float
             {
-                float drive = 1.0f + modFilter2Resonance * 2.0f;
-                filtL = std::tanh(filtL * drive);
-                filtR = std::tanh(filtR * drive);
+                float y = modFilter2.processSample(ch, s);
+                if (warmSaturationMod2)
+                    y = std::tanh(y * (1.0f + modFilter2Resonance * 2.0f));
+                return juce::jlimit(-1.0f, 1.0f, y);
+            };
+            if (oversampleFilter)
+            {
+                filtL = modFilter2OS.process(0, filtL, [&](float s) noexcept { return mod2NL(0, s); });
+                filtR = modFilter2OS.process(1, filtR, [&](float s) noexcept { return mod2NL(1, s); });
             }
-            filtL = juce::jlimit(-1.0f, 1.0f, filtL);
-            filtR = juce::jlimit(-1.0f, 1.0f, filtR);
+            else
+            {
+                filtL = mod2NL(0, filtL);
+                filtR = mod2NL(1, filtR);
+            }
         }
 
         // Final safety clip (idempotent — each stage above already clipped).
@@ -1660,7 +1689,16 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
     filter.prepare({ sampleRate, maxBlockSize, 2 });
     modFilter1.prepare({ sampleRate, maxBlockSize, 2 });
     modFilter2.prepare({ sampleRate, maxBlockSize, 2 });
-    
+
+    // Filter oversamplers. Re-apply the current factor so each filter's rate-scale
+    // matches after a sample-rate change.
+    {
+        const int osf = oversampleFilter ? kFilterOSFactor : 1;
+        masterFilterOS.prepare(); masterFilterOS.setFactor(osf); filter.setSampleRateScale(osf);
+        modFilter1OS.prepare();   modFilter1OS.setFactor(osf);   modFilter1.setSampleRateScale(osf);
+        modFilter2OS.prepare();   modFilter2OS.setFactor(osf);   modFilter2.setSampleRateScale(osf);
+    }
+
     // Pre-allocate voice buffers (stereo for per-oscillator pan)
     voiceTempBuffer.setSize(2, static_cast<int>(maxBlockSize), false, false, false);
     voiceSingleSampleBuffer.setSize(2, 1, false, false, false);
@@ -1772,6 +1810,12 @@ void SynthVoice::setCurrentSampleRate(double newRate)
         filter.prepare({ newRate, maxBlockSize, 2 });
         modFilter1.prepare({ newRate, maxBlockSize, 2 });
         modFilter2.prepare({ newRate, maxBlockSize, 2 });
+        {
+            const int osf = oversampleFilter ? kFilterOSFactor : 1;
+            masterFilterOS.prepare(); masterFilterOS.setFactor(osf); filter.setSampleRateScale(osf);
+            modFilter1OS.prepare();   modFilter1OS.setFactor(osf);   modFilter1.setSampleRateScale(osf);
+            modFilter2OS.prepare();   modFilter2OS.setFactor(osf);   modFilter2.setSampleRateScale(osf);
+        }
         updateFilter();
         updateModFilter1();
         updateModFilter2();
@@ -1960,6 +2004,20 @@ void SynthVoice::setFilterResonance(float resonance)
 void SynthVoice::setWarmSaturationMaster(bool enabled)
 {
     warmSaturationMaster = enabled;
+}
+
+void SynthVoice::setFilterOversample(bool enabled)
+{
+    if (enabled == oversampleFilter)
+        return;
+    oversampleFilter = enabled;
+    const int factor = enabled ? kFilterOSFactor : 1;
+    // Apply to all three filter stages. setFactor clears the FIR state and
+    // setSampleRateScale recomputes g (and the rate-compensated AGC) at the
+    // (over)sampled rate; reset avoids a transient on the switch.
+    masterFilterOS.setFactor(factor);  filter.setSampleRateScale(factor);     filter.reset();
+    modFilter1OS.setFactor(factor);    modFilter1.setSampleRateScale(factor); modFilter1.reset();
+    modFilter2OS.setFactor(factor);    modFilter2.setSampleRateScale(factor); modFilter2.reset();
 }
 
 void SynthVoice::setFilterKeyTrack(bool enabled)

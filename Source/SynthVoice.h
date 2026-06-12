@@ -5,6 +5,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include "NonlinearSVF.h" // Self-oscillating state-variable filter (master + mod filters)
+#include "OversampledStage.h" // Per-sample oversampling wrapper for the nonlinear master filter
 #include "SynthSound.h"   // Kept for build compatibility (some headers still include it indirectly)
 #include <array>
 #include <numeric>
@@ -178,6 +179,7 @@ public:
     void setFilterResonance(float resonance);
     void setWarmSaturationMaster(bool enabled);  // Moog-style saturation when ON
     void setFilterKeyTrack(bool enabled);        // Cutoff follows the played key when ON
+    void setFilterOversample(bool enabled);      // [A/B prototype] 4x-oversample the master filter stage to kill audio-rate-modulation aliasing
 
     // Mod tab filters (show=enabled in UI, linkToMaster=use main filter params)
     void setModFilter1(bool show, bool linkToMaster, int mode, float cutoffHz, float resonance);
@@ -308,6 +310,17 @@ private:
     NonlinearSVF filter;
     NonlinearSVF modFilter1;  // Second filter when modFilter1 unlinked
     NonlinearSVF modFilter2;  // Third filter when modFilter2 unlinked
+
+    // Oversampling for the nonlinear filter stages (SVF + warm-sat + per-stage
+    // clip). OFF => filters run at host rate, bit-identical to before. ON => 4x, so
+    // the nonlinear/time-varying filter's products no longer fold back into the
+    // audible band when driven by audio-rate LFO modulation. The master stage is
+    // always oversampled when enabled; the mod stages only when they're active.
+    OversampledStage masterFilterOS;
+    OversampledStage modFilter1OS;
+    OversampledStage modFilter2OS;
+    bool oversampleFilter = false;
+    static constexpr int kFilterOSFactor = 4;
     
     // Noise EQ filters: simple 1-pole shelf filters for low and high frequency shaping
     juce::dsp::IIR::Filter<float> lowShelfFilter;

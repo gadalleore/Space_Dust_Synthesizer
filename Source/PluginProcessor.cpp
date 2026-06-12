@@ -973,6 +973,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     bool modFilter1Link = safeGetParam(apvts, "modFilter1LinkToMaster") > 0.5f;
     bool modFilter2Link = safeGetParam(apvts, "modFilter2LinkToMaster") > 0.5f;
     bool warmSaturationMaster = safeGetParam(apvts, "warmSaturationMaster") > 0.5f;
+    bool filterOversample = safeGetParam(apvts, "filterOversample") > 0.5f;  // [A/B prototype]
     bool filterKeyTrack = safeGetParam(apvts, "filterKeyTrack") > 0.5f;
 
     // When linked, use master filter values directly instead of mod filter values.
@@ -1085,6 +1086,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setFilterCutoff(filterCutoffHz);
             voice->setFilterResonance(filterResonance);
             voice->setWarmSaturationMaster(warmSaturationMaster);
+            voice->setFilterOversample(filterOversample);  // [A/B prototype]
             voice->setFilterKeyTrack(filterKeyTrack);
             voice->setModFilter1(modFilter1Show, modFilter1Link, modFilter1Mode, modFilter1Cutoff, modFilter1Resonance);
             voice->setWarmSaturationMod1(warmSaturationMod1);
@@ -3042,6 +3044,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{"warmSaturationMaster", 1}, "Filter Warm Sat", false),
         "warmSaturationMaster");
+
+    // Filter anti-aliasing: 4x-oversample the filter stages (master always; mod
+    // filters when active) so audio-rate LFO modulation no longer folds back into
+    // the audible band. ON by default — cleaner high-rate filter-FM everywhere.
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"filterOversample", 1}, "Filter Anti-Alias", true),
+        "filterOversample");
 
     // Keyboard tracking: when ON, the filter cutoff follows the played key
     // (one octave of cutoff per octave of keyboard, neutral at middle C).

@@ -42,8 +42,26 @@ public:
 
     void prepare (const juce::dsp::ProcessSpec& spec) noexcept
     {
-        sampleRate = spec.sampleRate > 0.0 ? static_cast<float> (spec.sampleRate) : 44100.0f;
+        baseSampleRate = spec.sampleRate > 0.0 ? static_cast<float> (spec.sampleRate) : 44100.0f;
+        sampleRate     = baseSampleRate * static_cast<float> (rateScale);
+        envReleaseEff  = kEnvRelease / static_cast<float> (rateScale);
         reset();
+        updateG();
+    }
+
+    /** Run the filter maths at an integer multiple of the host rate. The caller
+        (OversampledStage) feeds `rateScale` sub-samples per host sample, so `g`
+        must be computed at the oversampled rate. scale == 1 restores host rate
+        and is bit-identical to the un-oversampled filter. */
+    void setSampleRateScale (int scale) noexcept
+    {
+        rateScale = juce::jmax (1, scale);
+        sampleRate = baseSampleRate * static_cast<float> (rateScale);
+        // The amplitude follower's release is a per-sample time constant; at Nx the
+        // rate it would otherwise release Nx faster. Divide so the self-oscillation
+        // build-up/decay stays the same in real time as at host rate. (Damping/g
+        // already scale with rate, so the oscillation speed itself is invariant.)
+        envReleaseEff = kEnvRelease / static_cast<float> (rateScale);
         updateG();
     }
 
@@ -116,7 +134,7 @@ public:
             // waveform. Then a hard safety clamp in case the loop is ever outrun.
             auto& env = oscEnv[(size_t) channel];
             const float a = std::abs (yBP);
-            env = (a > env) ? a : env + kEnvRelease * (a - env);
+            env = (a > env) ? a : env + envReleaseEff * (a - env);
             ls1 = juce::jlimit (-kSafetyClamp, kSafetyClamp, ls1);
             ls2 = juce::jlimit (-kSafetyClamp, kSafetyClamp, ls2);
         }
@@ -159,7 +177,10 @@ private:
     static constexpr float kEnvRelease       = 0.0008f;// amplitude-follower release coefficient
     static constexpr float kSafetyClamp      = 8.0f;   // hard state clamp (AGC failsafe)
 
-    float sampleRate = 44100.0f;
+    float baseSampleRate = 44100.0f; // host rate (set in prepare)
+    int   rateScale      = 1;        // oversampling factor applied to the maths
+    float envReleaseEff  = kEnvRelease; // rate-compensated follower release (= kEnvRelease / rateScale)
+    float sampleRate = 44100.0f;     // effective rate = baseSampleRate * rateScale
     float cutoff     = 1000.0f;
     float R2         = 2.0f;     // damping = 1/Q (used outside the self-osc region)
     float g          = 0.0f;     // tan(pi * fc / fs)
