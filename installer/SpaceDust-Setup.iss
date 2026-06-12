@@ -99,7 +99,11 @@ SelectComponentsLabel2=Choose what to install. To use Space Dust inside a Digita
 Name: "desktopicon"; Description: "Create a desktop shortcut for the Standalone app"; Components: standalone; Flags: unchecked
 
 [Dirs]
-; Create the preset directory the user chose (user data — keep on uninstall).
+; Create the preset directory the user chose. uninsneveruninstall: Inno must NOT
+; touch this folder on uninstall - removal is OPT-IN, handled entirely in [Code]
+; (see InitializeUninstall / CurUninstallStepChanged), gated on the uninstall-time
+; "also remove my presets" checkbox. Without this flag Inno would auto-delete even
+; when the user leaves the box unticked.
 Name: "{code:GetPresetsDir}"; Flags: uninsneveruninstall
 
 [Files]
@@ -111,15 +115,16 @@ Source: "Files\Standalone\Space Dust.exe"; DestDir: "{app}"; Flags: ignoreversio
 Source: "THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 ; App icon — installed so UninstallDisplayIcon has a stable target regardless of components.
 Source: "AppIcon.ico"; DestDir: "{app}"; Flags: ignoreversion
-; Factory presets — copied into the user's chosen preset folder.
+; Factory presets - inflated onto the machine on install.
 ;   onlyifdoesntexist: never overwrite a user's modified copy on reinstall/upgrade.
 ;   skipifsourcedoesntexist: don't fail the compile when the staging folder is empty
 ;     (lets the installer build before any factory presets exist).
-;   uninsneveruninstall: CRITICAL — do NOT delete presets on uninstall. The preset
-;     folder is the user's sound library (often inside Documents) and is frequently the
-;     SAME folder the user curates. Without this flag Inno records each installed preset
-;     and removes it on uninstall, gutting the user's library. The [Dirs] entry alone
-;     does not protect the files. Keep this flag.
+;   uninsneveruninstall: Inno must NOT auto-delete presets. Removal is OPT-IN at
+;     uninstall time: InitializeUninstall shows an "also remove my presets" checkbox,
+;     and CurUninstallStepChanged DelTree's the WHOLE preset folder (factory + anything
+;     the user created) only if it was ticked. The preset folder path is recovered at
+;     uninstall from the [Registry] PresetsDir value written below. Leaving the box
+;     unticked keeps every preset, which is why Inno's own tracking stays disabled here.
 ; Extension must match PresetManager::presetExtension (".sdpreset"). DO NOT change
 ; without also updating PresetManager.h.
 Source: "Files\Presets\*.sdpreset"; DestDir: "{code:GetPresetsDir}"; Flags: ignoreversion onlyifdoesntexist skipifsourcedoesntexist uninsneveruninstall; Components: vst3 standalone
@@ -137,6 +142,12 @@ Name: "{autodesktop}\Space Dust";  Filename: "{app}\Space Dust.exe"; Components:
 ; auto-registered entry in Settings > Apps / Programs and Features ("Space Dust
 ; Synthesizer version 1.0"), which Inno creates automatically.
 
+[Registry]
+; Record the chosen preset folder so the uninstaller (which has no wizard pages) can
+; offer to delete it. HKA = HKLM here (PrivilegesRequired=admin). uninsdeletekey cleans
+; the key on uninstall; InitializeUninstall reads it BEFORE that happens.
+Root: HKA; Subkey: "Software\{#MyAppName}"; ValueType: string; ValueName: "PresetsDir"; ValueData: "{code:GetPresetsDir}"; Flags: uninsdeletekey
+
 [Run]
 ; Silent install — no post-install programs required for a VST3.
 
@@ -152,6 +163,10 @@ var
   VST3DirPage: TInputDirWizardPage;
   PresetsDirPage: TInputDirWizardPage;
   PresetsAllUsersCheck: TNewCheckBox;
+  (* Uninstall-time state: whether the user asked to also wipe the preset folder,
+     and the folder path recovered from the registry (the uninstaller has no wizard). *)
+  UninstallRemovePresets: Boolean;
+  UninstallPresetsDir: string;
 
 (* Recursively create a directory tree (single-level CreateDir is not enough). *)
 function ForceDirectories(Dir: string): Boolean;
@@ -331,4 +346,105 @@ begin
   (* Optional note in README when the user chose a machine-wide default *)
   if PresetsAllUsersCheck.Checked then
     AppendPresetsReadmeAllUsersNote(PresetPath);
+end;
+
+(* =============================== UNINSTALL ================================= *)
+
+(* Runs at the very start of uninstall - before [Registry]/[UninstallDelete] are
+   processed, so the PresetsDir key is still readable. Recovers the preset folder
+   and, if it exists, shows an opt-in checkbox to also delete the WHOLE folder
+   (factory presets AND anything the user created). Default: unticked = keep all.
+   Returning False here cancels the uninstall entirely (user backed out). *)
+function InitializeUninstall(): Boolean;
+var
+  Form: TSetupForm;
+  Lbl, Lbl2: TNewStaticText;
+  Chk: TNewCheckBox;
+  OKBtn, CancelBtn: TNewButton;
+begin
+  Result := True;
+  UninstallRemovePresets := False;
+  UninstallPresetsDir := '';
+
+  if not RegQueryStringValue(HKA, 'Software\{#MyAppName}', 'PresetsDir', UninstallPresetsDir) then
+    UninstallPresetsDir := '';
+  UninstallPresetsDir := Trim(UninstallPresetsDir);
+
+  (* Nothing to offer if we don't know the folder or it's already gone. *)
+  if (UninstallPresetsDir = '') or (not DirExists(UninstallPresetsDir)) then
+    Exit;
+
+  (* (width, height, autosizeWidth=False, fixedHeight=True). No WizardForm exists in
+     the uninstaller, so we let it auto-center on screen rather than on a wizard. *)
+  Form := CreateCustomForm(ScaleX(470), ScaleY(210), False, True);
+  try
+    Form.Caption := 'Uninstall {#MyAppName}';
+
+    Lbl := TNewStaticText.Create(Form);
+    Lbl.Parent := Form;
+    Lbl.Left := ScaleX(18);
+    Lbl.Top := ScaleY(18);
+    Lbl.Width := Form.ClientWidth - ScaleX(36);
+    Lbl.Caption := '{#MyAppName} is about to be uninstalled.';
+
+    Chk := TNewCheckBox.Create(Form);
+    Chk.Parent := Form;
+    Chk.Left := ScaleX(18);
+    Chk.Top := ScaleY(48);
+    Chk.Width := Form.ClientWidth - ScaleX(36);
+    Chk.Height := ScaleY(20);
+    Chk.Checked := False;
+    Chk.Caption := 'Also remove my Space Dust presets folder from this computer';
+
+    (* TNewCheckBox has no WordWrap; the wrapping detail/warning lives in its own
+       static text indented under the checkbox. *)
+    Lbl2 := TNewStaticText.Create(Form);
+    Lbl2.Parent := Form;
+    Lbl2.Left := ScaleX(36);
+    Lbl2.Top := ScaleY(72);
+    Lbl2.Width := Form.ClientWidth - ScaleX(54);
+    Lbl2.Height := ScaleY(88);
+    Lbl2.AutoSize := False;
+    Lbl2.WordWrap := True;
+    Lbl2.Caption :=
+      UninstallPresetsDir + #13#10 + #13#10 +
+      'WARNING: this permanently deletes the entire folder and EVERY preset in it, ' +
+      'including any presets you created yourself. Leave the box unchecked to keep them.';
+
+    OKBtn := TNewButton.Create(Form);
+    OKBtn.Parent := Form;
+    OKBtn.Caption := 'Uninstall';
+    OKBtn.ModalResult := mrOk;
+    OKBtn.Default := True;
+    OKBtn.Width := ScaleX(95);
+    OKBtn.Height := ScaleY(28);
+    OKBtn.Top := Form.ClientHeight - ScaleY(28 + 16);
+    OKBtn.Left := Form.ClientWidth - ScaleX(95 + 12 + 95 + 18);
+
+    CancelBtn := TNewButton.Create(Form);
+    CancelBtn.Parent := Form;
+    CancelBtn.Caption := 'Cancel';
+    CancelBtn.ModalResult := mrCancel;
+    CancelBtn.Cancel := True;
+    CancelBtn.Width := ScaleX(95);
+    CancelBtn.Height := ScaleY(28);
+    CancelBtn.Top := Form.ClientHeight - ScaleY(28 + 16);
+    CancelBtn.Left := Form.ClientWidth - ScaleX(95 + 18);
+
+    if Form.ShowModal() = mrOk then
+      UninstallRemovePresets := Chk.Checked
+    else
+      Result := False;   (* user cancelled the whole uninstall *)
+  finally
+    Form.Free();
+  end;
+end;
+
+(* After Inno's own uninstall work has finished, honour the checkbox: nuke the
+   entire preset folder (files + subfolders + the folder itself) if it was ticked. *)
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+begin
+  if CurUninstallStep = usPostUninstall then
+    if UninstallRemovePresets and (UninstallPresetsDir <> '') and DirExists(UninstallPresetsDir) then
+      DelTree(UninstallPresetsDir, True, True, True);
 end;
