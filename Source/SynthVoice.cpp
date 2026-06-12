@@ -403,6 +403,9 @@ void SynthVoice::noteStarted()
         isActive = true;
         updateFilter();
         filterAdsr.noteOn();
+        // Fresh voice: put the cutoff at the new note's value immediately (no slew
+        // sweep of the resonant peak into the note). See snapFilterCutoffOnNote.
+        snapFilterCutoffOnNote = true;
     }
     else if (isPolySteal)
     {
@@ -445,12 +448,27 @@ void SynthVoice::noteStarted()
         {
             adsr.reset();
             filterAdsr.reset();
+            // Mono retrigger restarts the amplitude envelope from zero. A resonant
+            // filter still ringing from the previous note (high Q or self-osc) keeps
+            // producing output that ISN'T gated by the new note's silent attack, so
+            // the leftover ring blips through the note start → click. Reset only the
+            // filters that are actually ringing (a settled/low-res filter reports
+            // false and keeps continuing smoothly, as before). Resetting here is
+            // click-safe because the amplitude is at zero at this instant anyway.
+            if (filter.isRinging())     filter.reset();
+            if (modFilter1.isRinging()) modFilter1.reset();
+            if (modFilter2.isRinging()) modFilter2.reset();
         }
         adsr.noteOn();
         filterAdsr.noteOn();
         inReleasePhase = false;
         isActive = true;
-        // Don't reset filter — let it continue smoothly
+        // Non-ringing filters are left to continue smoothly (original behaviour).
+        // Mono retrigger (hard envelope restart) snaps the cutoff to the new note;
+        // legato continue (envelope kept running) deliberately does NOT, so the
+        // key-tracked cutoff glides with the legato. See snapFilterCutoffOnNote.
+        if (inMonoMode)
+            snapFilterCutoffOnNote = true;
     }
 }
 
@@ -1301,14 +1319,25 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // for a short time after a poly steal. This directly mitigates the fast
         // cutoff movement from the restarting filter envelope that the user
         // confirmed triggers the click when the filter is active.
-        float cutoffSlew = filterCutoffSmoothCoeff;
-        if (postStealCutoffSlowdownSamples > 0)
+        if (snapFilterCutoffOnNote)
         {
-            --postStealCutoffSlowdownSamples;
-            // Very slow slew (precomputed ~35 ms time constant) for the first ~4 ms after steal
-            cutoffSlew = postStealCutoffSlowCoeff;
+            // First sample of a fresh note: jump the cutoff straight to the new
+            // note's target so the resonant peak doesn't sweep into the note (the
+            // note-on click). Click-safe — the amplitude envelope is ~0 here.
+            snapFilterCutoffOnNote = false;
+            smoothedFilterCutoffHz = modulatedCutoff;
         }
-        smoothedFilterCutoffHz += cutoffSlew * (modulatedCutoff - smoothedFilterCutoffHz);
+        else
+        {
+            float cutoffSlew = filterCutoffSmoothCoeff;
+            if (postStealCutoffSlowdownSamples > 0)
+            {
+                --postStealCutoffSlowdownSamples;
+                // Very slow slew (precomputed ~35 ms time constant) for the first ~4 ms after steal
+                cutoffSlew = postStealCutoffSlowCoeff;
+            }
+            smoothedFilterCutoffHz += cutoffSlew * (modulatedCutoff - smoothedFilterCutoffHz);
+        }
         filter.setCutoffFrequency(smoothedFilterCutoffHz);
         
         // Check if envelope has completed (release phase finished)
@@ -1316,6 +1345,27 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // (Skip during voice fade — ADSR may hit zero before fade completes)
         if (!adsr.isActive() && voiceFadeSamplesRemaining <= 0)
         {
+            // A self-oscillating filter rings under its own feedback, so its output
+            // is NOT enveloped to zero. If it is still ringing when the amplitude
+            // envelope completes here, a hard cut steps the output to zero and
+            // clicks (worst on low notes — the residual sine sits far from a zero
+            // crossing). Hand off to the existing voice-fade ramp, which declicks
+            // the residual over kVoiceFadeLength and resets the filters when it
+            // completes, instead of breaking now.
+            const bool filterStillRinging =
+                   filter.isRinging()
+                || (modFilter1Show && !modFilter1Linked && modFilter1.isRinging())
+                || (modFilter2Show && !modFilter2Linked && modFilter2.isRinging());
+
+            if (filterStillRinging)
+            {
+                voiceFade = 1.0f;
+                voiceFadeSamplesRemaining = kVoiceFadeLength;
+                // Do NOT break: fall through and keep rendering. The voice-fade
+                // path below ramps the residual to zero and does the full cleanup.
+            }
+            else
+            {
             inReleasePhase = false;
             clearCurrentNote();
             // Snapshot last pitch BEFORE zeroing so mono/legato "always glide" can
@@ -1343,8 +1393,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             }
             samplesProcessed = i; // Only process up to this point
             break;
+            }
         }
-        
+
         // Apply envelope to stereo mix
         float leftEnv = leftMix * envelope;
         float rightEnv = rightMix * envelope;
@@ -1742,6 +1793,7 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
     // postStealCutoffSlowCoeff (very slow slew) + smoothedFilterEnvelope.
     filterCutoffSmoothCoeff = 1.0f - std::exp(-1.0f / (0.004f * static_cast<float>(sampleRate)));
     smoothedFilterCutoffHz = juce::jlimit(20.0f, 20000.0f, baseFilterCutoff);
+    snapFilterCutoffOnNote = false;
     // ~10 s time constant for gentle analog-style wander (per sample)
     analogDriftWalkCoeff = 1.0f - std::exp(-1.0f / (10.0f * static_cast<float>(sampleRate)));
     voiceFade = 1.0f;

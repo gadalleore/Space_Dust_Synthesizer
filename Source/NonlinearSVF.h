@@ -102,6 +102,22 @@ public:
         so release fades the singing filter instead of ringing at full level. */
     void setEnvelope (float env) noexcept { envAmount = juce::jlimit (0.0f, 1.0f, env); }
 
+    /** True while the filter's integrator state still holds audible energy — i.e.
+        a resonant ring. Covers BOTH self-oscillation (top of the knob) and a plain
+        high-Q resonant ring (Q up to ~16), since both keep producing output that is
+        NOT enveloped to zero. The voice uses this to fade out cleanly at note-end
+        instead of hard-cutting a ringing resonator (which clicks; worst on low
+        notes, where the residual sine sits far from a zero crossing), and to reset
+        the filter on a mono retrigger so the old ring doesn't bleed into the new
+        note's attack. A settled / low-resonance filter decays below kRingingFloor,
+        so it reports false and the original (bit-identical) paths run. */
+    bool isRinging() const noexcept
+    {
+        const float e = juce::jmax (juce::jmax (std::abs (s1[0]), std::abs (s1[1])),
+                                    juce::jmax (std::abs (s2[0]), std::abs (s2[1])));
+        return e > kRingingFloor;
+    }
+
     float processSample (int channel, float x) noexcept
     {
         auto& ls1 = s1[(size_t) channel];
@@ -176,6 +192,7 @@ private:
     static constexpr float kMaxDecay         = 0.5f;   // most positive damping (fastest decay / overshoot tame)
     static constexpr float kEnvRelease       = 0.0008f;// amplitude-follower release coefficient
     static constexpr float kSafetyClamp      = 8.0f;   // hard state clamp (AGC failsafe)
+    static constexpr float kRingingFloor     = 1.0e-3f;// integrator energy below which isRinging() reports silent
 
     float baseSampleRate = 44100.0f; // host rate (set in prepare)
     int   rateScale      = 1;        // oversampling factor applied to the maths

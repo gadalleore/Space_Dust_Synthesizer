@@ -407,6 +407,15 @@ private:
     static constexpr int kPostStealCutoffSlowdownLength = 192; // ~4.3 ms @ 44.1 kHz
     float postStealCutoffSlowCoeff = 0.0f;  // Precomputed very slow (~35ms) slew coeff, used only during postStealCutoffSlowdownSamples window after poly steals
 
+    // Anti-click: SNAP the cutoff smoother to the new note's target on the first
+    // rendered sample of a FRESH note (poly fresh voice / mono retrigger) instead
+    // of slewing from the previous note's cutoff. With key-tracking on, the high-Q
+    // / self-oscillating resonant peak sits AT the note pitch, so the ~7ms slew
+    // would sweep that sharp peak across the note-to-note gap → a "zip"/click on
+    // note-on. Snapping is click-safe because the amplitude envelope is ~0 at note
+    // start. NOT set for poly steals (they want the slow slew) or legato (glide).
+    bool snapFilterCutoffOnNote = false;
+
     // Voice fade: linear gain ramp applied to the FINAL output sample (after
     // filter + ADSR) to prevent clicks on any hard stop.  When stopNote is called
     // with allowTailOff=false (voice stealing, allNotesOff, etc.), the voice keeps
