@@ -2857,6 +2857,29 @@ namespace
             return juce::MidiKeyboardComponent::keyPressed(key);
         }
 
+        // -- Don't restart a held QWERTY note when focus bounces within our window --
+        // Clicking any non-text control (a knob, the background, a tab) makes that control
+        // grab keyboard focus; the editor's globalFocusChanged() then hands focus straight
+        // back to us. The default MidiKeyboardComponent::focusLost() reacts to that brief
+        // loss by note-OFF-ing every held key and clearing keysPressed, so the re-grab's
+        // keyStateChanged() sees the key still physically down and re-triggers it - the note
+        // audibly restarts on every click. Suppress that reset while focus is merely moving
+        // to another control in our own window (and not into a text field, which keeps focus
+        // and where releasing a held key should still stop the note). A genuine window-leave
+        // leaves getCurrentlyFocusedComponent() == nullptr (or another top-level), so the base
+        // reset still runs and notes can't hang when the user switches apps/windows.
+        void focusLost(juce::Component::FocusChangeType cause) override
+        {
+            if (auto* newFocus = juce::Component::getCurrentlyFocusedComponent())
+            {
+                const bool staysInOurWindow = newFocus->getTopLevelComponent() == getTopLevelComponent();
+                const bool intoTextField    = dynamic_cast<juce::TextEditor*>(newFocus) != nullptr;
+                if (staysInOurWindow && ! intoTextField)
+                    return;  // editor will re-grab focus for us; keep held notes intact
+            }
+            juce::MidiKeyboardComponent::focusLost(cause);
+        }
+
     private:
         juce::MidiKeyboardState& kbState;
         int baseOctave = 4;  // matches setKeyPressBaseOctave(4) in the editor ctor
