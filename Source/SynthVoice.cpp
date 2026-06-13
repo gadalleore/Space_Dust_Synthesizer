@@ -2236,21 +2236,25 @@ void SynthVoice::setGlideTime(float seconds)
     // Clamp to parameter range (0.0-5.0s, skewed with midpoint at 1.0s)
     glideTimeSeconds = juce::jlimit(0.0f, 5.0f, seconds);
     
-    // If glide is active, recalculate glideDelta based on new time
-    // This allows real-time adjustment of glide speed during playback
-    if (glideDelta != 0.0 && sampleRate > 0.0)
+    // If a USER glide is in progress, rescale its speed live as the knob moves.
+    //
+    // CRITICAL: only do this when glide is actually ON (glideTimeSeconds > 0). This
+    // method is called every processBlock, and an in-progress glideDelta is NOT
+    // necessarily a user glide — noteStarted() sets a short 3 ms anti-click auto-glide
+    // on every mono/legato note change even when glide is off. The old code's else
+    // branch zeroed glideDelta ("instant") for that auto-glide but left currentPitch
+    // STRANDED partway between the two notes (it never set currentPitch = targetPitch),
+    // so the note played at a wrong, in-between pitch — and it compounded across note
+    // changes ("out of key"). It only bit in small-buffer hosts (FL Studio), where the
+    // 3 ms auto-glide spans several blocks so this clobber landed mid-glide; large-
+    // buffer hosts (Ableton) finished the auto-glide within one block, hiding it.
+    // When glide is OFF we now leave the auto-glide untouched so it completes and
+    // reaches targetPitch. (samplesToGlide is therefore always > 0 here.)
+    if (glideDelta != 0.0 && sampleRate > 0.0 && glideTimeSeconds > 0.0f)
     {
-        double pitchDifference = targetPitch - currentPitch;
-        double samplesToGlide = glideTimeSeconds * sampleRate;
-        
-        if (samplesToGlide > 0.0)
-        {
-            glideDelta = pitchDifference / samplesToGlide;
-        }
-        else
-        {
-            glideDelta = 0.0; // Instant if time is too short
-        }
+        const double pitchDifference = targetPitch - currentPitch;
+        const double samplesToGlide  = glideTimeSeconds * sampleRate;
+        glideDelta = pitchDifference / samplesToGlide;
     }
 }
 
