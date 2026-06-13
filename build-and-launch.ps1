@@ -160,7 +160,12 @@ if (-not $buildOk) {
 Write-Host "[Space Dust] Build succeeded." -ForegroundColor Green
 
 # ---------------------------------------------------------------------------
-# Step 3: Deploy (robocopy /MIR everywhere; elevate + lock-check Program Files)
+# Step 3: Deploy to the SINGLE canonical VST3 location (Program Files\Common
+# Files\VST3) - the only folder Ableton scans on this machine. We deliberately
+# do NOT mirror into user-profile VST3 folders anymore: Ableton never scanned
+# them, so those copies only lingered as "strays" that shadowed a clean
+# installer test and had to be cleaned up by hand. One location = no
+# duplicates, no shadowing. (Elevate + lock-check Program Files.)
 # ---------------------------------------------------------------------------
 $source = Join-Path $projectRoot "build\SpaceDust_artefacts\Release\VST3\Space Dust.vst3"
 if (-not (Test-Path $source)) {
@@ -169,7 +174,11 @@ if (-not (Test-Path $source)) {
 }
 
 $programFilesDest = "C:\Program Files\Common Files\VST3\Space Dust.vst3"
-$userDests = @(
+
+# Legacy user-profile VST3 folders this script USED to mirror into. They are no
+# longer deploy targets; we PURGE them every run so a build-and-launch leaves
+# exactly one copy (Program Files, below) and never resurrects a stray.
+$legacyStrayDests = @(
     "$env:USERPROFILE\Documents\Ableton\User Library\VST3\Space Dust.vst3",
     "$env:USERPROFILE\Documents\VST3\Space Dust.vst3",
     "$env:USERPROFILE\VST3\Space Dust.vst3",
@@ -186,15 +195,12 @@ if (-not $srcHash) {
     exit 1
 }
 
-$deployFailures = 0
-
-# User-writable locations first (no elevation needed).
-foreach ($dest in $userDests) {
-    if (Copy-BundleMirror -Source $source -Dest $dest -SrcHash $srcHash) {
-        Write-Host "  Synced: $dest" -ForegroundColor Green
-    } else {
-        Write-Host "  FAILED: $dest" -ForegroundColor Red
-        $deployFailures++
+# Purge any legacy stray copies so they can never shadow the canonical build
+# (or a clean installer test). Safe: Ableton does not scan these folders.
+foreach ($stray in $legacyStrayDests) {
+    if (Test-Path $stray) {
+        Remove-Item -LiteralPath $stray -Recurse -Force -ErrorAction SilentlyContinue
+        if (-not (Test-Path $stray)) { Write-Host "  Purged legacy stray: $stray" -ForegroundColor DarkYellow }
     }
 }
 
@@ -207,7 +213,6 @@ if ($lockers) {
     Write-Host "[Space Dust] Cannot update Program Files - that DLL is loaded (locked) by:" -ForegroundColor Red
     foreach ($l in $lockers) { Write-Host "    $l" -ForegroundColor Red }
     Write-Host "[Space Dust] Close that DAW completely, then re-run this script." -ForegroundColor Yellow
-    Write-Host "[Space Dust] (The user-library copies above were already updated.)" -ForegroundColor Yellow
     exit 1
 }
 
@@ -220,12 +225,8 @@ if (Copy-BundleMirror -Source $source -Dest $programFilesDest -SrcHash $srcHash 
     exit 1
 }
 
-if ($deployFailures -eq 0) {
-    Write-Host "[Space Dust] All VST3 locations are now in sync." -ForegroundColor Green
-} else {
-    Write-Host "[Space Dust] Program Files updated, but $deployFailures user-library location(s) did NOT verify." -ForegroundColor Yellow
-    Write-Host "[Space Dust] (Usually a DAW had the file locked mid-scan - close it and re-run if that host needs the update.)" -ForegroundColor Yellow
-}
+Write-Host "[Space Dust] VST3 deployed to the single canonical location:" -ForegroundColor Green
+Write-Host "             $programFilesDest" -ForegroundColor Green
 
 # --- Step 4: Launch / focus Ableton ---
 if ($NoLaunch) {
