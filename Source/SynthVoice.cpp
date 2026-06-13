@@ -900,6 +900,20 @@ void SynthVoice::updateAdsrParameters()
         && sustain == lastAdsrSustain && release == lastAdsrRelease)
         return;
 
+    // Auditioning fix: do NOT push setParameters() while THIS voice's amp envelope
+    // is in its release stage. juce::ADSR::setParameters() calls recalculateRates(),
+    // which rewrites releaseRate = sustain/(release*sr); when sustain == 0 (common
+    // for plucks/bass) that rate is 0 and recalculateRates() then forces the envelope
+    // straight to idle (juce_ADSR.h: `state == release && releaseRate <= 0 ->
+    // goToNextState()`), instantly cutting the release tail. Dragging the Release
+    // knob pushes setParameters EVERY block, so every in-progress tail is killed and
+    // the release sounds like 0 the whole time the mouse is held, snapping back only
+    // on mouse-up when the pushes stop. Defer: leave lastAdsr* unchanged so the new
+    // value is applied as soon as the voice leaves release (next note-on / when the
+    // tail finishes). New notes pick up the live knob value, so you can audition.
+    if (inReleasePhase)
+        return;
+
     lastAdsrAttack = attack;
     lastAdsrDecay = decay;
     lastAdsrSustain = sustain;
@@ -932,6 +946,14 @@ void SynthVoice::updateFilterAdsrParameters()
     // filter-envelope release isn't reset to idle by recalculateRates() each block.
     if (attack == lastFilterAdsrAttack && decay == lastFilterAdsrDecay
         && sustain == lastFilterAdsrSustain && release == lastFilterAdsrRelease)
+        return;
+
+    // Same release-stage deferral as the amp envelope (see updateAdsrParameters):
+    // pushing setParameters() mid-release with sustain == 0 would let
+    // recalculateRates() kill the filter-envelope tail, which jumps the cutoff to
+    // its resting value — a click/zip while dragging the filter-env Release knob.
+    // The amp + filter envelopes enter release together, so inReleasePhase gates both.
+    if (inReleasePhase)
         return;
 
     lastFilterAdsrAttack = attack;
