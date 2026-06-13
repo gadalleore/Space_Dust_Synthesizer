@@ -416,6 +416,11 @@ private:
     // start. NOT set for poly steals (they want the slow slew) or legato (glide).
     bool snapFilterCutoffOnNote = false;
 
+    // Mono retrigger only clears a ringing filter when the previous note has decayed
+    // below this amplitude — above it, zeroing the (un-enveloped) resonant output
+    // pops, so the filter is left running instead. ~ -30 dB. See noteStarted().
+    static constexpr float kMonoFilterResetMaxLevel = 0.03f;
+
     // Voice fade: linear gain ramp applied to the FINAL output sample (after
     // filter + ADSR) to prevent clicks on any hard stop.  When stopNote is called
     // with allowTailOff=false (voice stealing, allNotesOff, etc.), the voice keeps

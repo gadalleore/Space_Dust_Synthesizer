@@ -446,29 +446,44 @@ void SynthVoice::noteStarted()
         // the envelope completely.
         if (inMonoMode)
         {
+            // Read the voice's CURRENT loudness before we reset the amp envelope.
+            // (smoothedEnvelope still holds the last sample of the previous note.)
+            // The filter's resonant / self-osc output is NOT gated by the amplitude
+            // envelope, so a still-loud previous note means the filter is ringing at
+            // an AUDIBLE level — and you cannot move that ring abruptly without an
+            // artifact: resetting it steps the output to zero (POP), and snapping its
+            // cutoff jumps the resonant peak to a new frequency (CLICK, worst with
+            // key-tracking, where every note has a different cutoff).
+            const bool prevNoteQuiet = (smoothedEnvelope < kMonoFilterResetMaxLevel);
+
             adsr.reset();
             filterAdsr.reset();
-            // Mono retrigger restarts the amplitude envelope from zero. A resonant
-            // filter still ringing from the previous note (high Q or self-osc) keeps
-            // producing output that ISN'T gated by the new note's silent attack, so
-            // the leftover ring blips through the note start → click. Reset only the
-            // filters that are actually ringing (a settled/low-res filter reports
-            // false and keeps continuing smoothly, as before). Resetting here is
-            // click-safe because the amplitude is at zero at this instant anyway.
-            if (filter.isRinging())     filter.reset();
-            if (modFilter1.isRinging()) modFilter1.reset();
-            if (modFilter2.isRinging()) modFilter2.reset();
+
+            if (prevNoteQuiet)
+            {
+                // Previous note has decayed near silence (gaps / short release): treat
+                // this as a fresh note start. Clear any stale ring (inaudible at this
+                // level) and SNAP the cutoff to the new note so the resonant peak
+                // doesn't sweep into the attack (the note-on "zip").
+                if (filter.isRinging())     filter.reset();
+                if (modFilter1.isRinging()) modFilter1.reset();
+                if (modFilter2.isRinging()) modFilter2.reset();
+                snapFilterCutoffOnNote = true;
+            }
+            else
+            {
+                // Previous note still loud (long Release + fast "running bass"). Leave
+                // the ringing filter running (no reset → no pop) and move the cutoff
+                // GENTLY to the new note via the slow-slew window (no snap → no click).
+                // A smooth filter glide between crashing notes instead of an abrupt
+                // peak jump. snapFilterCutoffOnNote stays false here.
+                postStealCutoffSlowdownSamples = kPostStealCutoffSlowdownLength;
+            }
         }
         adsr.noteOn();
         filterAdsr.noteOn();
         inReleasePhase = false;
         isActive = true;
-        // Non-ringing filters are left to continue smoothly (original behaviour).
-        // Mono retrigger (hard envelope restart) snaps the cutoff to the new note;
-        // legato continue (envelope kept running) deliberately does NOT, so the
-        // key-tracked cutoff glides with the legato. See snapFilterCutoffOnNote.
-        if (inMonoMode)
-            snapFilterCutoffOnNote = true;
     }
 }
 
