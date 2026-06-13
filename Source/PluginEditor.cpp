@@ -2747,20 +2747,27 @@ void SpectralPageComponent::resized()
     const int totalContentH = juce::jmax(100, content.getHeight() - headerH * 2 - pad);
     const int L = totalContentH / 2;
 
-    // Single row height for all three (Spectrum height) - clean aligned look
+    // Natural row height (Spectrum height) - used to derive the square Lissajous size
     const int rowH = juce::jmax(60, static_cast<int>((L + headerH) * verticalShrink * spectrumShrink));
 
-    // Top row: Lissajous (square) | Oscilloscope (stretches to fill) - same height as Spectrum
-    auto topRow = content.withHeight(rowH);
     const int labelSpace = 32;  // Match groupTitleHeight (title inside box)
-    const int innerH = rowH - 8 - labelSpace;  // Draw area height for Lissajous
-    const int gonioW = juce::jmax(80, innerH + 16);  // Square fits: width = height + padding
+
+    // The Lissajous box reads as a SQUARE: its width fits a square draw area below the
+    // label at the natural row height; we then reuse that width as the height for ALL
+    // three boxes so the box is square and Oscilloscope/Spectrum share its (shorter)
+    // height. This shrinks the rows slightly vertically vs. the natural rowH.
+    const int innerH = rowH - 8 - labelSpace;        // draw height at natural rowH
+    const int gonioW = juce::jmax(80, innerH + 16);  // square box side (width == height)
+    const int squareRowH = gonioW;                   // shared height for all three boxes
+
+    // Top row: Lissajous (square) | Oscilloscope (stretches to fill) - same height as Spectrum
+    auto topRow = content.withHeight(squareRowH);
     auto gonioGroupBounds = topRow.withWidth(gonioW);
     goniometerGroup.setBounds(gonioGroupBounds);
     oscilloscopeGroup.setBounds(topRow.withX(gonioGroupBounds.getRight()).withWidth(content.getWidth() - gonioGroupBounds.getWidth()));
 
     // Bottom row: Spectrum - same height as top row
-    auto bottomRow = content.withY(topRow.getBottom() + pad).withHeight(rowH);
+    auto bottomRow = content.withY(topRow.getBottom() + pad).withHeight(squareRowH);
     spectrumGroup.setBounds(bottomRow);
 
     // Lissajous: below label, centered square
@@ -2771,8 +2778,12 @@ void SpectralPageComponent::resized()
     int gy = gonioGroupBounds.getY() + labelSpace + (gonioInner.getHeight() - gonioDim) / 2;
     lissajousDrawArea = juce::Rectangle<int>(gx, gy, gonioDim, gonioDim);
 
-    // Content area below label, with padding
-    oscilloscope->setBounds(oscilloscopeGroup.getLocalBounds().withTrimmedTop(labelSpace).reduced(8));
+    // Oscilloscope: center the component vertically in its box (symmetric top/bottom
+    // margins) so the trace sits in the MIDDLE of the box rather than low. The trace is
+    // drawn at the component's vertical centre, so equal margins => trace at box centre.
+    oscilloscope->setBounds(oscilloscopeGroup.getLocalBounds().reduced(8)
+                                .withTrimmedTop(labelSpace - 8)
+                                .withTrimmedBottom(labelSpace - 8));
     spectrumAnalyser->setBounds(spectrumGroup.getLocalBounds().withTrimmedTop(labelSpace).reduced(8));
 
     if (glowOverlay != nullptr)

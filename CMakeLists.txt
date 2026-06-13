@@ -254,6 +254,19 @@ target_link_libraries(SpaceDust
 )
 
 #==============================================================================
+# Standalone: auto-detect MIDI keyboards on launch.
+# JUCE's stock standalone app forces autoOpenMidiDevices=false on desktop, so a
+# connected MIDI keyboard does nothing until manually enabled in Audio/MIDI
+# Settings. We supply our own app (Source/StandaloneApp.cpp) that opens MIDI
+# inputs automatically, enabled via JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1.
+#==============================================================================
+if(TARGET SpaceDust_Standalone)
+    target_sources(SpaceDust_Standalone PRIVATE Source/StandaloneApp.cpp)
+    target_compile_definitions(SpaceDust_Standalone PRIVATE JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1)
+    message(STATUS "Standalone: custom app with auto MIDI-input detection ENABLED.")
+endif()
+
+#==============================================================================
 # Parameter-flood stress harness (ASan builds only). A console app that floods
 # every parameter from one thread while processBlock runs on another, to catch
 # host-automation-flood heap corruption that pluginval/the editor can't trigger.
