@@ -22,6 +22,18 @@
     factor == 1 is a transparent pass-through (the function is called once), so
     the toggle-off path is bit-identical to the un-oversampled stage.
 
+    PERFORMANCE (polyphase, bit-identical to the naive form):
+      * Upsampling: a zero-stuffed convolution multiplies ¾ (or ½) of its taps by
+        an inserted zero, contributing nothing. We instead keep a base-rate input
+        history and, for each output phase k, sum ONLY the taps h[k], h[k+factor],
+        … against the real input samples. Same non-zero terms, same ascending-tap
+        order → identical sum, at 1/factor the multiply count.
+      * Downsampling: the decimator discards every sub-sample except the last, so
+        the full anti-aliasing convolution is only needed once per base sample.
+        The intermediate sub-samples are still pushed into the FIR state (the
+        filter must see them) but their dot-product is skipped. Identical output,
+        ~1/factor the multiply count.
+
     Stereo only (2 channels). RT-safe: no allocation after setFactor().
 */
 class OversampledStage
@@ -47,9 +59,10 @@ public:
     {
         for (int c = 0; c < 2; ++c)
         {
-            std::fill (std::begin (upZ[c]),   std::end (upZ[c]),   0.0f);
+            std::fill (std::begin (xHist[c]), std::end (xHist[c]), 0.0f);
             std::fill (std::begin (downZ[c]), std::end (downZ[c]), 0.0f);
-            upPos[c] = downPos[c] = 0;
+            xPos[c]   = 0;
+            downPos[c] = 0;
         }
     }
 
@@ -62,23 +75,32 @@ public:
             return fn (x);
 
         const int ch = (channel == 1) ? 1 : 0;
+
+        // Push the pre-scaled base-rate input once. Pre-scaling by `factor` here (to
+        // restore the held energy of the zero-stuffed samples) keeps each product
+        // h[t] * (x*factor) bit-identical to the naive zero-stuffed convolution.
+        int& xp = xPos[ch];
+        xp = (xp == 0) ? kBaseHist - 1 : xp - 1;
+        xHist[ch][xp] = x * static_cast<float> (factor);
+
         float out = 0.0f;
         for (int k = 0; k < factor; ++k)
         {
-            // Zero-stuff with the unity-DC-gain anti-imaging FIR; pre-scale by
-            // `factor` so the held energy of the inserted zeros is restored.
-            const float in = (k == 0) ? x * static_cast<float> (factor) : 0.0f;
-            const float up = firStep (upZ[ch],   upPos[ch],   in);
-            const float y  = fn (up);
-            const float dn = firStep (downZ[ch], downPos[ch], y);
-            if (k == factor - 1)   // decimate: keep the last filtered sub-sample
+            const float up = upsamplePhase (ch, k);     // polyphase anti-imaging FIR
+            const float y  = fn (up);                    // nonlinear at the OS rate
+            const bool  keep = (k == factor - 1);        // decimate: keep last sub-sample
+            const float dn = decimateStep (ch, y, keep); // anti-aliasing FIR (dot only when kept)
+            if (keep)
                 out = dn;
         }
         return out;
     }
 
 private:
-    static constexpr int kMaxTaps = 33;
+    static constexpr int kMaxTaps  = 33;
+    // Base-rate history length: for output phase k we touch taps k, k+factor, … so we
+    // need ceil(numTaps / factor) past inputs. ceil(33/2)=17 is the worst case (factor 2).
+    static constexpr int kBaseHist = 17;
 
     void designKernel() noexcept
     {
@@ -104,15 +126,39 @@ private:
             h[n] *= norm;   // unity DC gain
     }
 
-    float firStep (float* z, int& pos, float in) noexcept
+    /** Anti-imaging FIR for output sub-sample phase `k`, evaluated polyphase against
+        the base-rate input history. Sums h[k], h[k+factor], … times x[m], x[m-1], …
+        — the exact non-zero terms of the zero-stuffed convolution, in tap order. */
+    float upsamplePhase (int ch, int k) const noexcept
     {
-        z[pos] = in;
+        const float* xz = xHist[ch];
         float acc = 0.0f;
-        int idx = pos;
-        for (int i = 0; i < numTaps; ++i)
+        int idx = xPos[ch];               // newest base sample = x[m]
+        for (int tap = k; tap < numTaps; tap += factor)
         {
-            acc += h[i] * z[idx];
-            idx = (idx == 0) ? numTaps - 1 : idx - 1;
+            acc += h[tap] * xz[idx];
+            idx = (idx == kBaseHist - 1) ? 0 : idx + 1;   // walk back toward x[m-1], x[m-2], …
+        }
+        return acc;
+    }
+
+    /** Push `y` into the decimation FIR's delay line. The decimator only keeps one
+        sub-sample per base sample, so the dot-product is computed only when
+        `computeOut` is true; the discarded sub-samples just advance the state. */
+    float decimateStep (int ch, float y, bool computeOut) noexcept
+    {
+        float* z = downZ[ch];
+        int&   pos = downPos[ch];
+        z[pos] = y;
+        float acc = 0.0f;
+        if (computeOut)
+        {
+            int idx = pos;
+            for (int i = 0; i < numTaps; ++i)
+            {
+                acc += h[i] * z[idx];
+                idx = (idx == 0) ? numTaps - 1 : idx - 1;
+            }
         }
         pos = (pos + 1) % numTaps;
         return acc;
@@ -121,8 +167,8 @@ private:
     int   factor  = 1;
     int   numTaps = 1;
     float h[kMaxTaps] {};
-    float upZ[2][kMaxTaps]   {};
-    float downZ[2][kMaxTaps] {};
-    int   upPos[2]   { 0, 0 };
+    float xHist[2][kBaseHist] {};   // base-rate input history (pre-scaled by factor)
+    float downZ[2][kMaxTaps]  {};   // decimation FIR delay line (oversampled rate)
+    int   xPos[2]   { 0, 0 };
     int   downPos[2] { 0, 0 };
 };

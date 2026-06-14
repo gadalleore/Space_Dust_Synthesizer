@@ -1045,6 +1045,36 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                                         * kFilterKeyTrackLogPerSemi;
     const float keyTrackMultiplier = std::exp(keyTrackLogOffset);
 
+    //==============================================================================
+    // -- Per-block constants (hoisted out of the per-sample loop) --
+    // These depend only on values that are fixed for the whole render segment:
+    // oscillator tuning, pan, and MPE pitch bend (the MPESynthesiser splits the
+    // block at MIDI / expression events, so mpeBendSemitones is constant within a
+    // single renderNextBlock call). Computing them once instead of per sample
+    // removes ~10 std::pow / std::sin / std::cos / std::log calls per sample per
+    // voice with bit-identical output (same operands, same operations).
+    const double osc1TuneRatio = std::pow(2.0, (osc1CoarseTune + osc1Detune / 100.0) / 12.0);
+    const double osc2TuneRatio = std::pow(2.0, (osc2CoarseTune + osc2Detune / 100.0) / 12.0);
+    const double subCoarseRatio = std::pow(2.0, static_cast<double>(subOscCoarse) / 12.0);
+
+    // Pitch bend (MPE wheel/per-note bend + manual UI slider), constant per segment.
+    const float  manualBendStBlock = juce::jlimit(-1.0f, 1.0f, pitchBend) * pitchBendAmountFloat;
+    const double totalBendStBlock  = mpeBendSemitones + static_cast<double>(manualBendStBlock);
+    const double blockBendRatio     = std::pow(2.0, totalBendStBlock / 12.0);
+
+    // Constant-power pan gains (-1 = full left, 0 = center, 1 = full right).
+    const float pi4 = static_cast<float>(juce::MathConstants<double>::pi / 4.0);
+    const float gainL1 = std::cos((osc1Pan + 1.0f) * pi4);
+    const float gainR1 = std::sin((osc1Pan + 1.0f) * pi4);
+    const float gainL2 = std::cos((osc2Pan + 1.0f) * pi4);
+    const float gainR2 = std::sin((osc2Pan + 1.0f) * pi4);
+    const float centerGain = 0.70710678f;  // 1/sqrt(2) for centered sources
+
+    // Log-frequency constants for the filter cutoff math.
+    const float logMin = std::log(20.0f);
+    const float logMax = std::log(20000.0f);
+    const float timbreLogScale = static_cast<float>(std::log(4.0)); // ±2 octaves of timbre sweep
+
     // Generate oscillator waveforms, mix, and apply envelope
     for (int i = 0; i < maxSamples; ++i)
     {
@@ -1095,9 +1125,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         //
         // The manual UI bend slider is still useful for users who want a software
         // pitch bend independent of any hardware wheel.
-        const float manualBendSt = juce::jlimit(-1.0f, 1.0f, pitchBend) * pitchBendAmountFloat;
-        const double totalBendSt = mpeBendSemitones + static_cast<double>(manualBendSt);
-        double bendRatio = std::pow(2.0, totalBendSt / 12.0);
+        // Pitch bend ratio is constant per render segment (computed once above).
+        const double bendRatio = blockBendRatio;
         double osc1Freq = pitchForOscillators * bendRatio;
         double osc2Freq = pitchForOscillators * bendRatio;
         
@@ -1125,8 +1154,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             if (lfo1Target == 0)  // Pitch
             {
                 float pitchModCents = lfo1Val * 1200.0f;  // ±24 semitones at full LFO swing
-                osc1Freq *= std::pow(2.0, pitchModCents / 1200.0);
-                osc2Freq *= std::pow(2.0, pitchModCents / 1200.0);
+                const double pitchModRatio = std::pow(2.0, pitchModCents / 1200.0);
+                osc1Freq *= pitchModRatio;
+                osc2Freq *= pitchModRatio;
             }
             else if (lfo1Target == 1)  // Filter
             {
@@ -1143,8 +1173,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             if (lfo2Target == 0)  // Pitch
             {
                 float pitchModCents = lfo2Val * 1200.0f;  // ±24 semitones at full LFO swing
-                osc1Freq *= std::pow(2.0, pitchModCents / 1200.0);
-                osc2Freq *= std::pow(2.0, pitchModCents / 1200.0);
+                const double pitchModRatio = std::pow(2.0, pitchModCents / 1200.0);
+                osc1Freq *= pitchModRatio;
+                osc2Freq *= pitchModRatio;
             }
             else if (lfo2Target == 1)  // Filter
             {
@@ -1158,14 +1189,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             else if (lfo2Target == 5) noiseVolMod += lfo2Val;
         }
         
-        // Calculate oscillator frequencies with independent tuning and LFO modulation
-        // Oscillator 1: base frequency + osc1 tuning + LFO modulation
-        double osc1TotalSemitones = osc1CoarseTune + (osc1Detune / 100.0);
-        osc1Freq = osc1Freq * std::pow(2.0, osc1TotalSemitones / 12.0);
-        
-        // Oscillator 2: base frequency + osc2 tuning + LFO modulation
-        double osc2TotalSemitones = osc2CoarseTune + (osc2Detune / 100.0);
-        osc2Freq = osc2Freq * std::pow(2.0, osc2TotalSemitones / 12.0);
+        // Apply oscillator tuning (constant per block — ratios cached above).
+        osc1Freq = osc1Freq * osc1TuneRatio;
+        osc2Freq = osc2Freq * osc2TuneRatio;
 
         // Analog Drift: emulates hardware component tolerance and slow oscillator/filter drift
         if (analogDriftAmount > 0.0f)
@@ -1213,8 +1239,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         {
             osc1AngleDelta = (osc1Freq / sampleRate) * 2.0 * juce::MathConstants<double>::pi;
             osc2AngleDelta = (osc2Freq / sampleRate) * 2.0 * juce::MathConstants<double>::pi;
-            double baseFreq = osc1Freq / std::pow(2.0, (osc1CoarseTune + osc1Detune / 100.0) / 12.0);
-            double subFreq = baseFreq * 0.5 * std::pow(2.0, static_cast<double>(subOscCoarse) / 12.0);
+            double baseFreq = osc1Freq / osc1TuneRatio;
+            double subFreq = baseFreq * 0.5 * subCoarseRatio;
             subFreq = juce::jlimit(20.0, 20000.0, subFreq);
             subOscAngleDelta = (subFreq / sampleRate) * 2.0 * juce::MathConstants<double>::pi;
         }
@@ -1274,15 +1300,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         float osc2Out = osc2Sample * osc2Level * juce::jlimit(0.0f, 2.0f, 1.0f + osc2VolMod);
         float noiseOut = noiseSample * noiseLevel * 0.75f * juce::jlimit(0.0f, 2.0f, 1.0f + noiseVolMod);
         
-        // Constant-power pan: -1 = full left, 0 = center, 1 = full right
-        const float pi4 = static_cast<float>(juce::MathConstants<double>::pi / 4.0);
-        float gainL1 = std::cos((osc1Pan + 1.0f) * pi4);
-        float gainR1 = std::sin((osc1Pan + 1.0f) * pi4);
-        float gainL2 = std::cos((osc2Pan + 1.0f) * pi4);
-        float gainR2 = std::sin((osc2Pan + 1.0f) * pi4);
-        const float centerGain = 0.70710678f;  // 1/sqrt(2) for centered sources
-        
-        // Step 5: Stereo mixing with per-oscillator pan
+        // Step 5: Stereo mixing with per-oscillator pan (gains cached per block above)
         float leftMix = osc1Out * gainL1 + osc2Out * gainL2 + noiseOut * centerGain + subOscSample * centerGain;
         float rightMix = osc1Out * gainR1 + osc2Out * gainR2 + noiseOut * centerGain + subOscSample * centerGain;
         
@@ -1316,8 +1334,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // Amount blends unmodulated cutoff (0%) with full-range envelope sweep (100%):
         // E=1 → top of range, E=0 → bottom; sustain/decay set where E lands vs the knob.
         // Log-frequency space for perceptually even motion across octaves.
-        const float logMin = std::log(20.0f);
-        const float logMax = std::log(20000.0f);
+        // (logMin / logMax computed once per block above.)
         float filterBaseHz = baseFilterCutoff;
         if (analogDriftAmount > 0.0f)
         {
@@ -1353,8 +1370,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // zero offset, full backward compatibility.
         // mpeTimbreDepth (0..1) scales the modulation: 0 = slide ignored, 1 = full ±2 octaves.
         const float timbreBipolar = juce::jlimit(-1.0f, 1.0f, (mpeTimbre01 - 0.5f) * 2.0f) * mpeTimbreDepth;
-        // ±2 octaves = ±ln(4) ≈ ±1.386 in natural-log units.
-        const float timbreLogOffset = timbreBipolar * static_cast<float>(std::log(4.0));
+        // ±2 octaves = ±ln(4) ≈ ±1.386 in natural-log units (timbreLogScale cached above).
+        const float timbreLogOffset = timbreBipolar * timbreLogScale;
 
         const float masterKeyTrackOffset = filterKeyTrack ? keyTrackLogOffset : 0.0f;
         float modulatedCutoff = std::exp(juce::jlimit(logMin, logMax, logModulated + timbreLogOffset + masterKeyTrackOffset)) * lfoFactor;
