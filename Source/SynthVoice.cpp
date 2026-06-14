@@ -185,6 +185,7 @@ void SynthVoice::noteStarted()
                 filterDriftOffset = 0.0f;
             }
             analogOscWalk = 0.0f;
+            analogOscWalk2 = 0.0f;
             analogFilterWalk = 0.0f;
         }
     }
@@ -1170,10 +1171,14 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         if (analogDriftAmount > 0.0f)
         {
             const float a = analogDriftAmount;
-            analogOscWalk += analogDriftWalkCoeff * ((random.nextFloat() * 2.0f - 1.0f) - analogOscWalk);
-            const float walkCents = analogOscWalk * 1.25f * a;
-            const float cents1 = osc1DriftOffset * 5.0f * a + walkCents;
-            const float cents2 = osc2DriftOffset * 5.0f * a + walkCents;
+            // Two INDEPENDENT slow random walks so the oscillators wander apart and
+            // back over a few seconds — the slow evolving beating of a real analog
+            // pair (the old code shared one walk, so both moved in lockstep with no
+            // beating). Static per-note offset ±12 cents + ±6 cents wander at max.
+            analogOscWalk  += analogDriftWalkCoeff * ((random.nextFloat() * 2.0f - 1.0f) - analogOscWalk);
+            analogOscWalk2 += analogDriftWalkCoeff * ((random.nextFloat() * 2.0f - 1.0f) - analogOscWalk2);
+            const float cents1 = osc1DriftOffset * 12.0f * a + analogOscWalk  * 6.0f * a;
+            const float cents2 = osc2DriftOffset * 12.0f * a + analogOscWalk2 * 6.0f * a;
             osc1Freq *= std::pow(2.0, static_cast<double>(cents1) / 1200.0);
             osc2Freq *= std::pow(2.0, static_cast<double>(cents2) / 1200.0);
         }
@@ -1318,8 +1323,11 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         {
             analogFilterWalk += analogDriftWalkCoeff * ((random.nextFloat() * 2.0f - 1.0f) - analogFilterWalk);
             const float a = analogDriftAmount;
-            const float driftHz = filterDriftOffset * 30.0f * a + analogFilterWalk * 10.0f * a;
-            filterBaseHz = juce::jlimit(20.0f, 20000.0f, baseFilterCutoff + driftHz);
+            // Proportional to cutoff (not a fixed ±Hz, which vanished at high cutoffs)
+            // so the wander is audible anywhere: ±5% per-note offset + ±3.5% slow
+            // wander at max — the filter "breathes" like a warm hardware VCF.
+            const float driftFrac = filterDriftOffset * 0.05f * a + analogFilterWalk * 0.035f * a;
+            filterBaseHz = juce::jlimit(20.0f, 20000.0f, baseFilterCutoff * (1.0f + driftFrac));
         }
         float logKnob = std::log(juce::jmax(20.0f, filterBaseHz));
         float E = filterEnvOutput;
@@ -1831,8 +1839,8 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
     filterCutoffSmoothCoeff = 1.0f - std::exp(-1.0f / (0.004f * static_cast<float>(sampleRate)));
     smoothedFilterCutoffHz = juce::jlimit(20.0f, 20000.0f, baseFilterCutoff);
     snapFilterCutoffOnNote = false;
-    // ~10 s time constant for gentle analog-style wander (per sample)
-    analogDriftWalkCoeff = 1.0f - std::exp(-1.0f / (10.0f * static_cast<float>(sampleRate)));
+    // ~3 s time constant for perceptible (but still slow) analog-style wander
+    analogDriftWalkCoeff = 1.0f - std::exp(-1.0f / (3.0f * static_cast<float>(sampleRate)));
     voiceFade = 1.0f;
     voiceFadeSamplesRemaining = 0;
     outputSmootherL = 0.0f;
@@ -1922,7 +1930,7 @@ void SynthVoice::setCurrentSampleRate(double newRate)
         // Use the current (slower) base cutoff smoothing, not the old 1.5ms value
         filterCutoffSmoothCoeff = 1.0f - std::exp(-1.0f / (0.004f * static_cast<float>(newRate)));
         postStealCutoffSlowCoeff = 1.0f - std::exp(-1.0f / (0.035f * static_cast<float>(newRate)));
-        analogDriftWalkCoeff = 1.0f - std::exp(-1.0f / (10.0f * static_cast<float>(newRate)));
+        analogDriftWalkCoeff = 1.0f - std::exp(-1.0f / (3.0f * static_cast<float>(newRate)));
     }
     // If DSP not initialized yet, prepareToPlay() will handle initialization
 }

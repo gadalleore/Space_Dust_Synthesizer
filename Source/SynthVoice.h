@@ -296,13 +296,15 @@ private:
     
     // Analog Drift: emulates hardware component tolerance and slow oscillator/filter drift
     float analogDriftAmount = 0.0f;
-    // Per-note random factors in [-1, 1]; scaled in render by analogDriftAmount (±5 cents / ±30 Hz at amount=1)
+    // Per-note random factors in [-1, 1]; scaled in render by analogDriftAmount
+    // (±12 cents static + ±6 cents wander per osc, ±5% + ±3.5% cutoff wander at amount=1)
     float osc1DriftOffset = 0.0f;
     float osc2DriftOffset = 0.0f;
     float filterDriftOffset = 0.0f;
-    float analogOscWalk = 0.0f;    // Smoothed osc drift (slow random walk)
-    float analogFilterWalk = 0.0f; // Smoothed filter cutoff wander (Hz-scale, smoothed)
-    float analogDriftWalkCoeff = 0.0f; // One-pole coeff toward white noise (~10 s time constant at 44.1 kHz)
+    float analogOscWalk = 0.0f;    // Smoothed osc1 drift (slow independent random walk)
+    float analogOscWalk2 = 0.0f;   // Smoothed osc2 drift (independent walk → evolving beating)
+    float analogFilterWalk = 0.0f; // Smoothed filter cutoff wander (smoothed)
+    float analogDriftWalkCoeff = 0.0f; // One-pole coeff toward white noise (~3 s time constant)
     
     // -- Filter --
     // Self-oscillating SVF: identical to a clean TPT filter for the lower ~80% of
