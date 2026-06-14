@@ -726,6 +726,20 @@ void MainPageComponent::resized()
         leftX  += clusterOffset;
         rightX += clusterOffset;
     }
+    // Cosmetic: set the gap between the two boxes equal to the Effects tab's
+    // box-to-box distance (EffectsPageComponent::resized() colGap == 8) so the
+    // horizontal spacing between boxes is consistent across tabs. The boxes are
+    // only RELOCATED (leftSideWidth / narrowStripWidth are unchanged), so box
+    // sizes and their internal contents stay exactly as before. The native gap
+    // here is leftRightGap, so shift each box out by half the difference; the
+    // symmetric shift keeps the cluster centred.
+    {
+        const int effectsColGap = 8;   // == EffectsPageComponent::resized() colGap
+        const int boxScoot = juce::jlimit(0, juce::jmax(0, leftX - outerMargin),
+                                          (effectsColGap - leftRightGap) / 2);
+        leftX  -= boxScoot;
+        rightX += boxScoot;
+    }
     int topY = outerMargin;
     int oscY = topY;
     int filterY = oscY + oscHeight + topBottomGap;
