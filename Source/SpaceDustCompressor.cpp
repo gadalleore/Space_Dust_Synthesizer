@@ -69,10 +69,8 @@ void SpaceDustCompressor::prepare(const juce::dsp::ProcessSpec& spec)
 
 void SpaceDustCompressor::reset()
 {
-    envelopeL_ = 0.0f;
-    envelopeR_ = 0.0f;
-    autoReleaseEnvL_ = 0.0f;
-    autoReleaseEnvR_ = 0.0f;
+    detectorEnv_ = 0.0f;
+    grEnvDb_ = 0.0f;
     gainReductionDb_.store(0.0f, std::memory_order_relaxed);
 }
 
@@ -98,30 +96,40 @@ void SpaceDustCompressor::process(juce::AudioBuffer<float>& buffer)
     // Pre-compute attack/release coefficients
     // 1176: ultra-fast attack (20µs-800µs mapped from user's 0.1-80ms range)
     // SSL: standard attack
-    float effectiveAttackMs = params_.attackMs;
-    float effectiveReleaseMs = params_.releaseMs;
-    if (type == 1) // 1176 FET
+    // Each type keeps its CHARACTER via a different attack/release range, but every
+    // range now spans an audibly different sweep across the full knob travel (the old
+    // ranges were so narrow — e.g. 1176 attack 0.02-0.8ms — that both ends sounded
+    // identical and the knob felt dead). attackMs is 0.1-80, releaseMs is 5-1200.
+    float effectiveAttackMs = params_.attackMs;   // SSL: direct 0.1-80 ms
+    float effectiveReleaseMs = params_.releaseMs;  // SSL: direct 5-1200 ms
+    if (type == 1) // 1176 FET: fast-leaning, but the whole knob is audible
     {
-        effectiveAttackMs = 0.02f + (params_.attackMs / 80.0f) * 0.78f;
-        effectiveReleaseMs = juce::jmax(50.0f, params_.releaseMs);
+        effectiveAttackMs = 0.05f + (params_.attackMs / 80.0f) * 20.0f;        // 0.05 - 20 ms
+        effectiveReleaseMs = juce::jmax(10.0f, params_.releaseMs);             // 10 - 1200 ms
     }
-    else if (type == 2) // LA-2A Opto
+    else if (type == 2) // LA-2A Opto: slow-leaning, but the whole knob is audible
     {
-        // LA-2A: program-dependent. Attack 1.5-10ms, release 60-500ms.
-        // User controls bias the range but the opto cell adapts.
-        effectiveAttackMs = 1.5f + (params_.attackMs / 80.0f) * 8.5f;
-        effectiveReleaseMs = 60.0f + (params_.releaseMs / 1200.0f) * 440.0f;
+        effectiveAttackMs = 1.5f + (params_.attackMs / 80.0f) * 30.0f;         // 1.5 - 31.5 ms
+        effectiveReleaseMs = 60.0f + (params_.releaseMs / 1200.0f) * 1140.0f;  // 60 - 1200 ms
     }
 
+    // User attack/release act on the GAIN reduction (gain-domain ballistics).
     const float attackCoeff = msToCoeff(effectiveAttackMs);
     const float releaseCoeff = msToCoeff(effectiveReleaseMs);
 
-    // Auto-release: wide fast/slow range for audible program-dependent behavior
-    const float autoReleaseFast = msToCoeff(type == 1 ? 15.0f : (type == 2 ? 25.0f : 20.0f));
+    // Level-detector release "hold": a short FIXED time so the detected peak level
+    // stays stable across each waveform cycle (doesn't collapse to zero at every
+    // zero crossing). Attack is instantaneous (true peak). This is separate from
+    // the user's compressor attack/release, which now live in the gain domain.
+    const float detectorReleaseCoeff = msToCoeff(type == 1 ? 2.0f : 5.0f);
+
+    // Auto-release: program-dependent gain recovery. Deeper gain reduction →
+    // slower recovery (musical "hold"); shallow GR → faster recovery.
+    const float autoReleaseFast = msToCoeff(type == 1 ? 60.0f : (type == 2 ? 120.0f : 80.0f));
     const float autoReleaseSlow = msToCoeff(type == 1 ? 800.0f : (type == 2 ? 1000.0f : 1200.0f));
-    const float autoReleaseAttack = msToCoeff(5.0f);
-    const float autoEnvDecay = msToCoeff(type == 1 ? 80.0f : (type == 2 ? 120.0f : 100.0f));
-    const bool useAutoRelease = params_.autoRelease || (type == 2);
+    // Auto-release is now an opt-in toggle for ALL types. It used to be force-enabled
+    // for type 2 (LA-2A), which silently bypassed that compressor's Release knob.
+    const bool useAutoRelease = params_.autoRelease;
 
     // Make a dry copy for parallel mix
     juce::AudioBuffer<float> dryBuffer;
@@ -137,7 +145,7 @@ void SpaceDustCompressor::process(juce::AudioBuffer<float>& buffer)
         const float ratio = juce::jmax(1.0f, smoothedRatio_.getNextValue());
         const float makeupLin = dbToLinear(smoothedMakeup_.getNextValue());
 
-        // --- Stereo linked detection ---
+        // --- Stereo linked peak detection ---
         float inputPeakLin = 0.0f;
         for (int ch = 0; ch < numCh; ++ch)
         {
@@ -146,51 +154,61 @@ void SpaceDustCompressor::process(juce::AudioBuffer<float>& buffer)
                 inputPeakLin = absVal;
         }
 
-        // --- Envelope follower ---
-        float& envelope = envelopeL_;
-
-        if (inputPeakLin > envelope)
-            envelope = attackCoeff * envelope + (1.0f - attackCoeff) * inputPeakLin;
+        // --- Level detector: instant-attack peak with a short release hold ---
+        // Gives a stable per-cycle level so the gain computer below sees the note
+        // level, not the instantaneous waveform shape.
+        if (inputPeakLin > detectorEnv_)
+            detectorEnv_ = inputPeakLin;                                   // instant attack
         else
-        {
-            if (useAutoRelease)
-            {
-                float& autoEnv = autoReleaseEnvL_;
-                float grAmount = envelope - inputPeakLin;
-                if (grAmount > autoEnv)
-                    autoEnv = autoReleaseAttack * autoEnv + (1.0f - autoReleaseAttack) * grAmount;
-                else
-                    autoEnv = autoEnvDecay * autoEnv;
+            detectorEnv_ = detectorReleaseCoeff * detectorEnv_
+                         + (1.0f - detectorReleaseCoeff) * inputPeakLin;    // short hold
 
-                float blend = juce::jlimit(0.0f, 1.0f, autoEnv * 10.0f);
-                float adaptiveRelease = autoReleaseFast * (1.0f - blend) + autoReleaseSlow * blend;
-                envelope = adaptiveRelease * envelope + (1.0f - adaptiveRelease) * inputPeakLin;
-            }
-            else
-            {
-                envelope = releaseCoeff * envelope + (1.0f - releaseCoeff) * inputPeakLin;
-            }
-        }
+        const float levelDb = linearToDb(juce::jmax(1e-10f, detectorEnv_));
 
-        // --- Gain computer ---
-        float envelopeDb = linearToDb(juce::jmax(1e-10f, envelope));
-        float grDb;
+        // --- Gain computer: TARGET gain reduction (dB, <= 0) for this level ---
+        float targetGrDb;
         if (type == 2) // LA-2A: soft knee
         {
-            float excess = envelopeDb - thresh;
+            float excess = levelDb - thresh;
             if (excess <= -6.0f)
-                grDb = 0.0f;
+                targetGrDb = 0.0f;
             else if (excess < 6.0f)
             {
                 // Soft knee: gradual onset over 12dB window
                 float knee = (excess + 6.0f) / 12.0f;
-                grDb = -(knee * knee) * (excess + 6.0f) * (1.0f - 1.0f / ratio) * 0.5f;
+                targetGrDb = -(knee * knee) * (excess + 6.0f) * (1.0f - 1.0f / ratio) * 0.5f;
             }
             else
-                grDb = computeGainDb(envelopeDb, thresh, ratio);
+                targetGrDb = computeGainDb(levelDb, thresh, ratio);
         }
         else
-            grDb = computeGainDb(envelopeDb, thresh, ratio);
+            targetGrDb = computeGainDb(levelDb, thresh, ratio);
+
+        // --- Ballistics on the GAIN REDUCTION (this is what makes the user's
+        //     attack/release knobs audible) ---
+        if (targetGrDb < grEnvDb_)
+        {
+            // Need MORE reduction → ATTACK (how fast GR clamps down).
+            grEnvDb_ = attackCoeff * grEnvDb_ + (1.0f - attackCoeff) * targetGrDb;
+        }
+        else
+        {
+            // Recover toward less reduction → RELEASE (how fast GR lets go).
+            if (useAutoRelease)
+            {
+                // Program-dependent: deeper current GR recovers slower.
+                const float depth = juce::jlimit(0.0f, 1.0f, -grEnvDb_ / 12.0f);
+                const float adaptiveRelease = autoReleaseFast * (1.0f - depth)
+                                            + autoReleaseSlow * depth;
+                grEnvDb_ = adaptiveRelease * grEnvDb_ + (1.0f - adaptiveRelease) * targetGrDb;
+            }
+            else
+            {
+                grEnvDb_ = releaseCoeff * grEnvDb_ + (1.0f - releaseCoeff) * targetGrDb;
+            }
+        }
+
+        const float grDb = grEnvDb_;
         float gainLin = dbToLinear(grDb);
 
         if (grDb < peakGrDb)

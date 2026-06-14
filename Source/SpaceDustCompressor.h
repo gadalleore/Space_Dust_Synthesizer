@@ -48,13 +48,19 @@ private:
     juce::dsp::ProcessSpec spec_{};
     Parameters params_;
 
-    // Envelope follower state (per-channel)
-    float envelopeL_{0.0f};
-    float envelopeR_{0.0f};
+    // Level detector: stereo-linked rectified peak with instant attack + a short
+    // fixed release "hold" so the detected level stays stable across each waveform
+    // cycle (instead of dipping to zero at every zero crossing). The compressor's
+    // user attack/release act on the GAIN below, not on this detector.
+    float detectorEnv_{0.0f};
 
-    // Auto-release adaptive state
-    float autoReleaseEnvL_{0.0f};
-    float autoReleaseEnvR_{0.0f};
+    // Smoothed gain reduction in dB. The user attack/release ballistics operate
+    // HERE (gain domain): attack = how fast GR clamps down toward the target,
+    // release = how fast it recovers toward 0 dB. This is what makes the attack/
+    // release knobs audibly effective (the old code smoothed the LEVEL and then
+    // computed GR instantaneously, so in steady state GR was the same for any
+    // attack/release setting — the knobs "did nothing").
+    float grEnvDb_{0.0f};
 
     // Smoothed parameters (zipper-free)
     juce::SmoothedValue<float> smoothedThreshold_{-12.0f};
