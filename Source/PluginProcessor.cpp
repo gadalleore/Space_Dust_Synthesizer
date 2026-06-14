@@ -1950,8 +1950,23 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
         if ((stopped || started || jumpedBack) && synth.getVoiceModeIndex() != 0)
         {
-            synth.resetNoteState();
-            synth.turnOffAllVoices(false);   // hard stop: no notes can hang across the edge
+            // Flush the note STACK but KEEP lastMonoVoiceIndex: the new loop's first
+            // note then REUSES the voice that is ringing out the previous note's
+            // release (a smooth mono retrigger, exactly like normal Mono play) instead
+            // of being allocated a fresh voice while cutStrayVoices() hard-fades the old
+            // one — that fresh-alloc + hard-fade of a still-loud tail was the POP on
+            // loop restart (worst in FL's tiny buffers, milder in Ableton's larger ones).
+            synth.resetNoteState(/*keepMonoVoiceIndex*/ true);
+            // GRACEFUL release, not a hard stop. allowTailOff=false chopped any still-
+            // ringing release tail at the loop boundary over the 1.5 ms voiceFade ramp —
+            // a clearly audible POP on loop restart (worst in FL's tiny buffers, milder in
+            // Ableton), especially with resonance / a long release. allowTailOff=true lets
+            // held notes enter their normal release (envelope value stays continuous, only
+            // the slope changes → declicked) and leaves an already-decaying tail to finish.
+            // Stuck notes are still prevented: every voice is driven into its release stage
+            // here, and the new loop's first note re-asserts the mono single-voice guarantee
+            // via cutStrayVoices().
+            synth.turnOffAllVoices(true);
         }
 
         wasPlayingState = nowPlaying;

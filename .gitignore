@@ -114,3 +114,6 @@ rebuild-safety.log
 
 # Local crash/ASan diagnostic tooling (hardcoded local paths; not for public repo)
 build-verify/
+
+# Local preset backup zips (presets themselves are tracked under installer/Files/Presets)
+preset-backups/

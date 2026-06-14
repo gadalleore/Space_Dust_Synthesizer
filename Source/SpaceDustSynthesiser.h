@@ -103,12 +103,23 @@ public:
         in the stack, and processMidiBuffer() then rewrites the MIDI stream with
         spurious note-on/note-off pairs → wrong notes, stuck notes and voice-steal
         thrashing.  vector::clear() keeps the capacity, so this is allocation-free
-        and safe to call from the audio thread. */
-    void resetNoteState()
+        and safe to call from the audio thread.
+
+        @param keepMonoVoiceIndex  When true, the note STACK is flushed but
+               lastMonoVoiceIndex is preserved. Use this at a loop-wrap / transport
+               edge: the stack must be cleared (so processMidiBuffer can't emit
+               phantom notes), but the new loop's first note should still REUSE the
+               voice that is ringing out the previous note's release — a smooth mono
+               retrigger — instead of being allocated a fresh voice while the old
+               voice gets hard-faded by cutStrayVoices() (an audible POP on loop
+               restart, worst in FL's tiny buffers). prepareToPlay / releaseResources
+               / setStateInformation want a FULL reset, so they leave this false. */
+    void resetNoteState(bool keepMonoVoiceIndex = false)
     {
         noteStack.clear();
         currentNote = -1;
-        lastMonoVoiceIndex = -1;
+        if (! keepMonoVoiceIndex)
+            lastMonoVoiceIndex = -1;
         activeNoteCount.store(0);
         nextNoteIsLegato.store(false);
         nextNotePreservesVoice.store(false);
