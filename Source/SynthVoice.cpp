@@ -556,6 +556,19 @@ void SynthVoice::forceFadeOut()
 }
 
 //==============================================================================
+juce::String SynthVoice::getDebugState() const
+{
+    juce::String s;
+    s << (isActive ? "ACT" : "idle");
+    s << " n=" << (int) currentlyPlayingNote.initialNote
+      << " id=" << (int) currentlyPlayingNote.noteID;
+    s << (adsr.isActive() ? " adsrOn" : " adsrOff");
+    if (inReleasePhase) s << " REL";
+    if (voiceFadeSamplesRemaining > 0) s << " FADE(" << voiceFadeSamplesRemaining << ")";
+    return s;
+}
+
+//==============================================================================
 // -- MPE Expression Callbacks --
 //
 // Fired from MPESynthesiser when the controller updates pressure / pitch-bend /

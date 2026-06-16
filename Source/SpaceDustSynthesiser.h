@@ -125,6 +125,12 @@ public:
         nextNotePreservesVoice.store(false);
     }
 
+    /** Debug-only: dump the mono/legato note-stack, currentNote, lastMonoVoiceIndex
+        and every voice's state as one compact string. Used by the loop-debug
+        logging in PluginProcessor to diagnose note-stack desync / phantom-note
+        voice cuts on loop wraps. Read-only; safe to call from the audio thread. */
+    juce::String getDebugState() const;
+
     //==============================================================================
     // MPE convenience helpers (optional UI extension hooks).
 

@@ -135,6 +135,25 @@ void SpaceDustSynthesiser::cutStrayVoices(juce::MPESynthesiserVoice* keep)
 }
 
 //==============================================================================
+juce::String SpaceDustSynthesiser::getDebugState() const
+{
+    juce::String s;
+    s << "stack=[";
+    for (size_t i = 0; i < noteStack.size(); ++i)
+        s << (i ? "," : "") << noteStack[i];
+    s << "] cur=" << currentNote
+      << " vIdx=" << lastMonoVoiceIndex
+      << " nActive=" << activeNoteCount.load()
+      << " mode=" << getVoiceModeIndex();
+    for (int i = 0; i < getNumVoices(); ++i)
+    {
+        if (auto* v = dynamic_cast<SynthVoice*>(getVoice(i)))
+            s << " | v" << i << ":" << v->getDebugState();
+    }
+    return s;
+}
+
+//==============================================================================
 void SpaceDustSynthesiser::setMpeZoneLayoutLower(int memberChannels,
                                                 int notePitchBendRange,
                                                 int masterPitchBendRange)

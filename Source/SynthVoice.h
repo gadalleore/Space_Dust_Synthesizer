@@ -95,6 +95,11 @@ public:
         faded out over kVoiceFadeLength and then cleaned up in renderNextBlock. */
     void forceFadeOut();
 
+    /** Debug-only: compact one-line snapshot of this voice's note/envelope/fade
+        state, used by the loop-debug logging in PluginProcessor to see exactly
+        which voice gets cut and when.  Cheap and read-only. */
+    juce::String getDebugState() const;
+
     /** Called when the MPE pressure ("Y" axis / channel pressure) dimension changes.
         We map this to a multiplicative amplitude boost (0..+100%). */
     void notePressureChanged() override;

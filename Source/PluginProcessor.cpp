@@ -1911,6 +1911,19 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     bool transientEnabled = safeGetParam(apvts, "transientEnabled") > 0.5f;
     bool transientPostEffect = safeGetParam(apvts, "transientPostEffect") > 0.5f;
 
+    // ---- Loop-debug instrumentation (set SPACEDUST_LOOP_DEBUG to 0 to remove) ----
+    // Captures, per relevant block, the transport-edge flags, whether the wrap flush
+    // fired, the note-stack + every voice's state BEFORE the flush, and the IN/OUT
+    // MIDI + state AFTER processMidiBuffer. Writes one human-readable file to
+    // Documents\SpaceDust_LoopDebug.txt so we can see exactly which voice gets cut
+    // (FADE) and which phantom note-on caused it on a Cubase loop wrap.
+#define SPACEDUST_LOOP_DEBUG 0   // flip to 1 to re-capture loop-wrap MIDI + voice/stack state
+#if SPACEDUST_LOOP_DEBUG
+    juce::String dbgStackBefore, dbgEdgeInfo;
+    bool dbgFlushFired = false;
+    bool dbgLogThisBlock = false;
+#endif
+
     //==============================================================================
     // -- Transport-edge detection: flush stale mono/legato note state --
     //
@@ -1972,6 +1985,25 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         }
         const bool wrapEdge = jumpedBack && blockHasNoteEvent;
 
+#if SPACEDUST_LOOP_DEBUG
+        // Capture state BEFORE the flush (lastPpqPosition still holds the prev block's
+        // ppq here — it's updated at the end of this scope), so the log shows the
+        // pre-wrap note-stack desync that manufactures the phantom note.
+        dbgLogThisBlock = (stopped || started || jumpedBack || blockHasNoteEvent);
+        if (dbgLogThisBlock)
+        {
+            dbgStackBefore = synth.getDebugState();
+            dbgEdgeInfo = "play=" + juce::String((int) nowPlaying)
+                        + " ppq=" + juce::String(ppq, 4)
+                        + " prevPpq=" + juce::String(lastPpqPosition, 4)
+                        + " stop=" + juce::String((int) stopped)
+                        + " start=" + juce::String((int) started)
+                        + " jump=" + juce::String((int) jumpedBack)
+                        + " hasNote=" + juce::String((int) blockHasNoteEvent)
+                        + " wrapEdge=" + juce::String((int) wrapEdge);
+        }
+#endif
+
         if ((stopped || started || wrapEdge) && synth.getVoiceModeIndex() != 0)
         {
             // Flush the note STACK but KEEP lastMonoVoiceIndex: the new loop's first
@@ -1991,6 +2023,9 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             // here, and the new loop's first note re-asserts the mono single-voice guarantee
             // via cutStrayVoices().
             synth.turnOffAllVoices(true);
+#if SPACEDUST_LOOP_DEBUG
+            dbgFlushFired = true;
+#endif
         }
 
         wasPlayingState = nowPlaying;
@@ -2001,12 +2036,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // -- Process MIDI with Mono Mode Support --
     // Call custom synthesiser methods to handle mono mode
     //
-    // TEMP DIAGNOSTIC (mono first-loop timing): capture the MIDI stream at play
-    // start — incoming events vs. what our mono rewrite emits — to see whether FL
-    // sends a spurious early note or we generate a phantom note-on. Bounded to the
-    // first ~80 logged blocks after each play-start, then silent. Remove when fixed.
-#define SPACEDUST_MIDI_TIMING_DEBUG 0   // flip to 1 to re-capture mono play-start MIDI timing
-#if SPACEDUST_MIDI_TIMING_DEBUG
+#if SPACEDUST_LOOP_DEBUG
     {
         auto dumpNotes = [](const juce::MidiBuffer& mb) -> juce::String
         {
@@ -2022,33 +2052,42 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             return s;
         };
 
-        static std::atomic<int> g_dbgCount{ 0 };
+        static std::atomic<int> g_dbgLines{ 0 };
         static bool g_dbgPrevPlaying = false;
         const bool nowPlay = wasPlayingState;          // updated by edge block above
-        const double dbgPpq = lastPpqPosition;         // updated by edge block above
 
         juce::File dbgFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
-                                 .getChildFile("SpaceDust_MidiTiming.txt");
+                                 .getChildFile("SpaceDust_LoopDebug.txt");
 
         if (nowPlay && ! g_dbgPrevPlaying)
         {
-            g_dbgCount.store(0);
+            g_dbgLines.store(0);
             dbgFile.replaceWithText("=== PLAY START  mode=" + juce::String(synth.getVoiceModeIndex())
-                                    + "  sr=" + juce::String(currentSampleRate) + " ===\n");
+                                    + "  sr=" + juce::String(currentSampleRate)
+                                    + "  block=" + juce::String(numSamples) + " ===\n");
         }
         g_dbgPrevPlaying = nowPlay;
 
         const juce::String inc = dumpNotes(midiMessages);
         synth.processMidiBuffer(midiMessages, numSamples);
         const juce::String outg = dumpNotes(midiMessages);
+        const juce::String stackAfter = synth.getDebugState();
 
-        int c = g_dbgCount.load();
-        if (nowPlay && c < 80 && (inc.isNotEmpty() || outg.isNotEmpty()))
+        // Log any block that is a transport edge OR carries note activity (in or out).
+        // Bounded so a long session can't grow the file without limit.
+        const bool worth = dbgLogThisBlock || inc.isNotEmpty() || outg.isNotEmpty();
+        int lines = g_dbgLines.load();
+        if (worth && lines < 6000)
         {
-            g_dbgCount.store(c + 1);
-            dbgFile.appendText("ppq=" + juce::String(dbgPpq, 4)
-                               + " n=" + juce::String(numSamples)
-                               + " IN[" + inc + "] OUT[" + outg + "]\n");
+            g_dbgLines.store(lines + 1);
+            juce::String line;
+            if (dbgFlushFired) line << "*** FLUSH (resetNoteState+turnOffAllVoices) ***\n";
+            line << dbgEdgeInfo << "  n=" << numSamples << "\n"
+                 << "   IN [" << inc << "]\n"
+                 << "   OUT[" << outg << "]\n"
+                 << "   before " << dbgStackBefore << "\n"
+                 << "   after  " << stackAfter << "\n";
+            dbgFile.appendText(line);
         }
     }
 #else
