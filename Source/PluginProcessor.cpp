@@ -1948,7 +1948,31 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         // false positives from float noise on a steadily-advancing playhead.
         const bool jumpedBack = (nowPlaying && (ppq + 1.0e-6 < lastPpqPosition));
 
-        if ((stopped || started || jumpedBack) && synth.getVoiceModeIndex() != 0)
+        // A note the host HOLDS CONTINUOUSLY across the loop boundary (Cubase does
+        // exactly this for a note that spans the cycle) emits NO note-on/note-off at
+        // the wrap — the voice must keep sustaining straight through. Re-articulating
+        // hosts (and the FL loop-restart-pop case) instead carry a fresh note-on/off
+        // in the wrap block. So a loop wrap is only a state-flush edge when the block
+        // actually carries note articulation; otherwise turnOffAllVoices() below would
+        // force the still-held note into its release and it would decay away mid-loop
+        // (the Cubase "sustained note plays for a second then cuts out on the loop"
+        // bug). Skipping the flush here also leaves the note in the stack, so the
+        // host's eventual real note-off still releases it — no stuck note.
+        //
+        // Stop and Start always flush regardless of note events: a transport stop must
+        // never leave a note hanging, and a fresh start wants a clean baseline.
+        bool blockHasNoteEvent = false;
+        for (const auto meta : midiMessages)
+        {
+            if (meta.getMessage().isNoteOnOrOff())
+            {
+                blockHasNoteEvent = true;
+                break;
+            }
+        }
+        const bool wrapEdge = jumpedBack && blockHasNoteEvent;
+
+        if ((stopped || started || wrapEdge) && synth.getVoiceModeIndex() != 0)
         {
             // Flush the note STACK but KEEP lastMonoVoiceIndex: the new loop's first
             // note then REUSES the voice that is ringing out the previous note's
