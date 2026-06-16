@@ -1046,17 +1046,30 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
     int samplesProcessed = 0;
 
     // -- Keyboard tracking --
-    // The played key is fixed for the whole block, so compute the cutoff shift once
-    // here rather than per sample. keyTrackLogOffset is added in log-frequency space
-    // for the master filter; keyTrackMultiplier (= e^offset = 2^((note-ref)/12)) scales
+    // The cutoff shift is computed once per block for a STATIC (non-gliding) note —
+    // bit-identical to before — and re-derived per sample from the live gliding pitch
+    // while a portamento is in progress (see the per-sample block below) so the filter
+    // tracks the glide instead of snapping to the destination note. keyTrackLogOffset
+    // is added in log-frequency space for the master filter; keyTrackMultiplier scales
     // the unlinked mod-filter cutoffs. Each filter only applies these when its own
     // key-track flag is on. Default 0 / 1.0 = no change (full backward compatibility).
     const int keyTrackNote = currentlyPlayingNote.isValid()
                                  ? static_cast<int>(currentlyPlayingNote.initialNote)
                                  : kFilterKeyTrackRefNote;
-    const float keyTrackLogOffset = static_cast<float>(keyTrackNote - kFilterKeyTrackRefNote)
+    // STATIC key-track (used when the note is NOT gliding): bit-identical to before.
+    const float keyTrackLogOffsetStatic = static_cast<float>(keyTrackNote - kFilterKeyTrackRefNote)
                                         * kFilterKeyTrackLogPerSemi;
-    const float keyTrackMultiplier = std::exp(keyTrackLogOffset);
+    const float keyTrackMultiplierStatic = std::exp(keyTrackLogOffsetStatic);
+    // GLIDE-AWARE key-track: during a portamento the cutoff must follow the live
+    // gliding pitch (currentPitch) instead of snapping to the destination note — the
+    // frozen-at-target tracking made note transitions sound disconnected. We derive
+    // the shift from currentPitch / refNoteHz per sample (below). When not gliding,
+    // currentPitch == the note's Hz so the static values above are used verbatim (no
+    // behaviour change for held/non-glide notes). keyTrackRefHz = Hz of note 60.
+    const double keyTrackRefHz = juce::MidiMessage::getMidiNoteInHertz(kFilterKeyTrackRefNote);
+    const bool anyKeyTrackOn = filterKeyTrack
+                            || (modFilter1Show && !modFilter1Linked && modFilter1KeyTrack)
+                            || (modFilter2Show && !modFilter2Linked && modFilter2KeyTrack);
 
     //==============================================================================
     // -- Per-block constants (hoisted out of the per-sample loop) --
@@ -1385,6 +1398,19 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         const float timbreBipolar = juce::jlimit(-1.0f, 1.0f, (mpeTimbre01 - 0.5f) * 2.0f) * mpeTimbreDepth;
         // ±2 octaves = ±ln(4) ≈ ±1.386 in natural-log units (timbreLogScale cached above).
         const float timbreLogOffset = timbreBipolar * timbreLogScale;
+
+        // Glide-aware key-track for all three filters. While the note glides, follow
+        // currentPitch so the cutoff slides with the pitch; otherwise use the static
+        // per-block value (bit-identical to the pre-glide behaviour). glideDelta is
+        // zeroed the moment the glide reaches the target, at which point currentPitch
+        // == the note Hz, so the hand-off to the static value is seamless (no jump).
+        float keyTrackLogOffset  = keyTrackLogOffsetStatic;
+        float keyTrackMultiplier = keyTrackMultiplierStatic;
+        if (anyKeyTrackOn && glideDelta != 0.0 && currentPitch > 0.0)
+        {
+            keyTrackMultiplier = static_cast<float>(currentPitch / keyTrackRefHz);
+            keyTrackLogOffset  = std::log(keyTrackMultiplier);
+        }
 
         const float masterKeyTrackOffset = filterKeyTrack ? keyTrackLogOffset : 0.0f;
         float modulatedCutoff = std::exp(juce::jlimit(logMin, logMax, logModulated + timbreLogOffset + masterKeyTrackOffset)) * lfoFactor;
