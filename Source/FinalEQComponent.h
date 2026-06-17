@@ -16,7 +16,8 @@
       finalEQEnabled, finalEQB{1-5}Freq, finalEQB{1-5}Gain, finalEQB{1-5}Q
 */
 class FinalEQComponent : public juce::Component,
-                         private juce::AudioProcessorValueTreeState::Listener
+                         private juce::AudioProcessorValueTreeState::Listener,
+                         private juce::AsyncUpdater
 {
 public:
     static constexpr int numBands = 5;
@@ -36,8 +37,13 @@ public:
                         const juce::MouseWheelDetails& wheel) override;
 
 private:
-    // AudioProcessorValueTreeState::Listener
+    // AudioProcessorValueTreeState::Listener — fires on the AUDIO/automation thread.
     void parameterChanged(const juce::String& parameterID, float newValue) override;
+
+    // AsyncUpdater — marshals the parameter-driven refresh back to the MESSAGE thread,
+    // where it is safe to touch the Component (recompute + repaint). Coalesces a flood
+    // of automation into a single update.
+    void handleAsyncUpdate() override;
 
     // Response computation
     void recomputeResponse();

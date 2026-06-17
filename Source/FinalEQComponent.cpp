@@ -53,12 +53,16 @@ FinalEQComponent::FinalEQComponent(juce::AudioProcessorValueTreeState& apvts, do
 
 FinalEQComponent::~FinalEQComponent()
 {
+    // Remove listeners FIRST so no further parameterChanged can trigger an async update,
+    // then cancel any update already queued, so handleAsyncUpdate() can't run against a
+    // half-destroyed object.
     for (int b = 0; b < numBands; ++b)
     {
         apvts_.removeParameterListener(freqId(b), this);
         apvts_.removeParameterListener(gainId(b), this);
         apvts_.removeParameterListener(qId(b),    this);
     }
+    cancelPendingUpdate();
 }
 
 //==============================================================================
@@ -367,15 +371,36 @@ void FinalEQComponent::mouseWheelMove(const juce::MouseEvent& e,
 //==============================================================================
 // Parameter listener
 
-void FinalEQComponent::parameterChanged(const juce::String& parameterID, float newValue)
+void FinalEQComponent::parameterChanged(const juce::String& /*parameterID*/, float /*newValue*/)
 {
-    // Runs on the message thread
+    // CRITICAL: APVTS delivers parameterChanged on the AUDIO / automation thread (e.g.
+    // FL Studio streaming parameter automation), NOT the message thread. The old code
+    // called recomputeResponse() directly here, which calls repaint() — and
+    // Component::repaint() / juce::RectangleList are message-thread-ONLY. Touching them
+    // from the audio thread corrupts the Component's internal repaint RectangleList; a
+    // later RectangleList::add() then writes past the array → heap corruption (0xC0000374
+    // in FL; pinned to juce::RectangleList<int>::add via a page-heap dump while a user
+    // automated the EQ heavily). Every other parameterChanged in this codebase already
+    // marshals UI work to the message thread — this one was the outlier.
+    //
+    // Coalesce to the message thread. AsyncUpdater merges a burst of automation into a
+    // single handleAsyncUpdate() call, so heavy EQ automation no longer floods anything.
+    triggerAsyncUpdate();
+}
+
+//==============================================================================
+void FinalEQComponent::handleAsyncUpdate()
+{
+    // Message thread. Re-read every band's live value from the APVTS (we coalesced, so
+    // we don't track which single param changed), then recompute + repaint here where
+    // touching the Component is safe.
     for (int b = 0; b < numBands; ++b)
     {
-        if (parameterID == freqId(b)) { cachedFreq_[b] = newValue; recomputeResponse(); return; }
-        if (parameterID == gainId(b)) { cachedGain_[b] = newValue; recomputeResponse(); return; }
-        if (parameterID == qId(b))   { cachedQ_[b]    = newValue; recomputeResponse(); return; }
+        if (auto* p = apvts_.getRawParameterValue(freqId(b))) cachedFreq_[b] = p->load();
+        if (auto* p = apvts_.getRawParameterValue(gainId(b))) cachedGain_[b] = p->load();
+        if (auto* p = apvts_.getRawParameterValue(qId(b)))    cachedQ_[b]    = p->load();
     }
+    recomputeResponse();   // ends with repaint() — safe on the message thread
 }
 
 //==============================================================================
