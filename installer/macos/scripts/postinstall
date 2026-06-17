@@ -107,8 +107,12 @@ cat > "$CONFIG_FILE" <<EOF
 <SpaceDustConfig presetFolder="$PRESETS_DIR"/>
 EOF
 
-# Make sure the user owns their data (in case we created dirs as root)
+# Make sure the user owns their data (in case we created dirs as root).
+# IMPORTANT: chown the *parent* "Space Dust" folder too, not just Presets/ —
+# otherwise mkdir -p leaves ~/Documents/Space Dust owned by root, and the
+# uninstaller (running as the user) can't remove it later.
 if [[ "$CONSOLE_USER" != "root" ]]; then
+    chown "$CONSOLE_USER:staff" "$USER_HOME/Documents/Space Dust" 2>/dev/null || true
     chown -R "$CONSOLE_USER:staff" "$PRESETS_DIR" 2>/dev/null || true
     chown -R "$CONSOLE_USER:staff" "$CONFIG_DIR" 2>/dev/null || true
 fi
