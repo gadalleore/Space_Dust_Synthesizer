@@ -1172,6 +1172,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // Computes base frequency from currentPitch + envelope. Independent of pitch bend.
         // Time is in seconds (0-5 from parameter). Linear ramp hits note at indicated time.
         double pitchForOscillators = currentPitch;
+        bool   pitchEnvShapingNow  = false;  // true while the pitch env is actively bending the pitch
         if (pitchEnvTime >= 0.0001f && sampleRate > 0.0f && pitchEnvAmount != 0.0f && pitchEnvPitch != 0.0f)
         {
             float elapsedSec = pitchEnvSamplesElapsed / static_cast<float>(sampleRate);
@@ -1188,6 +1189,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             const double envedTargetHz = targetPitch * pitchEnvRatio;
             const double curveD = static_cast<double>(curve);
             pitchForOscillators = envedTargetHz * curveD + currentPitch * (1.0 - curveD);
+            pitchEnvShapingNow = (curve > 0.0f);  // curve==0 → env settled, pitchForOscillators==currentPitch
         }
         // Cap pitchEnvSamplesElapsed to avoid float precision loss on very long holds
         if (pitchEnvSamplesElapsed < 1e7f)
@@ -1458,16 +1460,18 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // ±2 octaves = ±ln(4) ≈ ±1.386 in natural-log units (timbreLogScale cached above).
         const float timbreLogOffset = timbreBipolar * timbreLogScale;
 
-        // Glide-aware key-track for all three filters. While the note glides, follow
-        // currentPitch so the cutoff slides with the pitch; otherwise use the static
-        // per-block value (bit-identical to the pre-glide behaviour). glideDelta is
-        // zeroed the moment the glide reaches the target, at which point currentPitch
-        // == the note Hz, so the hand-off to the static value is seamless (no jump).
+        // Glide- AND pitch-env-aware key-track for all three filters. The cutoff must
+        // follow the actual SOUNDING pitch (pitchForOscillators = glide + pitch env),
+        // not just the raw glide pitch — otherwise the filter snaps to the note while
+        // the pitch envelope is still bending the oscillators, so key-tracking lags the
+        // audible pitch sweep. pitchForOscillators == currentPitch when the env is idle,
+        // so the glide-only path is unchanged. When NEITHER glide nor pitch env is
+        // active we fall through to the static per-block value (bit-identical to before).
         float keyTrackLogOffset  = keyTrackLogOffsetStatic;
         float keyTrackMultiplier = keyTrackMultiplierStatic;
-        if (anyKeyTrackOn && glideDelta != 0.0 && currentPitch > 0.0)
+        if (anyKeyTrackOn && (glideDelta != 0.0 || pitchEnvShapingNow) && pitchForOscillators > 0.0)
         {
-            keyTrackMultiplier = static_cast<float>(currentPitch / keyTrackRefHz);
+            keyTrackMultiplier = static_cast<float>(pitchForOscillators / keyTrackRefHz);
             keyTrackLogOffset  = std::log(keyTrackMultiplier);
         }
 

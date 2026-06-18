@@ -830,6 +830,14 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         transient_.prepare(reverbSpec);
         transient_.reset();
 
+        // Pre-mode transient "before the filter" mirror filter + render scratch.
+        transientPreFilter_.prepare(reverbSpec);
+        transientPreFilter_.reset();
+        transientScratch_.setSize(reverbSpec.numChannels,
+                                  static_cast<int>(reverbSpec.maximumBlockSize),
+                                  false, false, true);
+        transientScratch_.clear();
+
         // Initialize final EQ
         finalEQ_.prepare(reverbSpec);
         finalEQ_.reset();
@@ -1309,6 +1317,7 @@ void SpaceDustAudioProcessor::releaseResources()
     lofi_.reset();
     finalEQ_.reset();
     tranceGate_.reset();
+    transientPreFilter_.reset();
     
     // Step 3: (Formerly cleared SynthesiserSound array.)
     // MPE: juce::MPESynthesiser has no SynthesiserSound array.  Nothing to clear.
@@ -2170,7 +2179,13 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     }
 
     //==============================================================================
-    // -- Transient (Pre: before all effects when Post Effect OFF) --
+    // -- Transient (Pre: BEFORE the filter when Post Effect OFF) --
+    // The transient must be coloured by the synth filter in this mode. The real
+    // filter is per-voice (inside the synth, already run), so we render the
+    // transient into a private scratch buffer and pass it through transientPreFilter_
+    // — a linear SVF mirroring the MASTER filter's mode/cutoff/resonance — then sum
+    // it into the mix. Post mode (below) stays end-of-chain and unfiltered. This is
+    // confined to the master chain; SynthVoice is untouched.
     if (transientEnabled && !transientPostEffect)
     {
         SpaceDustTransient::Parameters tp;
@@ -2183,7 +2198,44 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         tp.coarse = juce::jlimit(-24.0f, 24.0f, safeGetParam(apvts, "transientCoarse"));
         tp.length = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientLength"));
         transient_.setParameters(tp);
-        transient_.process(buffer);
+
+        const int numCh = buffer.getNumChannels();
+        if (numCh > 0 && numSamples > 0 && transientScratch_.getNumSamples() >= numSamples)
+        {
+            // Render the transient alone into a cleared scratch buffer (process() adds).
+            juce::AudioBuffer<float> scratch(transientScratch_.getArrayOfWritePointers(),
+                                             juce::jmin(numCh, transientScratch_.getNumChannels()),
+                                             numSamples);
+            scratch.clear();
+            transient_.process(scratch);
+
+            // Mirror the master filter (mode 0=LP/1=BP/2=HP; Q matches NonlinearSVF's
+            // legacy curve Q = 0.1 + res*19.9, capped below self-osc for stability).
+            const int   preFilterMode = static_cast<int>(safeGetParam(apvts, "filterMode"));
+            const float preFilterCutoff = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "filterCutoff", 8000.0f));
+            const float preFilterRes  = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "filterResonance"));
+            transientPreFilter_.setType(
+                preFilterMode == 1 ? juce::dsp::StateVariableTPTFilterType::bandpass
+              : preFilterMode == 2 ? juce::dsp::StateVariableTPTFilterType::highpass
+                                   : juce::dsp::StateVariableTPTFilterType::lowpass);
+            transientPreFilter_.setCutoffFrequency(preFilterCutoff);
+            const float resQ = 0.1f + juce::jmin(preFilterRes, 0.80f) * 19.9f;
+            transientPreFilter_.setResonance(juce::jlimit(0.1f, 16.0f, resQ));
+
+            for (int ch = 0; ch < scratch.getNumChannels(); ++ch)
+            {
+                auto* s = scratch.getWritePointer(ch);
+                for (int i = 0; i < numSamples; ++i)
+                    s[i] = transientPreFilter_.processSample(ch, s[i]);
+
+                buffer.addFrom(ch, 0, scratch, ch, 0, numSamples);
+            }
+        }
+        else
+        {
+            // Fallback (scratch unavailable): original unfiltered behaviour.
+            transient_.process(buffer);
+        }
     }
 
     //==============================================================================

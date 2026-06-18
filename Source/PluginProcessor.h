@@ -244,6 +244,16 @@ private:
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> kaDonkDelayR_{kaDonkMaxSamples};
     juce::SmoothedValue<float> smoothedKaDonkDelay_{0.0f};
 
+    // Pre-mode transient routing: when Post-Effect is OFF the transient must be
+    // coloured "before the filter". The per-voice synth filter lives inside the
+    // synth (cannot be re-entered from the master buffer), so we mirror it here:
+    // the transient is rendered into transientScratch_, run through this filter
+    // (matched to the master filter's mode/cutoff/resonance), then summed into the
+    // mix. Post mode is unchanged (end-of-chain, unfiltered). This keeps the fix
+    // entirely in the master chain — no change to SynthVoice.
+    juce::dsp::StateVariableTPTFilter<float> transientPreFilter_;
+    juce::AudioBuffer<float> transientScratch_;
+
     //==============================================================================
     // -- Delay Effect State --
     static constexpr int maxDelaySamples = 88200;  // ~2s at 44.1 kHz
