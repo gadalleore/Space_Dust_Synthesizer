@@ -328,6 +328,28 @@ private:
     OversampledStage modFilter2OS;
     bool oversampleFilter = false;
     static constexpr int kFilterOSFactor = 4;
+
+    // -- Per-note, per-filter oversampling latch (CPU optimisation) --
+    // The 4x FIR only matters when a filter's NONLINEAR stage is actually engaged —
+    // warm saturation on, or resonance high enough to clip / ring — because that is
+    // the only thing that folds content above Nyquist back into the band. A near
+    // linear filter (low resonance, no saturation) is bit-identical at host rate, so
+    // we skip its oversampler entirely and save the FIR cost (per sample, per channel,
+    // per voice). The decision is LATCHED at note-start, where the filters are already
+    // reset, and never changes mid-note: switching a filter's sample-rate scale while
+    // it holds resonant energy would re-introduce a note-onset click. Consequence:
+    // automating resonance UP on a sustained note engages oversampling on the NEXT
+    // note, not the current one (an uncommon gesture; reverts to pre-OS behaviour).
+    // INVARIANT: <stage>OSActive == true  <=>  that filter's sampleRateScale == kFilterOSFactor.
+    bool masterOSActive = false;
+    bool mod1OSActive   = false;
+    bool mod2OSActive   = false;
+    // Resonance (0..1) at/above which a filter is treated as "needs oversampling" (~Q6).
+    // Tunable: lower = safer (oversample more often), higher = bigger CPU savings.
+    static constexpr float kOversampleResThreshold = 0.35f;
+    // Re-derive the three latches from the current params and apply the matching
+    // sample-rate scale + OS factor to every filter (keeps the INVARIANT above).
+    void updateOversampleLatch() noexcept;
     
     // Noise EQ filters: simple 1-pole shelf filters for low and high frequency shaping
     juce::dsp::IIR::Filter<float> lowShelfFilter;

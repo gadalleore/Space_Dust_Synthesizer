@@ -436,6 +436,9 @@ void SynthVoice::noteStarted()
         masterFilterOS.reset();
         modFilter1OS.reset();
         modFilter2OS.reset();
+        // Clean start: latch which filters actually need oversampling for THIS note
+        // and apply the matching sample-rate scale before updateFilter() recomputes g.
+        updateOversampleLatch();
         filterAdsr.reset();
 
         adsr.noteOn();
@@ -515,6 +518,8 @@ void SynthVoice::noteStarted()
                 masterFilterOS.reset();
                 modFilter1OS.reset();
                 modFilter2OS.reset();
+                // Clean mono start: re-latch oversampling for this note (see fresh path).
+                updateOversampleLatch();
                 snapFilterCutoffOnNote = true;
             }
             else
@@ -1592,10 +1597,10 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             return juce::jlimit(-1.0f, 1.0f, y);
         };
 
-        if (oversampleFilter)
+        if (masterOSActive)
         {
             // 4x: filter maths already run at the oversampled rate (rate-scale set
-            // in setFilterOversample); the FIRs handle anti-imaging/anti-aliasing.
+            // by the per-note latch); the FIRs handle anti-imaging/anti-aliasing.
             filtL = masterFilterOS.process(0, filtL, [&](float s) noexcept { return masterNL(0, s); });
             filtR = masterFilterOS.process(1, filtR, [&](float s) noexcept { return masterNL(1, s); });
         }
@@ -1619,7 +1624,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                     y = std::tanh(y * (1.0f + modFilter1Resonance * 2.0f));
                 return juce::jlimit(-1.0f, 1.0f, y);
             };
-            if (oversampleFilter)
+            if (mod1OSActive)
             {
                 filtL = modFilter1OS.process(0, filtL, [&](float s) noexcept { return mod1NL(0, s); });
                 filtR = modFilter1OS.process(1, filtR, [&](float s) noexcept { return mod1NL(1, s); });
@@ -1644,7 +1649,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                     y = std::tanh(y * (1.0f + modFilter2Resonance * 2.0f));
                 return juce::jlimit(-1.0f, 1.0f, y);
             };
-            if (oversampleFilter)
+            if (mod2OSActive)
             {
                 filtL = modFilter2OS.process(0, filtL, [&](float s) noexcept { return mod2NL(0, s); });
                 filtR = modFilter2OS.process(1, filtR, [&](float s) noexcept { return mod2NL(1, s); });
@@ -1932,10 +1937,12 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Filter oversamplers. Re-apply the current factor so each filter's rate-scale
     // matches after a sample-rate change.
     {
-        const int osf = oversampleFilter ? kFilterOSFactor : 1;
-        masterFilterOS.prepare(); masterFilterOS.setFactor(osf); filter.setSampleRateScale(osf);
-        modFilter1OS.prepare();   modFilter1OS.setFactor(osf);   modFilter1.setSampleRateScale(osf);
-        modFilter2OS.prepare();   modFilter2OS.setFactor(osf);   modFilter2.setSampleRateScale(osf);
+        masterFilterOS.prepare();
+        modFilter1OS.prepare();
+        modFilter2OS.prepare();
+        // Derive each stage's factor + scale from current params (keeps the latch
+        // INVARIANT). The first note re-latches with the live params at note-start.
+        updateOversampleLatch();
     }
 
     // Pre-allocate voice buffers (stereo for per-oscillator pan)
@@ -2051,10 +2058,10 @@ void SynthVoice::setCurrentSampleRate(double newRate)
         modFilter1.prepare({ newRate, maxBlockSize, 2 });
         modFilter2.prepare({ newRate, maxBlockSize, 2 });
         {
-            const int osf = oversampleFilter ? kFilterOSFactor : 1;
-            masterFilterOS.prepare(); masterFilterOS.setFactor(osf); filter.setSampleRateScale(osf);
-            modFilter1OS.prepare();   modFilter1OS.setFactor(osf);   modFilter1.setSampleRateScale(osf);
-            modFilter2OS.prepare();   modFilter2OS.setFactor(osf);   modFilter2.setSampleRateScale(osf);
+            masterFilterOS.prepare();
+            modFilter1OS.prepare();
+            modFilter2OS.prepare();
+            updateOversampleLatch();  // derive factor + scale per stage (keeps INVARIANT)
         }
         updateFilter();
         updateModFilter1();
@@ -2246,18 +2253,44 @@ void SynthVoice::setWarmSaturationMaster(bool enabled)
     warmSaturationMaster = enabled;
 }
 
+void SynthVoice::updateOversampleLatch() noexcept
+{
+    // A filter needs oversampling only when its nonlinear stage is engaged: warm
+    // saturation, or resonance high enough to clip/ring. Mod stages additionally
+    // must be shown AND unlinked (linked mods aren't processed — the master covers
+    // them). When the global oversample param is off, nothing oversamples.
+    const bool masterWant = oversampleFilter
+        && (warmSaturationMaster || filterResonance >= kOversampleResThreshold);
+    const bool mod1Want = oversampleFilter && modFilter1Show && !modFilter1Linked
+        && (warmSaturationMod1 || modFilter1Resonance >= kOversampleResThreshold);
+    const bool mod2Want = oversampleFilter && modFilter2Show && !modFilter2Linked
+        && (warmSaturationMod2 || modFilter2Resonance >= kOversampleResThreshold);
+
+    masterOSActive = masterWant;
+    mod1OSActive   = mod1Want;
+    mod2OSActive   = mod2Want;
+
+    // Apply the matching scale to each stage (maintains the INVARIANT). setFactor
+    // clears the FIR; setSampleRateScale recomputes g at the (over)sampled rate.
+    const int mf = masterWant ? kFilterOSFactor : 1;
+    const int m1 = mod1Want   ? kFilterOSFactor : 1;
+    const int m2 = mod2Want   ? kFilterOSFactor : 1;
+    masterFilterOS.setFactor(mf); filter.setSampleRateScale(mf);
+    modFilter1OS.setFactor(m1);   modFilter1.setSampleRateScale(m1);
+    modFilter2OS.setFactor(m2);   modFilter2.setSampleRateScale(m2);
+}
+
 void SynthVoice::setFilterOversample(bool enabled)
 {
     if (enabled == oversampleFilter)
         return;
     oversampleFilter = enabled;
-    const int factor = enabled ? kFilterOSFactor : 1;
-    // Apply to all three filter stages. setFactor clears the FIR state and
-    // setSampleRateScale recomputes g (and the rate-compensated AGC) at the
-    // (over)sampled rate; reset avoids a transient on the switch.
-    masterFilterOS.setFactor(factor);  filter.setSampleRateScale(factor);     filter.reset();
-    modFilter1OS.setFactor(factor);    modFilter1.setSampleRateScale(factor); modFilter1.reset();
-    modFilter2OS.setFactor(factor);    modFilter2.setSampleRateScale(factor); modFilter2.reset();
+    // Idle voices re-derive immediately so their filter scale stays consistent with
+    // the render routing. ACTIVE voices keep their per-note latch until the next note
+    // start — switching the sample-rate scale on a ringing filter would click. The
+    // param defaults ON and is rarely toggled live, so the one-note delay is benign.
+    if (!isActive)
+        updateOversampleLatch();
 }
 
 void SynthVoice::setFilterKeyTrack(bool enabled)
