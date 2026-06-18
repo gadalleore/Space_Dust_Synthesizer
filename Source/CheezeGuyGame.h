@@ -76,7 +76,7 @@ public:
         {
             score++;
             playerSize += 1.5f;
-            playerSpeed *= 1.0005f;  // +0.05% per cheeze eaten (compounding)
+            playerSpeed += basePlayerSpeed * 0.01f;  // +1% of base speed per cheeze (linear)
             maxTime = juce::jmax(5.0f, maxTime - 0.5f);
             timeRemaining = maxTime;
             spawnCheezeball();
@@ -185,7 +185,7 @@ private:
     float playerX = 300.0f, playerY = 250.0f;
     float playerSize = 20.0f;
     static constexpr float basePlayerSpeed = 3.0f;  // starting speed; reset to this each game
-    float playerSpeed = basePlayerSpeed;            // speeds up 0.05% per cheeze eaten
+    float playerSpeed = basePlayerSpeed;            // +1% of base per cheeze eaten (linear)
     Direction playerDir = Right;
 
     float cheezeX = 0.0f, cheezeY = 0.0f;
