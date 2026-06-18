@@ -68,6 +68,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
+# --- Product version (single source of truth: CMakeLists.txt) ---------------
+# Parse "project(SpaceDust VERSION X.Y.Z)" so the installer metadata and the
+# output .pkg/.dmg filenames always track the real plugin version and never
+# drift from the binary again.
+VERSION="$(sed -n -E 's/^project\(SpaceDust VERSION ([0-9.]+)\).*/\1/p' CMakeLists.txt | head -1)"
+if [[ -z "$VERSION" ]]; then
+    echo "[Package] ERROR: could not parse version from CMakeLists.txt (project(SpaceDust VERSION ...))." >&2
+    exit 1
+fi
+
 # Allow overriding cmake (this machine often needs a manually downloaded 3.30+ because
 # the system/brew version is too old or broken). You can also set CMAKE_BIN env var.
 if [[ -z "${CMAKE_BIN:-}" ]]; then
@@ -125,7 +135,7 @@ done
 mkdir -p "$OUT_DIR"
 
 echo "======================================================================"
-echo "Space Dust macOS Packaging"
+echo "Space Dust macOS Packaging (version $VERSION)"
 echo "======================================================================"
 
 # --- Locate build tree (prefer build-release for "release" discipline) ------
@@ -289,7 +299,7 @@ pkgbuild \
     --component "installer/macos/payload/Library/Audio/Plug-Ins/VST3/Space Dust.vst3" \
     --scripts "installer/macos/scripts" \
     --identifier "com.63c.SpaceDust.vst3" \
-    --version "1.0" \
+    --version "$VERSION" \
     --install-location "/Library/Audio/Plug-Ins/VST3" \
     "$PKG_DIR/SpaceDust-VST3.pkg"
 
@@ -298,7 +308,7 @@ pkgbuild \
 pkgbuild \
     --component "installer/macos/payload/Library/Audio/Plug-Ins/Components/Space Dust.component" \
     --identifier "com.63c.SpaceDust.au" \
-    --version "1.0" \
+    --version "$VERSION" \
     --install-location "/Library/Audio/Plug-Ins/Components" \
     "$PKG_DIR/SpaceDust-AU.pkg"
 
@@ -339,7 +349,7 @@ pkgbuild \
     --component-plist "$COMP_PLIST" \
     --scripts "installer/macos/scripts" \
     --identifier "com.63c.SpaceDust.standalone" \
-    --version "1.0" \
+    --version "$VERSION" \
     --install-location "/Applications" \
     "$PKG_DIR/SpaceDust-Standalone.pkg"
 
@@ -352,7 +362,7 @@ chmod +x "$PKG_DIR/uninstaller-root/Space Dust Uninstaller.command"
 pkgbuild \
     --root "$PKG_DIR/uninstaller-root" \
     --identifier "com.63c.SpaceDust.uninstaller" \
-    --version "1.0" \
+    --version "$VERSION" \
     --install-location "/Applications" \
     "$PKG_DIR/SpaceDust-Uninstaller.pkg"
 
@@ -365,7 +375,7 @@ DIST_XML="installer/macos/Distribution.xml"
 # The uninstaller is attached to *both* visible choices so it is installed
 # whenever the user selects anything (no hidden choice, to ensure the
 # sub-package is always properly embedded by productbuild).
-cat > "$DIST_XML" <<'DISTRIBUTION_EOF'
+cat > "$DIST_XML" <<DISTRIBUTION_EOF
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="1">
     <title>Space Dust Synthesizer</title>
@@ -395,11 +405,11 @@ cat > "$DIST_XML" <<'DISTRIBUTION_EOF'
         <pkg-ref id="com.63c.SpaceDust.uninstaller"/>
     </choice>
 
-    <pkg-ref id="com.63c.SpaceDust.vst3" version="1.0">SpaceDust-VST3.pkg</pkg-ref>
-    <pkg-ref id="com.63c.SpaceDust.au" version="1.0">SpaceDust-AU.pkg</pkg-ref>
+    <pkg-ref id="com.63c.SpaceDust.vst3" version="$VERSION">SpaceDust-VST3.pkg</pkg-ref>
+    <pkg-ref id="com.63c.SpaceDust.au" version="$VERSION">SpaceDust-AU.pkg</pkg-ref>
     <pkg-ref id="com.63c.SpaceDust.standalone"
-             version="1.0">SpaceDust-Standalone.pkg</pkg-ref>
-    <pkg-ref id="com.63c.SpaceDust.uninstaller" version="1.0">SpaceDust-Uninstaller.pkg</pkg-ref>
+             version="$VERSION">SpaceDust-Standalone.pkg</pkg-ref>
+    <pkg-ref id="com.63c.SpaceDust.uninstaller" version="$VERSION">SpaceDust-Uninstaller.pkg</pkg-ref>
 </installer-gui-script>
 DISTRIBUTION_EOF
 
@@ -409,7 +419,7 @@ DISTRIBUTION_EOF
 
 echo "[Package] Assembling final product installer..."
 
-PRODUCT_PKG="$OUT_DIR/SpaceDust-Synthesizer-1.0-Mac.pkg"
+PRODUCT_PKG="$OUT_DIR/SpaceDust-Synthesizer-$VERSION-Mac.pkg"
 
 if [[ -n "$INST_SIGN_ID" ]]; then
     productbuild \
@@ -429,10 +439,10 @@ echo "[Package] Product .pkg created: $PRODUCT_PKG"
 
 # --- Optional .dmg wrapper --------------------------------------------------
 if [[ $SKIP_DMG -eq 0 ]]; then
-    DMG_PATH="$OUT_DIR/SpaceDust-Synthesizer-1.0-Mac.dmg"
+    DMG_PATH="$OUT_DIR/SpaceDust-Synthesizer-$VERSION-Mac.dmg"
     echo "[Package] Creating .dmg wrapper..."
     # Simple read-only dmg containing the .pkg (and optionally a symlink or alias later)
-    hdiutil create -volname "Space Dust Synthesizer 1.0" \
+    hdiutil create -volname "Space Dust Synthesizer $VERSION" \
         -srcfolder "$PRODUCT_PKG" \
         -ov -format UDZO -o "$DMG_PATH" >/dev/null
     echo "[Package] .dmg created: $DMG_PATH"
@@ -445,7 +455,7 @@ echo ""
 echo "======================================================================"
 echo "[Package] macOS installer ready"
 echo "======================================================================"
-ls -lh "$OUT_DIR"/SpaceDust-Synthesizer-1.0-Mac.* 2>/dev/null || true
+ls -lh "$OUT_DIR"/SpaceDust-Synthesizer-"$VERSION"-Mac.* 2>/dev/null || true
 
 preset_count=$(find installer/macos/scripts/Presets -name "*.sdpreset" 2>/dev/null | wc -l | tr -d ' ')
 echo "  Factory presets bundled : $preset_count"
