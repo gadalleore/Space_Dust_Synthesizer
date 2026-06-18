@@ -496,6 +496,12 @@ private:
     uint32_t pitchTraceSeq = 0;              // incremented each startNote (mono/legato debug)
     uint32_t pitchTraceLastRenderLogSeq = 0; // so we log render line once per note-on
 
+    // Click-debug: which allocation branch the most recent noteStarted took
+    // ("fresh" / "steal" / "mono" / "none"). Logged at note-start and at each
+    // detected click so we can correlate the snap with the path. (SPACEDUST_CLICK_DEBUG)
+    const char* lastStartPath_ = "none";
+    int dbgSamplesSinceStart_ = 0;  // samples since last noteStarted (click-debug onset/end disambiguation)
+
     // Global per-voice flag set from the processor: when true, glide only happens
     // on overlapping (legato) notes; when false, glide happens on every note change.
     bool legatoGlideEnabled = true;

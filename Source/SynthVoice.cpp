@@ -28,6 +28,37 @@ namespace
 #endif
 
 //==============================================================================
+// CLICK DEBUG — set to 1 to capture, per note-start and per detected click, the
+// voice allocation path + filter/envelope state to Documents\SpaceDust_ClickDebug.txt.
+// Used to pin the "Sunset Beach" persistent snap. Default 0 (compiled out for release).
+#ifndef SPACEDUST_CLICK_DEBUG
+#define SPACEDUST_CLICK_DEBUG 0   // flip to 1 to log per-note allocation path + filter state to Documents\SpaceDust_ClickDebug.txt
+#endif
+
+#if SPACEDUST_CLICK_DEBUG
+namespace
+{
+    // Append one line to Documents\SpaceDust_ClickDebug.txt. Bounded so a long
+    // session can't grow without limit. Truncates once on first use. Not strictly
+    // RT-safe (file I/O on the audio thread) — fine for a focused debug build; the
+    // per-note + throttled-click rate keeps the write volume low.
+    void clickDbgLog(const juce::String& line)
+    {
+        static juce::CriticalSection lock;
+        static int  lineCount = 0;
+        static bool inited     = false;
+        const juce::ScopedLock sl(lock);
+        if (lineCount > 12000) return;
+        juce::File f = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+                           .getChildFile("SpaceDust_ClickDebug.txt");
+        if (! inited) { f.replaceWithText("=== Space Dust click debug ===\n"); inited = true; lineCount = 0; }
+        f.appendText(line + "\n");
+        ++lineCount;
+    }
+}
+#endif
+
+//==============================================================================
 // -- UTF-8 String Validation Helper --
 namespace
 {
@@ -397,6 +428,14 @@ void SynthVoice::noteStarted()
         filter.reset();
         modFilter1.reset();
         modFilter2.reset();
+        // CRITICAL: also clear the filter OVERSAMPLERS. filter.reset() only zeroes the
+        // SVF state; the oversampler keeps a ~17-sample FIR history of the PREVIOUS note.
+        // Left un-reset, a fresh voice's first samples convolve out that stale tail —
+        // a step from 0 to ±0.1+ at note-start while the amp envelope is still 0 (the
+        // "Sunset Beach" snap; loudest on fast playing, which leaves big residue in the FIR).
+        masterFilterOS.reset();
+        modFilter1OS.reset();
+        modFilter2OS.reset();
         filterAdsr.reset();
 
         adsr.noteOn();
@@ -407,6 +446,7 @@ void SynthVoice::noteStarted()
         // Fresh voice: put the cutoff at the new note's value immediately (no slew
         // sweep of the resonant peak into the note). See snapFilterCutoffOnNote.
         snapFilterCutoffOnNote = true;
+        lastStartPath_ = "fresh";
     }
     else if (isPolySteal)
     {
@@ -431,6 +471,7 @@ void SynthVoice::noteStarted()
                               "POLY_STEAL_FILTER_ENV_RESTART");
         inReleasePhase = false;
         isActive = true;
+        lastStartPath_ = "steal";
         // phases, pink state, filter, outputSmoother*, and smoothed*Envelopes
         // are deliberately left running from the stolen voice's previous state.
     }
@@ -469,6 +510,11 @@ void SynthVoice::noteStarted()
                 if (filter.isRinging())     filter.reset();
                 if (modFilter1.isRinging()) modFilter1.reset();
                 if (modFilter2.isRinging()) modFilter2.reset();
+                // Clear the oversampler FIR history too (see fresh-voice path above) so a
+                // clean mono start can't dump the previous note's stale tail samples.
+                masterFilterOS.reset();
+                modFilter1OS.reset();
+                modFilter2OS.reset();
                 snapFilterCutoffOnNote = true;
             }
             else
@@ -485,7 +531,20 @@ void SynthVoice::noteStarted()
         filterAdsr.noteOn();
         inReleasePhase = false;
         isActive = true;
+        lastStartPath_ = inMonoMode ? "mono" : "legato";
     }
+
+    dbgSamplesSinceStart_ = 0;
+#if SPACEDUST_CLICK_DEBUG
+    clickDbgLog("NOTE_START v=" + juce::String::toHexString((juce::pointer_sized_int) this).getLastCharacters(4)
+                + " note=" + juce::String(midiNoteNumber)
+                + " path=" + juce::String(lastStartPath_)
+                + " wasActive=" + juce::String((int) wasVoiceActive)
+                + " prevEnv=" + juce::String(smoothedEnvelope, 4)
+                + " cutHz=" + juce::String(smoothedFilterCutoffHz, 1)
+                + " fAdsrAct=" + juce::String((int) filterAdsr.isActive())
+                + " mode=" + juce::String(voiceMode));
+#endif
 }
 
 void SynthVoice::noteStopped(bool allowTailOff)
@@ -1624,6 +1683,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                 filter.reset();
                 modFilter1.reset();
                 modFilter2.reset();
+                masterFilterOS.reset();
+                modFilter1OS.reset();
+                modFilter2OS.reset();
                 inReleasePhase = false;
                 clearCurrentNote();
                 // Snapshot last pitch BEFORE zeroing so mono/legato "always glide"
@@ -1719,6 +1781,25 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                 SAFETY_LOG_VOICE_NOTE(noteId, this, midiNote, cutNow,
                                       "AUDIO_CLICK_DETECTED");
 
+#if SPACEDUST_CLICK_DEBUG
+                clickDbgLog("CLICK   v=" + juce::String::toHexString((juce::pointer_sized_int) this).getLastCharacters(4)
+                            + " note=" + juce::String(midiNote)
+                            + " path=" + juce::String(lastStartPath_)
+                            + " dL=" + juce::String(deltaL, 4)
+                            + " dR=" + juce::String(deltaR, 4)
+                            + " env=" + juce::String(envNow, 4)
+                            + " cutHz=" + juce::String(cutNow, 1)
+                            + " modCut=" + juce::String(modulatedCutoff, 1)
+                            + " fEnv=" + juce::String(smoothedFilterEnvelope, 4)
+                            + " fadeRem=" + juce::String(voiceFadeSamplesRemaining)
+                            + " rel=" + juce::String((int) inReleasePhase)
+                            + " adsrAct=" + juce::String((int) adsr.isActive())
+                            + " ring=" + juce::String((int) filter.isRinging())
+                            + " since=" + juce::String(dbgSamplesSinceStart_)
+                            + " out=" + juce::String(outputSmootherL, 4)
+                            + " disc=" + juce::String(discontinuityCount));
+#endif
+
                 // Also emit a plain DBG so it shows up even when safety logging is off
                 DBG("Space Dust [CLICK] t=" << (samplesProcessed / std::max(1.0f, (float)sampleRate))
                     << "s  deltaL=" << deltaL << " deltaR=" << deltaR
@@ -1731,6 +1812,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
 
         if (samplesSinceClickLog < (1 << 30))
             ++samplesSinceClickLog;
+        if (dbgSamplesSinceStart_ < (1 << 30))
+            ++dbgSamplesSinceStart_;
 
         prevSmoothedL = outputSmootherL;
         prevSmoothedR = outputSmootherR;
