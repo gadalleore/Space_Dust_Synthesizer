@@ -71,17 +71,19 @@ class SpaceDustAudioProcessorEditor;
 //==============================================================================
 // -- Main Page Component (Oscillators, Filter, Envelopes, Master) --
 class MainPageComponent : public juce::Component,
-                          public juce::AudioProcessorValueTreeState::Listener
+                          public juce::AudioProcessorValueTreeState::Listener,
+                          public juce::AsyncUpdater
 {
 public:
     MainPageComponent(SpaceDustAudioProcessorEditor& editor);
     ~MainPageComponent() override;
-    
+
     void paint(juce::Graphics& g) override;
     void resized() override;
     void parameterChanged(const juce::String& parameterID, float newValue) override;
+    void handleAsyncUpdate() override;
     void mouseUp(const juce::MouseEvent& event) override;
-    
+
 private:
     void updateSubOscVisibility();
     SpaceDustAudioProcessorEditor& parentEditor;
@@ -107,16 +109,18 @@ private:
 //==============================================================================
 // -- Effects Page Component (Delay, Chorus, Reverb, etc.) --
 class EffectsPageComponent : public juce::Component,
-                             public juce::AudioProcessorValueTreeState::Listener
+                             public juce::AudioProcessorValueTreeState::Listener,
+                             public juce::AsyncUpdater
 {
 public:
     EffectsPageComponent(SpaceDustAudioProcessorEditor& editor);
     ~EffectsPageComponent() override;
-    
+
     void paint(juce::Graphics& g) override;
     void resized() override;
     void parameterChanged(const juce::String& parameterID, float newValue) override;
-    
+    void handleAsyncUpdate() override;
+
 private:
     void updateDelayFilterVisibility();
     void updateReverbFilterVisibility();

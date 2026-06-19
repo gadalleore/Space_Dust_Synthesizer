@@ -3,7 +3,12 @@ build/
 Build/
 build-safety/
 build-release/
+build-asan/
 *.build/
+
+# Local crash reports — contain machine/user info; never commit to a public repo
+docs/crash-reports/
+*.ips
 
 # Visual Studio files
 .vs/

@@ -20,6 +20,9 @@
 #endif
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#if JUCE_MAC
+ #include <CoreFoundation/CoreFoundation.h>   // CFRunLoopRunInMode — message pump for the editor race
+#endif
 #include <atomic>
 #include <thread>
 #include <cstdio>
@@ -180,6 +183,21 @@ int main()
             setIdNotify ("tranceGateRate", rng.nextFloat());
             setIdNotify ("tranceGateSync", (rng.nextFloat() < 0.5f) ? 1.0f : 0.0f);
 
+            // Hammer the Reverb FILTER specifically — the user's live crash trigger.
+            // reverbFilterShow toggles the filter UI's visibility, driving the editor's
+            // resized()/child show-hide on the message thread WHILE the audio thread
+            // runs reverb_.process() reading the same params: the exact editor race.
+            setIdNotify ("reverbEnabled", 1.0f);
+            setIdNotify ("reverbType", rng.nextFloat());                                  // VoidVerb <-> Freeverb
+            setIdNotify ("reverbFilterShow", (rng.nextFloat() < 0.5f) ? 1.0f : 0.0f);     // -> resized()
+            setIdNotify ("reverbFilterWarmSaturation", (rng.nextFloat() < 0.5f) ? 1.0f : 0.0f);
+            setIdNotify ("reverbFilterHPCutoff", rng.nextFloat());
+            setIdNotify ("reverbFilterHPResonance", rng.nextFloat());
+            setIdNotify ("reverbFilterLPCutoff", rng.nextFloat());
+            setIdNotify ("reverbFilterLPResonance", rng.nextFloat());
+            setIdNotify ("reverbDecayTime", rng.nextFloat());
+            setIdNotify ("reverbWetMix", rng.nextFloat());
+
             // Pump the native message queue so JUCE's async attachment updates +
             // combo onChange/resized() actually run (this thread is the message thread).
            #if JUCE_WINDOWS
@@ -189,6 +207,15 @@ int main()
                 TranslateMessage (&msg);
                 DispatchMessageW (&msg);
             }
+           #elif JUCE_MAC
+            // macOS: pump the CFRunLoop on this (the message) thread so JUCE's async
+            // updaters / parameter-attachment updates + combo onChange/resized()
+            // actually fire, racing the audio thread exactly as in the live editor
+            // session. (Previously the pump was Windows-only, so the headless macOS
+            // run never exercised the editor-thread path — and never reproduced the
+            // crash.) runDispatchLoopUntil() is unavailable here: it needs
+            // JUCE_MODAL_LOOPS_PERMITTED, off by default in modern JUCE.
+            CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.002, true);
            #endif
         }
 

@@ -27,9 +27,9 @@
         <pkg-ref id="com.63c.SpaceDust.uninstaller"/>
     </choice>
 
-    <pkg-ref id="com.63c.SpaceDust.vst3" version="1.0.2">SpaceDust-VST3.pkg</pkg-ref>
-    <pkg-ref id="com.63c.SpaceDust.au" version="1.0.2">SpaceDust-AU.pkg</pkg-ref>
+    <pkg-ref id="com.63c.SpaceDust.vst3" version="1.0.4">SpaceDust-VST3.pkg</pkg-ref>
+    <pkg-ref id="com.63c.SpaceDust.au" version="1.0.4">SpaceDust-AU.pkg</pkg-ref>
     <pkg-ref id="com.63c.SpaceDust.standalone"
-             version="1.0.2">SpaceDust-Standalone.pkg</pkg-ref>
-    <pkg-ref id="com.63c.SpaceDust.uninstaller" version="1.0.2">SpaceDust-Uninstaller.pkg</pkg-ref>
+             version="1.0.4">SpaceDust-Standalone.pkg</pkg-ref>
+    <pkg-ref id="com.63c.SpaceDust.uninstaller" version="1.0.4">SpaceDust-Uninstaller.pkg</pkg-ref>
 </installer-gui-script>

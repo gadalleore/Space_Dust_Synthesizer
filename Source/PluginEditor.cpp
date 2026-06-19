@@ -606,6 +606,7 @@ MainPageComponent::MainPageComponent(SpaceDustAudioProcessorEditor& editor)
 MainPageComponent::~MainPageComponent()
 {
     parentEditor.audioProcessor.getValueTreeState().removeParameterListener("subOscOn", this);
+    cancelPendingUpdate();   // listener gone; drop any queued visibility refresh
     parentEditor.osc1PanLabel.removeMouseListener(this);
     parentEditor.osc2PanLabel.removeMouseListener(this);
 }
@@ -618,10 +619,21 @@ void MainPageComponent::mouseUp(const juce::MouseEvent& event)
         parentEditor.osc2PanSlider.setValue(0.0, juce::sendNotificationSync);
 }
 
-void MainPageComponent::parameterChanged(const juce::String& parameterID, float newValue)
+void MainPageComponent::parameterChanged(const juce::String&, float)
 {
-    if (parameterID == "subOscOn")
-        updateSubOscVisibility();
+    // APVTS delivers this on the AUDIO thread under host automation. The only param
+    // we listen for is "subOscOn", and its handler (updateSubOscVisibility) calls
+    // setVisible()/resized() -> grabKeyboardFocus() -> macOS HIToolbox, which aborts
+    // with SIGILL if not on the message thread (dispatch_assert_queue). Marshal it;
+    // AsyncUpdater coalesces automation bursts into a single relayout and self-cancels
+    // on destruction. (Matches EffectsPageComponent / FinalEQComponent.)
+    triggerAsyncUpdate();
+}
+
+void MainPageComponent::handleAsyncUpdate()
+{
+    // Message thread (AsyncUpdater guarantee) — safe to touch the UI.
+    updateSubOscVisibility();
 }
 
 void MainPageComponent::updateSubOscVisibility()
@@ -1849,16 +1861,32 @@ EffectsPageComponent::~EffectsPageComponent()
     apvts.removeParameterListener(juce::ParameterID{"delayFilterShow", 1}.getParamID(), this);
     apvts.removeParameterListener(juce::ParameterID{"reverbFilterShow", 1}.getParamID(), this);
     apvts.removeParameterListener(juce::ParameterID{"grainDelayFilterShow", 1}.getParamID(), this);
+    // Listeners are gone, so no new triggers can arrive; drop any update already queued.
+    cancelPendingUpdate();
 }
 
-void EffectsPageComponent::parameterChanged(const juce::String& parameterID, float)
+void EffectsPageComponent::parameterChanged(const juce::String&, float)
 {
-    if (parameterID == juce::ParameterID{"delayFilterShow", 1}.getParamID())
-        updateDelayFilterVisibility();
-    else if (parameterID == juce::ParameterID{"reverbFilterShow", 1}.getParamID())
-        updateReverbFilterVisibility();
-    else if (parameterID == juce::ParameterID{"grainDelayFilterShow", 1}.getParamID())
-        updateGrainDelayFilterVisibility();
+    // CAUTION: APVTS calls this synchronously on whatever thread changes the
+    // parameter. Under host automation that is the AUDIO thread (the value is
+    // applied inside processBlock). The visibility updates below call
+    // Component::setVisible()/resized() -> grabKeyboardFocus() -> macOS HIToolbox,
+    // which asserts it is on the main thread (dispatch_assert_queue) and aborts
+    // with SIGILL when it is not. So NEVER touch the UI here directly: marshal to
+    // the message thread. triggerAsyncUpdate() is thread-safe, coalesces a flood
+    // of automation changes into a single relayout, and is auto-cancelled if this
+    // component is destroyed before it fires. We refresh all three filter sections
+    // (each re-reads its own *FilterShow param) so we don't need to track which one
+    // changed across the thread hop.
+    triggerAsyncUpdate();
+}
+
+void EffectsPageComponent::handleAsyncUpdate()
+{
+    // Always runs on the message thread (AsyncUpdater guarantee) — safe for UI.
+    updateDelayFilterVisibility();
+    updateReverbFilterVisibility();
+    updateGrainDelayFilterVisibility();
 }
 
 void EffectsPageComponent::updateDelayFilterVisibility()

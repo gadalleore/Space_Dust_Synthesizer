@@ -13,7 +13,7 @@ if(CMAKE_HOST_APPLE)
     endif()
 endif()
 
-project(SpaceDust VERSION 1.0.3)
+project(SpaceDust VERSION 1.0.4)
 
 # --- Windows: statically link the MSVC C Run-Time (CRT) ---
 # Bakes VCRUNTIME140/MSVCP140 into the binaries so the plugin loads on a clean
@@ -53,7 +53,7 @@ juce_add_plugin(SpaceDust
     PRODUCT_NAME "Space Dust"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/AppIcon.png"
     DESCRIPTION "Cosmic particles of sound"
-    VERSION 1.0.3
+    VERSION 1.0.4
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
@@ -192,9 +192,17 @@ if(ENABLE_ASAN)
         target_compile_definitions(SpaceDust PRIVATE SPACEDUST_ASAN=1
                                    _DISABLE_STRING_ANNOTATION
                                    _DISABLE_VECTOR_ANNOTATION)
-        message(STATUS "AddressSanitizer ENABLED for SpaceDust target.")
+        message(STATUS "AddressSanitizer ENABLED for SpaceDust target (MSVC).")
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        # clang/AppleClang/gcc: ASan needs the flags on BOTH compile and link.
+        # -fno-omit-frame-pointer + -g keep backtraces precise to the faulting line.
+        target_compile_options(SpaceDust PRIVATE
+            -fsanitize=address -fno-omit-frame-pointer -g)
+        target_link_options(SpaceDust PRIVATE -fsanitize=address)
+        target_compile_definitions(SpaceDust PRIVATE SPACEDUST_ASAN=1)
+        message(STATUS "AddressSanitizer ENABLED for SpaceDust target (Clang/GCC).")
     else()
-        message(WARNING "ENABLE_ASAN currently only wired up for MSVC; ignored.")
+        message(WARNING "ENABLE_ASAN: unrecognized compiler; ignored.")
     endif()
 endif()
 
@@ -277,15 +285,21 @@ endif()
 # host-automation-flood heap corruption that pluginval/the editor can't trigger.
 # Build:  cmake -B build-asan -DENABLE_ASAN=ON ; cmake --build build-asan --target SpaceDustStress
 #==============================================================================
-if(ENABLE_ASAN AND MSVC)
+if(ENABLE_ASAN)
     juce_add_console_app(SpaceDustStress PRODUCT_NAME "SpaceDustStress")
     target_sources(SpaceDustStress PRIVATE tools/stress/stress_main.cpp)
-    target_compile_options(SpaceDustStress PRIVATE /fsanitize=address /Zi)
-    target_link_options(SpaceDustStress PRIVATE /INCREMENTAL:NO)
-    # Match SpaceDust's container-annotation setting so the ASan objects link.
-    target_compile_definitions(SpaceDustStress PRIVATE
-                               _DISABLE_STRING_ANNOTATION
-                               _DISABLE_VECTOR_ANNOTATION)
+    if(MSVC)
+        target_compile_options(SpaceDustStress PRIVATE /fsanitize=address /Zi)
+        target_link_options(SpaceDustStress PRIVATE /INCREMENTAL:NO)
+        # Match SpaceDust's container-annotation setting so the ASan objects link.
+        target_compile_definitions(SpaceDustStress PRIVATE
+                                   _DISABLE_STRING_ANNOTATION
+                                   _DISABLE_VECTOR_ANNOTATION)
+    else()
+        target_compile_options(SpaceDustStress PRIVATE
+            -fsanitize=address -fno-omit-frame-pointer -g)
+        target_link_options(SpaceDustStress PRIVATE -fsanitize=address)
+    endif()
     # Link the plugin's shared code (provides createPluginFilter + all DSP) + JUCE.
     target_link_libraries(SpaceDustStress PRIVATE
         SpaceDust
