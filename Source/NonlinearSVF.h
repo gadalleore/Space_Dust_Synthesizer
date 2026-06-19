@@ -11,9 +11,12 @@
     Drop-in replacement for juce::dsp::StateVariableTPTFilter as used by the synth
     voice. Two regimes:
 
-      * Resonance knob 0.0 .. kSelfOscKnobStart  -> mathematically IDENTICAL to
-        juce::dsp::StateVariableTPTFilter (same h / R2 / g equations). Existing
-        presets in this range sound exactly as before.
+      * Resonance knob 0.0 .. kSelfOscKnobStart  -> a damped (non-self-oscillating)
+        SVF. Resonance maps to Q via an EXPONENTIAL taper (kQMin..kQMax) so the knob
+        ramps up in even perceptual steps and the peak is pronounced near the top of
+        this range. (Earlier this was a linear 0.1..16 map identical to
+        juce::dsp::StateVariableTPTFilter; the exponential taper changes the timbre
+        across the whole resonance range.)
 
       * Resonance knob kSelfOscKnobStart .. 1.0   -> the filter self-oscillates.
         Instead of a fixed negative damping clamped by a waveshaper (which always
@@ -27,10 +30,12 @@
                             squared off  -> aggressive, gritty scream.
             target <= 1  -> the clean sine passes the clip untouched -> pure tone.
 
-        targetAmp is held high (gritty) across most of the self-oscillation range
-        and falls to just under unity at maximum resonance, so the very top of the
-        knob produces a CLEAN sine wave. The target also scales with the amplitude
-        envelope so a note's release fades the singing filter out smoothly.
+        targetAmp RISES with the knob: a gentle near-clean sine just past the onset,
+        building to the full gritty (clipped) scream at maximum resonance — so the
+        intensity increases monotonically as you turn the knob up. The self-oscillation
+        also fades in across an onset band (kSelfOscKnobStart..kSelfOscFull) rather than
+        switching on abruptly. The target scales with the amplitude envelope so a note's
+        release fades the singing filter out smoothly.
 
     The self-oscillation frequency is the cutoff, so with key tracking on it sings
     at the played note's pitch.
@@ -85,16 +90,33 @@ public:
     void setResonanceNormalized (float res) noexcept
     {
         res = juce::jlimit (0.0f, 1.0f, res);
+        // Resonance -> damping (R2 = 1/Q). EXPONENTIAL Q taper (kQMin..kQMax across the
+        // damped range) so resonance ramps up in equal PERCEPTUAL steps and reaches a
+        // pronounced peak just before self-oscillation. The old linear 0.1..16 map
+        // bunched its change low and felt flat across the upper damped sweep. ALWAYS
+        // computed: below the self-osc region it IS the damping; inside the region it is
+        // the blend anchor at the onset so there is no jump at the start.
+        const float qNorm = juce::jlimit (0.0f, 1.0f, res / kSelfOscKnobStart);
+        const float Q     = kQMin * std::pow (kQMax / kQMin, qNorm);
+        R2 = 1.0f / Q;
         if (res <= kSelfOscKnobStart)
         {
-            // Legacy mapping Q = 0.1..~16, R2 = 1/Q. Identical to the previous filter.
-            R2 = 1.0f / (0.1f + res * 19.9f);
-            selfOsc = false;
+            selfOsc      = false;
+            selfOscBlend = 0.0f;
         }
         else
         {
             selfOsc   = true;
             targetAmp = computeTargetAmp (res);
+            // Fade the self-oscillation in across [kSelfOscKnobStart .. kSelfOscFull]
+            // instead of slamming it on at the first step past the threshold. The blend
+            // (used per-sample below) weights the AGC's negative damping against the
+            // legacy positive damping: 0 at the onset (== legacy R2, fully continuous)
+            // rising to 1 (pure self-oscillation) at kSelfOscFull. This turns the old
+            // hard 0.80->0.81 character jump into a smooth ramp into the scream.
+            float t = (res - kSelfOscKnobStart) / (kSelfOscFull - kSelfOscKnobStart);
+            t = juce::jlimit (0.0f, 1.0f, t);
+            selfOscBlend = t * t * (3.0f - 2.0f * t); // smoothstep (ease-in/out)
         }
     }
 
@@ -130,7 +152,13 @@ public:
             // damping (grow); above target -> positive damping (decay). At target the
             // damping sits at ~0, i.e. a lossless (pure-sine) resonator.
             const float target = targetAmp * envAmount;
-            effR2 = juce::jlimit (kMaxGrowth, kMaxDecay, (oscEnv[(size_t) channel] - target) * kAgcStrength);
+            const float agcR2 = juce::jlimit (kMaxGrowth, kMaxDecay, (oscEnv[(size_t) channel] - target) * kAgcStrength);
+            // Blend legacy damping (R2) -> AGC damping across the onset band so the
+            // self-oscillation ramps in instead of stepping on. At selfOscBlend==0 this
+            // is exactly R2 (continuous with the sub-threshold region); at ==1 it is the
+            // pure AGC value (unchanged top-of-knob scream). The blend also makes the
+            // settled oscillation amplitude rise smoothly from 0 to target across the band.
+            effR2 = R2 + selfOscBlend * (agcR2 - R2);
         }
 
         // Guard the denominator: a negative R2 must never make it ill-conditioned.
@@ -167,14 +195,14 @@ public:
 private:
     static float computeTargetAmp (float res) noexcept
     {
-        // Hold a high (clipping = gritty) target across most of the self-osc range,
-        // then smoothly clean up to just under unity at maximum resonance so the very
-        // top of the knob is a pure, un-clipped sine.
-        if (res < kCleanStart)
-            return kGritAmp;
-        float u = (res - kCleanStart) / (1.0f - kCleanStart); // 0..1
-        u = u * u * (3.0f - 2.0f * u);                        // smoothstep
-        return juce::jmap (u, kGritAmp, kCleanAmp);
+        // Intensity RISES with the knob: a gentle, near-clean sine just past the onset
+        // building to the full gritty scream at MAXIMUM resonance. (This used to be
+        // inverted — gritty at the bottom of the self-osc region, cleaning to a quiet
+        // sub-unity sine at the top — which made res 100 sound attenuated next to 81.)
+        float u = (res - kSelfOscKnobStart) / (1.0f - kSelfOscKnobStart);
+        u = juce::jlimit (0.0f, 1.0f, u);
+        u = u * u * (3.0f - 2.0f * u);              // smoothstep (ease-in/out)
+        return juce::jmap (u, kCleanAmp, kGritAmp); // 0.9 gentle sine -> 2.5 clipped scream
     }
 
     void updateG() noexcept
@@ -183,10 +211,12 @@ private:
     }
 
     // Tunables ----------------------------------------------------------------
-    static constexpr float kSelfOscKnobStart = 0.80f;  // top 20% of the knob self-oscillates
-    static constexpr float kCleanStart       = 0.94f;  // knob value where the scream cleans into a sine
-    static constexpr float kGritAmp          = 2.5f;   // self-osc target amplitude in the gritty region (>1 => clips)
-    static constexpr float kCleanAmp         = 0.9f;   // self-osc target at max resonance (<1 => clean sine)
+    static constexpr float kSelfOscKnobStart = 0.80f;  // self-oscillation BEGINS to fade in here
+    static constexpr float kSelfOscFull      = 0.88f;  // ...and is fully engaged here (onset ramp band)
+    static constexpr float kQMin             = 0.25f;  // Q at resonance 0 (clean, no resonance)
+    static constexpr float kQMax             = 20.0f;  // Q at the self-osc onset (sharp, pronounced peak)
+    static constexpr float kGritAmp          = 2.5f;   // self-osc target at MAX resonance (>1 => clipped scream)
+    static constexpr float kCleanAmp         = 0.9f;   // self-osc target at the onset (<1 => gentle clean sine)
     static constexpr float kAgcStrength      = 0.2f;   // how hard the amplitude loop corrects damping
     static constexpr float kMaxGrowth        = -0.15f; // most negative damping (fastest oscillation build-up)
     static constexpr float kMaxDecay         = 0.5f;   // most positive damping (fastest decay / overshoot tame)
@@ -202,6 +232,7 @@ private:
     float R2         = 2.0f;     // damping = 1/Q (used outside the self-osc region)
     float g          = 0.0f;     // tan(pi * fc / fs)
     float targetAmp  = 0.9f;     // self-osc target amplitude (set from the knob)
+    float selfOscBlend = 0.0f;   // 0..1 onset ramp: legacy damping -> AGC self-oscillation
     int   mode       = 0;
     bool  selfOsc    = false;
     float envAmount  = 1.0f;

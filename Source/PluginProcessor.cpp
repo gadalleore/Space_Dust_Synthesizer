@@ -2418,6 +2418,21 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             float drive = 1.0f + (hpQ + lpQ) * 0.15f;  // Conservative: avoid gain > 1 in feedback
             return std::tanh(juce::jlimit(-1.5f, 1.5f, filtered) * drive);
         };
+        // Feedback shaper. With warm saturation ON it tanh-saturates (the intended
+        // "warm" colour, baked into each echo). With it OFF the feedback must stay
+        // CLEAN — tanh was being applied unconditionally, so a low-level single note
+        // passed through tanh's linear region untouched, but a louder CHORD got
+        // compressed/distorted (the amplitude-dependent "nasty" colour the user heard).
+        // When clean we only clamp as a runaway safety net, at a ceiling (±4 ≈ +12 dBFS)
+        // high enough to stay transparent for musical levels — including a chord boosted
+        // by the +3 dB delay drive plus feedback accumulation. A ±2 ceiling was still low
+        // enough that loud chords clipped against it (the residual colour). fbDecay <= 0.99
+        // keeps the loop stable; this just caps a pathological build-up.
+        auto saturateFeedback = [&](float raw) -> float {
+            if (delayWarmSat)
+                return std::tanh(juce::jlimit(-2.0f, 2.0f, raw));
+            return juce::jlimit(-4.0f, 4.0f, raw);
+        };
         
         if (delayPingPong)
         {
@@ -2454,7 +2469,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 float d2FiltFb = filterForFeedback(1, d2);
                 float lOut = dryMix * lIn + wetMix * saturateForOutput(d1FiltOut);
                 float rOut = dryMix * rIn + wetMix * saturateForOutput(d2FiltOut);
-                float d1Fb = std::tanh(juce::jlimit(-2.0f, 2.0f, monoIn + fbDecay * d2FiltFb));
+                float d1Fb = saturateFeedback(monoIn + fbDecay * d2FiltFb);
                 delayLineL.pushSample(0, d1Fb);
                 delayLineR.pushSample(0, d1FiltFb);
                 left[s] = lOut;
@@ -2495,8 +2510,8 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 float rFiltFb = filterForFeedback(1, rDelayed);
                 float lOut = dryMix * lIn + wetMix * saturateForOutput(lFiltOut);
                 float rOut = dryMix * rIn + wetMix * saturateForOutput(rFiltOut);
-                float lFb = std::tanh(juce::jlimit(-2.0f, 2.0f, lIn + fbDecay * lFiltFb));
-                float rFb = std::tanh(juce::jlimit(-2.0f, 2.0f, rIn + fbDecay * rFiltFb));
+                float lFb = saturateFeedback(lIn + fbDecay * lFiltFb);
+                float rFb = saturateFeedback(rIn + fbDecay * rFiltFb);
                 delayLineL.pushSample(0, lFb);
                 delayLineR.pushSample(0, rFb);
                 left[s] = lOut;

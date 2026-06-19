@@ -40,11 +40,12 @@ private:
     juce::SmoothedValue<float> smoothedAmount_{0.5f};
     juce::SmoothedValue<float> smoothedRate_{0.0f};
 
-    // Sample-and-hold state per channel
+    // Sample-and-hold held value per channel, but a SINGLE SHARED downsample phase so
+    // both channels sample-and-hold at the same instant (mono-coherent crush, not two
+    // independently-drifting channels). The jitter is likewise drawn once per sample.
     float holdSampleL_{0.0f};
     float holdSampleR_{0.0f};
-    float phaseL_{0.0f};
-    float phaseR_{0.0f};
+    float phase_{0.0f};
 
     std::mt19937 rng_{static_cast<unsigned>(juce::Time::getMillisecondCounter())};
     std::uniform_real_distribution<float> jitterDist_{-0.015f, 0.015f};

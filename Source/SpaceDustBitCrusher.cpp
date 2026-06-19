@@ -51,8 +51,7 @@ void SpaceDustBitCrusher::reset()
 {
     holdSampleL_ = 0.0f;
     holdSampleR_ = 0.0f;
-    phaseL_ = 0.0f;
-    phaseR_ = 0.0f;
+    phase_ = 0.0f;
 }
 
 void SpaceDustBitCrusher::setParameters(const Parameters& p)
@@ -88,6 +87,26 @@ void SpaceDustBitCrusher::process(juce::AudioBuffer<float>& buffer)
         const float normFreq = (rateParam < rateThreshold) ? 1.0f : (0.023f + rateParam * rateParam * 0.157f);
         const float phaseInc = normFreq;
 
+        // Advance the SINGLE shared phase (and draw ONE jitter value) per sample so the
+        // sample-and-hold fires on the SAME instant for both channels. Doing this per
+        // channel — each with its own phase and its own random jitter — let L and R drift
+        // apart and crush asymmetrically (a decorrelated, off-centre stereo artifact).
+        bool holdEvent = false;
+        if (rateParam >= rateThreshold)
+        {
+            float phaseIncWithJitter = phaseInc;
+            if (rateParam > 0.3f)
+                phaseIncWithJitter += jitterDist_(rng_);  // one jitter, shared by both channels
+
+            phase_ += phaseIncWithJitter;
+            if (phase_ >= 1.0f)
+            {
+                phase_ -= 1.0f;
+                if (phase_ < 0.0f) phase_ = 0.0f;
+                holdEvent = true;  // both channels re-sample on this instant
+            }
+        }
+
         for (int ch = 0; ch < numChannels; ++ch)
         {
             auto* ptr = buffer.getWritePointer(ch);
@@ -96,27 +115,15 @@ void SpaceDustBitCrusher::process(juce::AudioBuffer<float>& buffer)
             float crushed;
             if (rateParam < rateThreshold)
             {
+                // Full rate: quantize every sample. quantizeHarsh is stateless, so both
+                // channels already get identical treatment for identical input.
                 crushed = quantizeHarsh(dry, quantLevels, kDcBias);
             }
             else
             {
-                float held = (ch == 0) ? holdSampleL_ : holdSampleR_;
-                float& phase = (ch == 0) ? phaseL_ : phaseR_;
-
-                float phaseIncWithJitter = phaseInc;
-                if (rateParam > 0.3f)
-                    phaseIncWithJitter += jitterDist_(rng_);
-
-                phase += phaseIncWithJitter;
-                if (phase >= 1.0f)
-                {
-                    phase -= 1.0f;
-                    if (phase < 0.0f) phase = 0.0f;
+                float& held = (ch == 0) ? holdSampleL_ : holdSampleR_;
+                if (holdEvent)
                     held = quantizeHarsh(dry, quantLevels, kDcBias);
-                }
-
-                if (ch == 0) holdSampleL_ = held;
-                else holdSampleR_ = held;
                 crushed = held;
             }
 
