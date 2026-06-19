@@ -35,14 +35,14 @@
   <PARAM id="envDecay" value="0.2000000178813934"/>
   <PARAM id="envRelease" value="0.009999999776482582"/>
   <PARAM id="envSustain" value="1.0"/>
-  <PARAM id="filterCutoff" value="11163.0"/>
+  <PARAM id="filterCutoff" value="12930.0"/>
   <PARAM id="filterEnvAmount" value="0.0"/>
   <PARAM id="filterEnvAttack" value="0.009999999776482582"/>
   <PARAM id="filterEnvDecay" value="0.800000011920929"/>
   <PARAM id="filterEnvRelease" value="3.0"/>
   <PARAM id="filterEnvSustain" value="0.699999988079071"/>
   <PARAM id="filterMode" value="0.0"/>
-  <PARAM id="filterResonance" value="0.01999999955296516"/>
+  <PARAM id="filterResonance" value="0.04999999701976776"/>
   <PARAM id="finalEQB1Freq" value="80.0"/>
   <PARAM id="finalEQB1Gain" value="0.0"/>
   <PARAM id="finalEQB1Q" value="0.7100000977516174"/>
@@ -106,7 +106,7 @@
   <PARAM id="lofiAmount" value="0.05999999865889549"/>
   <PARAM id="lofiEnabled" value="1.0"/>
   <PARAM id="lowShelfAmount" value="0.0"/>
-  <PARAM id="masterVolume" value="0.5099999904632568"/>
+  <PARAM id="masterVolume" value="0.6399999856948853"/>
   <PARAM id="modFilter1Cutoff" value="8000.0"/>
   <PARAM id="modFilter1LinkToMaster" value="1.0"/>
   <PARAM id="modFilter1Mode" value="0.0"/>
@@ -198,4 +198,13 @@
   <PARAM id="warmSaturationMaster" value="1.0"/>
   <PARAM id="warmSaturationMod1" value="0.0"/>
   <PARAM id="warmSaturationMod2" value="0.0"/>
+  <PARAM id="filterKeyTrack" value="1.0"/>
+  <PARAM id="filterOversample"/>
+  <PARAM id="modFilter1KeyTrack"/>
+  <PARAM id="modFilter2KeyTrack"/>
+  <PARAM id="mpeMode"/>
+  <PARAM id="mpePitchBendRange"/>
+  <PARAM id="mpePressureDepth"/>
+  <PARAM id="mpeTimbreDepth"/>
+  <PARAM id="noiseType"/>
 </PARAMETERS>

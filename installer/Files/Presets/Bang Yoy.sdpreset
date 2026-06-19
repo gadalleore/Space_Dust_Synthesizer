@@ -2,11 +2,11 @@
 
 <PARAMETERS presetName="Bang Yoy">
   <PARAM id="analogDrift" value="0.0"/>
-  <PARAM id="bitCrusherAmount" value="0.5399999618530273"/>
+  <PARAM id="bitCrusherAmount" value="0.6200000047683716"/>
   <PARAM id="bitCrusherEnabled" value="1.0"/>
   <PARAM id="bitCrusherMix" value="1.0"/>
   <PARAM id="bitCrusherPostEffect" value="1.0"/>
-  <PARAM id="bitCrusherRate" value="0.2699999809265137"/>
+  <PARAM id="bitCrusherRate" value="0.1700000017881393"/>
   <PARAM id="compressorAttack" value="2.999999761581421"/>
   <PARAM id="compressorAutoRelease" value="0.0"/>
   <PARAM id="compressorEnabled" value="1.0"/>
@@ -35,14 +35,14 @@
   <PARAM id="envDecay" value="0.2000000178813934"/>
   <PARAM id="envRelease" value="0.009999999776482582"/>
   <PARAM id="envSustain" value="1.0"/>
-  <PARAM id="filterCutoff" value="252.0"/>
+  <PARAM id="filterCutoff" value="142.0"/>
   <PARAM id="filterEnvAmount" value="0.0"/>
   <PARAM id="filterEnvAttack" value="0.009999999776482582"/>
   <PARAM id="filterEnvDecay" value="0.800000011920929"/>
   <PARAM id="filterEnvRelease" value="3.0"/>
   <PARAM id="filterEnvSustain" value="0.699999988079071"/>
   <PARAM id="filterMode" value="0.0"/>
-  <PARAM id="filterResonance" value="0.1799999922513962"/>
+  <PARAM id="filterResonance" value="0.5399999618530273"/>
   <PARAM id="finalEQB1Freq" value="109.0"/>
   <PARAM id="finalEQB1Gain" value="-7.550000190734863"/>
   <PARAM id="finalEQB1Q" value="0.7100000977516174"/>
@@ -83,7 +83,7 @@
   <PARAM id="grainDelayTime" value="199.9999847412109"/>
   <PARAM id="highShelfAmount" value="0.0"/>
   <PARAM id="legatoGlide" value="1.0"/>
-  <PARAM id="lfo1Depth" value="53.60000228881836"/>
+  <PARAM id="lfo1Depth" value="94.80000305175781"/>
   <PARAM id="lfo1Enabled" value="1.0"/>
   <PARAM id="lfo1Phase" value="0.0"/>
   <PARAM id="lfo1Rate" value="3.879999876022339"/>
@@ -202,4 +202,9 @@
   <PARAM id="warmSaturationMaster" value="1.0"/>
   <PARAM id="warmSaturationMod1" value="1.0"/>
   <PARAM id="warmSaturationMod2" value="0.0"/>
+  <PARAM id="filterKeyTrack" value="1.0"/>
+  <PARAM id="filterOversample"/>
+  <PARAM id="modFilter1KeyTrack"/>
+  <PARAM id="modFilter2KeyTrack"/>
+  <PARAM id="noiseType"/>
 </PARAMETERS>

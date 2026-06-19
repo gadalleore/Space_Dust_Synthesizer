@@ -198,8 +198,13 @@
   <PARAM id="transientMix" value="0.5"/>
   <PARAM id="transientPostEffect" value="0.0"/>
   <PARAM id="transientType" value="0.0"/>
-  <PARAM id="voiceMode" value="0.0"/>
+  <PARAM id="voiceMode" value="1.0"/>
   <PARAM id="warmSaturationMaster" value="0.0"/>
   <PARAM id="warmSaturationMod1" value="0.0"/>
   <PARAM id="warmSaturationMod2" value="0.0"/>
+  <PARAM id="filterKeyTrack" value="1.0"/>
+  <PARAM id="filterOversample"/>
+  <PARAM id="modFilter1KeyTrack"/>
+  <PARAM id="modFilter2KeyTrack"/>
+  <PARAM id="noiseType"/>
 </PARAMETERS>

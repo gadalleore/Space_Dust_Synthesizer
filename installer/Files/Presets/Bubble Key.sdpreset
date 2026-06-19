@@ -10,7 +10,7 @@
   <PARAM id="compressorAttack" value="2.999999761581421"/>
   <PARAM id="compressorAutoRelease" value="0.0"/>
   <PARAM id="compressorEnabled" value="1.0"/>
-  <PARAM id="compressorMakeup" value="5.0"/>
+  <PARAM id="compressorMakeup" value="4.400000095367432"/>
   <PARAM id="compressorMix" value="1.0"/>
   <PARAM id="compressorRatio" value="1.700000047683716"/>
   <PARAM id="compressorRelease" value="99.99999237060547"/>
@@ -106,7 +106,7 @@
   <PARAM id="lofiAmount" value="0.0"/>
   <PARAM id="lofiEnabled" value="1.0"/>
   <PARAM id="lowShelfAmount" value="-0.2400000095367432"/>
-  <PARAM id="masterVolume" value="1.620000004768372"/>
+  <PARAM id="masterVolume" value="2.0"/>
   <PARAM id="modFilter1Cutoff" value="8000.00048828125"/>
   <PARAM id="modFilter1LinkToMaster" value="1.0"/>
   <PARAM id="modFilter1Mode" value="0.0"/>
@@ -202,4 +202,9 @@
   <PARAM id="warmSaturationMaster" value="0.0"/>
   <PARAM id="warmSaturationMod1" value="0.0"/>
   <PARAM id="warmSaturationMod2" value="0.0"/>
+  <PARAM id="filterKeyTrack" value="0.0"/>
+  <PARAM id="filterOversample"/>
+  <PARAM id="modFilter1KeyTrack"/>
+  <PARAM id="modFilter2KeyTrack"/>
+  <PARAM id="noiseType"/>
 </PARAMETERS>

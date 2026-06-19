@@ -10,7 +10,7 @@
   <PARAM id="compressorAttack" value="2.999999761581421"/>
   <PARAM id="compressorAutoRelease" value="0.0"/>
   <PARAM id="compressorEnabled" value="1.0"/>
-  <PARAM id="compressorMakeup" value="12.19999980926514"/>
+  <PARAM id="compressorMakeup" value="13.40000057220459"/>
   <PARAM id="compressorMix" value="1.0"/>
   <PARAM id="compressorRatio" value="4.0"/>
   <PARAM id="compressorRelease" value="99.99999237060547"/>
@@ -33,12 +33,12 @@
   <PARAM id="delayTripletStraightToggle" value="0.0"/>
   <PARAM id="envAttack" value="0.009999999776482582"/>
   <PARAM id="envDecay" value="0.2000000178813934"/>
-  <PARAM id="envRelease" value="0.2000000178813934"/>
+  <PARAM id="envRelease" value="0.3799999952316284"/>
   <PARAM id="envSustain" value="0.699999988079071"/>
   <PARAM id="filterCutoff" value="20000.0"/>
   <PARAM id="filterEnvAmount" value="62.30000305175781"/>
-  <PARAM id="filterEnvAttack" value="0.02199999988079071"/>
-  <PARAM id="filterEnvDecay" value="1.724000096321106"/>
+  <PARAM id="filterEnvAttack" value="0.009999999776482582"/>
+  <PARAM id="filterEnvDecay" value="0.09809999912977219"/>
   <PARAM id="filterEnvRelease" value="3.0"/>
   <PARAM id="filterEnvSustain" value="0.699999988079071"/>
   <PARAM id="filterMode" value="0.0"/>
@@ -106,7 +106,7 @@
   <PARAM id="lofiAmount" value="0.009999999776482582"/>
   <PARAM id="lofiEnabled" value="1.0"/>
   <PARAM id="lowShelfAmount" value="0.0"/>
-  <PARAM id="masterVolume" value="1.25"/>
+  <PARAM id="masterVolume" value="1.689999938011169"/>
   <PARAM id="modFilter1Cutoff" value="8000.00048828125"/>
   <PARAM id="modFilter1LinkToMaster" value="1.0"/>
   <PARAM id="modFilter1Mode" value="0.0"/>
@@ -123,14 +123,14 @@
   <PARAM id="mpeTimbreDepth" value="100.0"/>
   <PARAM id="noiseLevel" value="0.1599999964237213"/>
   <PARAM id="osc1CoarseTune" value="0.0"/>
-  <PARAM id="osc1Detune" value="1.299999237060547"/>
+  <PARAM id="osc1Detune" value="24.5"/>
   <PARAM id="osc1Level" value="0.7999999523162842"/>
-  <PARAM id="osc1Pan" value="-1.0"/>
+  <PARAM id="osc1Pan" value="-0.6000000238418579"/>
   <PARAM id="osc1Waveform" value="2.0"/>
   <PARAM id="osc2CoarseTune" value="0.0"/>
-  <PARAM id="osc2Detune" value="-4.599998474121094"/>
+  <PARAM id="osc2Detune" value="-16.39999771118164"/>
   <PARAM id="osc2Level" value="0.7999999523162842"/>
-  <PARAM id="osc2Pan" value="1.0"/>
+  <PARAM id="osc2Pan" value="0.4499999284744263"/>
   <PARAM id="osc2Waveform" value="2.0"/>
   <PARAM id="phaserCentre" value="400.0"/>
   <PARAM id="phaserDepth" value="0.6499999761581421"/>
@@ -202,4 +202,9 @@
   <PARAM id="warmSaturationMaster" value="1.0"/>
   <PARAM id="warmSaturationMod1" value="0.0"/>
   <PARAM id="warmSaturationMod2" value="0.0"/>
+  <PARAM id="filterKeyTrack" value="1.0"/>
+  <PARAM id="filterOversample"/>
+  <PARAM id="modFilter1KeyTrack"/>
+  <PARAM id="modFilter2KeyTrack"/>
+  <PARAM id="noiseType"/>
 </PARAMETERS>

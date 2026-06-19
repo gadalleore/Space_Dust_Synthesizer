@@ -35,14 +35,14 @@
   <PARAM id="envDecay" value="0.2000000178813934"/>
   <PARAM id="envRelease" value="0.2860000133514404"/>
   <PARAM id="envSustain" value="0.699999988079071"/>
-  <PARAM id="filterCutoff" value="16331.0"/>
+  <PARAM id="filterCutoff" value="15378.0"/>
   <PARAM id="filterEnvAmount" value="0.0"/>
   <PARAM id="filterEnvAttack" value="0.009999999776482582"/>
   <PARAM id="filterEnvDecay" value="0.800000011920929"/>
   <PARAM id="filterEnvRelease" value="3.0"/>
   <PARAM id="filterEnvSustain" value="0.699999988079071"/>
   <PARAM id="filterMode" value="0.0"/>
-  <PARAM id="filterResonance" value="0.02999999932944775"/>
+  <PARAM id="filterResonance" value="0.03999999910593033"/>
   <PARAM id="finalEQB1Freq" value="142.0"/>
   <PARAM id="finalEQB1Gain" value="-14.1899995803833"/>
   <PARAM id="finalEQB1Q" value="0.7100000977516174"/>
@@ -195,11 +195,16 @@
   <PARAM id="transientEnabled" value="1.0"/>
   <PARAM id="transientKaDonk" value="0.009999999776482582"/>
   <PARAM id="transientLength" value="0.4599999785423279"/>
-  <PARAM id="transientMix" value="0.4799999892711639"/>
+  <PARAM id="transientMix" value="0.1599999964237213"/>
   <PARAM id="transientPostEffect" value="0.0"/>
   <PARAM id="transientType" value="1.0"/>
   <PARAM id="voiceMode" value="0.0"/>
   <PARAM id="warmSaturationMaster" value="1.0"/>
   <PARAM id="warmSaturationMod1" value="1.0"/>
   <PARAM id="warmSaturationMod2" value="0.0"/>
+  <PARAM id="filterKeyTrack" value="1.0"/>
+  <PARAM id="filterOversample"/>
+  <PARAM id="modFilter1KeyTrack"/>
+  <PARAM id="modFilter2KeyTrack"/>
+  <PARAM id="noiseType"/>
 </PARAMETERS>

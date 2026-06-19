@@ -33,7 +33,7 @@
   <PARAM id="delayTripletStraightToggle" value="0.0"/>
   <PARAM id="envAttack" value="0.009999999776482582"/>
   <PARAM id="envDecay" value="0.1120000034570694"/>
-  <PARAM id="envRelease" value="0.01799999922513962"/>
+  <PARAM id="envRelease" value="1.234799981117249"/>
   <PARAM id="envSustain" value="0.1299999952316284"/>
   <PARAM id="filterCutoff" value="33.0"/>
   <PARAM id="filterEnvAmount" value="74.0"/>
@@ -106,7 +106,7 @@
   <PARAM id="lofiAmount" value="0.0"/>
   <PARAM id="lofiEnabled" value="0.0"/>
   <PARAM id="lowShelfAmount" value="0.0"/>
-  <PARAM id="masterVolume" value="1.059999942779541"/>
+  <PARAM id="masterVolume" value="1.230000019073486"/>
   <PARAM id="modFilter1Cutoff" value="8000.00048828125"/>
   <PARAM id="modFilter1LinkToMaster" value="1.0"/>
   <PARAM id="modFilter1Mode" value="0.0"/>
@@ -202,4 +202,9 @@
   <PARAM id="warmSaturationMaster" value="1.0"/>
   <PARAM id="warmSaturationMod1" value="0.0"/>
   <PARAM id="warmSaturationMod2" value="0.0"/>
+  <PARAM id="filterKeyTrack"/>
+  <PARAM id="filterOversample"/>
+  <PARAM id="modFilter1KeyTrack"/>
+  <PARAM id="modFilter2KeyTrack"/>
+  <PARAM id="noiseType"/>
 </PARAMETERS>
