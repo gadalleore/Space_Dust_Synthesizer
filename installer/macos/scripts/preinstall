@@ -1,18 +1,35 @@
 #!/bin/bash
 #
-# Space Dust — preinstall script (attached to VST3 and Standalone components)
+# Space Dust — preinstall script (attached to the VST3 and Standalone components)
 #
-# Purpose: When the Standalone component package is being installed
-# (i.e. the user checked the "Standalone application" choice), remove
-# any existing "Space Dust.app" in the destination first.
-# This guarantees that the payload from this package is placed cleanly.
-# This is especially important on developer machines that often have
-# a manually copied/built copy of the app in /Applications for testing.
+# Purpose: make shipping a new installer a CLEAN REPLACE of the previous version
+# instead of a file-overlay. Before this package's payload is laid down, remove
+# the matching previously-installed bundle so that files which were renamed or
+# removed between versions leave no stale leftovers behind. This is the macOS
+# equivalent of the Windows installer's "auto-uninstall previous version on
+# update" (SpaceDust-Setup.iss / PrepareToInstall).
 #
-# It does nothing (no removal) when only the plugins choice is selected.
+# WHAT IT REMOVES (only the binaries this installer manages):
+#   - Standalone choice  -> /Applications/Space Dust.app
+#   - Plugins choice     -> the VST3 bundle AND the AU component (the AU package
+#                           carries no scripts of its own, and the two formats are
+#                           a single user-visible choice, so the VST3 preinstall
+#                           cleans both).
+#
+# WHAT IT DELIBERATELY NEVER TOUCHES:
+#   - ~/Documents/Space Dust/Presets and the user's config.xml  -> presets are
+#     ALWAYS preserved across updates (postinstall only adds missing factory
+#     presets; it never overwrites the user's).
+#   - "Space Dust Uninstaller.command" in /Applications -> the manual uninstaller
+#     is left alone here (its own package payload refreshes it). Removing the full
+#     install, including presets, remains an explicit customer action via that
+#     uninstaller.
+#
+# Runs with root privileges. Idempotent: rm -rf is safe if nothing is present
+# (fresh install) and safe to run for both components in one install session.
 #
 # Standard .pkg script arguments:
-#   $1  Volume mount point (target volume)
+#   $1  Volume mount point (target volume, usually "/")
 #   $2  Full path to the package being installed (the component .pkg)
 #   $3  Installation destination for this component (e.g. /Applications)
 #
@@ -23,9 +40,20 @@ TARGET_VOLUME="${1:-/}"
 PACKAGE_PATH="${2:-}"
 DESTINATION="${3:-/}"
 
+VOL="${TARGET_VOLUME%/}"   # "" when the target volume is "/"
+
 if [[ "$DESTINATION" == */Applications* ]]; then
-    echo "[Space Dust preinstall] Ensuring clean placement of Space Dust.app (removing any previous copy)..."
+    echo "[Space Dust preinstall] Clean-replacing Standalone app (removing any previous Space Dust.app)..."
     rm -rf "${DESTINATION}/Space Dust.app" 2>/dev/null || true
+
+elif [[ "$DESTINATION" == *Plug-Ins/VST3* ]]; then
+    echo "[Space Dust preinstall] Clean-replacing plug-ins (removing any previous VST3 + AU)..."
+    rm -rf "${DESTINATION}/Space Dust.vst3" 2>/dev/null || true
+    rm -rf "${VOL}/Library/Audio/Plug-Ins/Components/Space Dust.component" 2>/dev/null || true
 fi
+
+# NOTE: user presets (~/Documents/Space Dust) and config are intentionally NOT
+# removed here — updates always keep them. A full removal incl. presets is the
+# job of the separate "Space Dust Uninstaller.command", left unchanged.
 
 exit 0

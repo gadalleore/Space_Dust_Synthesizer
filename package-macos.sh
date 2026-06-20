@@ -278,7 +278,8 @@ else
     echo "[Package] --skip-presets: leaving installer/macos/scripts/Presets untouched."
 fi
 
-# Ensure postinstall is executable (git may have dropped the bit)
+# Ensure the install scripts are executable (git may have dropped the bit)
+chmod +x installer/macos/scripts/preinstall  2>/dev/null || true
 chmod +x installer/macos/scripts/postinstall 2>/dev/null || true
 
 # --- Build the component packages (VST3, AU, Standalone, Uninstaller) ---------
