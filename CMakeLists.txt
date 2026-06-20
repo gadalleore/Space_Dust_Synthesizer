@@ -13,7 +13,7 @@ if(CMAKE_HOST_APPLE)
     endif()
 endif()
 
-project(SpaceDust VERSION 1.0.4)
+project(SpaceDust VERSION 1.0.5)
 
 # --- Windows: statically link the MSVC C Run-Time (CRT) ---
 # Bakes VCRUNTIME140/MSVCP140 into the binaries so the plugin loads on a clean
@@ -53,7 +53,7 @@ juce_add_plugin(SpaceDust
     PRODUCT_NAME "Space Dust"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/AppIcon.png"
     DESCRIPTION "Cosmic particles of sound"
-    VERSION 1.0.4
+    VERSION 1.0.5
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
