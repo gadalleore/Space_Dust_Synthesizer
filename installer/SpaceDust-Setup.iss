@@ -18,8 +18,13 @@
 #define MyAppVersion    "1.0"
 #define MyPublisher     "63C"
 #define MyAppCopyright  "Copyright (c) 2026 63C"
-; Stable AppId keeps upgrade/uninstall registration consistent across releases.
-#define MyAppId         "{{E4B2C9A1-7F3D-4E8B-9C2A-1D5E6F708192}"
+; Stable GUID keeps upgrade/uninstall registration consistent across releases.
+; MyAppId doubles the leading brace ({{) so AppId={#MyAppId} in [Setup] resolves to
+; a single-brace GUID. MyAppGuid is the raw GUID reused in [Code] to locate the
+; previously-installed version's uninstaller (HKLM ...\Uninstall\{GUID}_is1) so a
+; new installer can cleanly remove the old version before installing.
+#define MyAppGuid       "E4B2C9A1-7F3D-4E8B-9C2A-1D5E6F708192"
+#define MyAppId         "{{" + MyAppGuid + "}"
 
 [Setup]
 ; --- Identity & version -------------------------------------------------------
@@ -348,6 +353,50 @@ begin
     AppendPresetsReadmeAllUsersNote(PresetPath);
 end;
 
+(* ================= UPGRADE: remove the previous version =================== *)
+
+(* Returns the previously-installed version's uninstaller command (or '' if none).
+   Inno records every install under HKLM/HKCU ...\Uninstall\{AppId}_is1; because
+   AppId is a stable GUID, every release shares this key, so a new installer can
+   always find the old one. {#MyAppGuid} is emitted by ISPP as the raw GUID; the
+   surrounding '{' .. '}' literals rebuild the single-brace key Inno actually wrote. *)
+function PreviousUninstaller(): string;
+var
+  Subkey, S: string;
+begin
+  Result := '';
+  Subkey := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{' + '{#MyAppGuid}' + '}_is1';
+  if RegQueryStringValue(HKLM, Subkey, 'UninstallString', S) then
+    Result := S
+  else if RegQueryStringValue(HKCU, Subkey, 'UninstallString', S) then
+    Result := S;
+end;
+
+(* Inno calls this after the wizard, just before files are copied. We run the old
+   version's uninstaller SILENTLY so shipping a new installer is a clean replace
+   (no stale leftovers from renamed/removed files) instead of an overlay. /VERYSILENT
+   suppresses the old uninstaller's preset-removal dialog AND keeps its "remove
+   presets" checkbox unticked (see the UninstallSilent guard in InitializeUninstall),
+   so an UPDATE never deletes the user's presets. Combined with onlyifdoesntexist on
+   the [Files] presets, every factory/user preset survives an update untouched.
+   Non-fatal: if the old uninstaller is missing or won't launch, Inno just installs
+   over the top. ewWaitUntilTerminated blocks until the uninstall finishes so the
+   removal and the fresh install never race. *)
+function PrepareToInstall(var NeedsRestart: Boolean): string;
+var
+  Uninstaller: string;
+  ResultCode: Integer;
+begin
+  Result := '';
+  Uninstaller := Trim(PreviousUninstaller());
+  if Uninstaller = '' then
+    Exit;   (* fresh install - nothing to remove *)
+  Uninstaller := RemoveQuotes(Uninstaller);
+  if FileExists(Uninstaller) then
+    Exec(Uninstaller, '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /NOCANCEL',
+         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 (* =============================== UNINSTALL ================================= *)
 
 (* Runs at the very start of uninstall - before [Registry]/[UninstallDelete] are
@@ -372,6 +421,13 @@ begin
 
   (* Nothing to offer if we don't know the folder or it's already gone. *)
   if (UninstallPresetsDir = '') or (not DirExists(UninstallPresetsDir)) then
+    Exit;
+
+  (* Silent uninstall = driven by a NEWER installer's upgrade step (PrepareToInstall
+     runs us with /VERYSILENT) or any command-line /SILENT. In that case never show
+     the prompt and leave UninstallRemovePresets = False, so an UPDATE always keeps
+     the user's presets. Manual uninstalls (no /SILENT) still get the opt-in dialog. *)
+  if UninstallSilent then
     Exit;
 
   (* (width, height, autosizeWidth=False, fixedHeight=True). No WizardForm exists in
