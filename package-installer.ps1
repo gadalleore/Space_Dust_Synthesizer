@@ -14,7 +14,8 @@
 #    If found, the installer is REFUSED - the binary is not safe to ship.
 # 4. Syncs factory presets from %USERPROFILE%\Documents\Space Dust\Presets
 #    into installer\Files\Presets\ so they ship with the installer.
-# 5. Runs ISCC.exe to compile installer\Output\SpaceDust-Synthesizer-1.0-Setup.exe.
+# 5. Runs ISCC.exe to compile installer\Output\SpaceDust-Synthesizer-<version>-Setup.exe
+#    (version comes from MyAppVersion in the .iss).
 #
 # Flags:
 #   -SkipBuild         Reuse the existing VST3 artifact (faster iteration).
@@ -343,7 +344,16 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # ── Step 5: Report ────────────────────────────────────────────────────────
-$exe = "installer\Output\SpaceDust-Synthesizer-1.0-Setup.exe"
+# Derive the version from the .iss (MyAppVersion) so the output filename tracks
+# version bumps automatically — OutputBaseFilename is SpaceDust-Synthesizer-{ver}-Setup.
+$appVersion = (Select-String -Path "installer\SpaceDust-Setup.iss" `
+    -Pattern '#define\s+MyAppVersion\s+"([^"]+)"' |
+    Select-Object -First 1).Matches[0].Groups[1].Value
+if (-not $appVersion) {
+    Write-Host "[Package] Could not parse MyAppVersion from the .iss; defaulting to 1.0." -ForegroundColor Yellow
+    $appVersion = "1.0"
+}
+$exe = "installer\Output\SpaceDust-Synthesizer-$appVersion-Setup.exe"
 if (Test-Path $exe) {
     # Sign the installer the user downloads from Gumroad - this is the binary
     # SmartScreen judges, so it matters most. (VST3 inside was already signed.)
