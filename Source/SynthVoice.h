@@ -6,6 +6,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include "NonlinearSVF.h" // Self-oscillating state-variable filter (master + mod filters)
 #include "OversampledStage.h" // Per-sample oversampling wrapper for the nonlinear master filter
+#include "RetargetableADSR.h" // juce::ADSR-faithful envelope + live release retargeting
 #include "SynthSound.h"   // Kept for build compatibility (some headers still include it indirectly)
 #include <array>
 #include <numeric>
@@ -378,7 +379,7 @@ private:
     bool modFilter2KeyTrack = false;
     
     // -- Filter Envelope (ADSR) --
-    juce::ADSR filterAdsr;            // Filter envelope processor
+    RetargetableADSR filterAdsr;     // Filter envelope (juce::ADSR-faithful + live release retarget)
     float filterEnvAttackTime = 0.01f;   // Attack time (0.01-20.0s, skewed)
     float filterEnvDecayTime = 0.8f;     // Decay time (0.01-20.0s, skewed)
     float filterEnvSustainLevel = 0.7f;  // Sustain level (0.0-1.0, linear)
@@ -389,7 +390,7 @@ private:
     // Using JUCE's built-in ADSR for reliable, professional envelope behavior.
     // This provides proper 4-stage envelope: Attack → Decay → Sustain → Release
     // with smooth transitions and proper parameter handling.
-    juce::ADSR adsr;                   // JUCE's ADSR envelope processor
+    RetargetableADSR adsr;             // Amp envelope (juce::ADSR-faithful + live release retarget)
     
     // ADSR timing parameters (in seconds) - stored for parameter updates
     float envAttackTime = 0.1f;        // Attack time (0.01-20.0s, skewed)
@@ -398,12 +399,15 @@ private:
     float envReleaseTime = 0.2f;        // Release time (0.01-20.0s, skewed) - long cosmic tails!
     
     // Last values actually pushed into the ADSRs. We update voice parameters every
-    // processBlock, but juce::ADSR::setParameters() recomputes releaseRate from the
-    // sustain level (sustain/(release*sr)); with a low/zero sustain that rate is <= 0
-    // and recalculateRates() forces the envelope straight to idle — cutting off the
-    // release tail mid-flight. So we only re-push when a value truly changed, leaving
-    // an in-progress release (whose rate noteOff() derived from the live level) alone.
-    // Sentinel -1.0f guarantees the first real update is applied.
+    // processBlock, but a full setParameters() recomputes releaseRate from the sustain
+    // level (sustain/(release*sr)); with a low/zero sustain that rate is <= 0 and
+    // recalculateRates() forces the envelope straight to idle — cutting off the release
+    // tail mid-flight. So we only re-push when a value truly changed, and while a voice
+    // is IN release we never call setParameters(): instead we retarget the live tail via
+    // RetargetableADSR::setReleaseRetainingLevel() (re-derives the slope from the current
+    // level), so changing Release re-shapes the ringing note click-free. lastAdsrRelease
+    // tracks that retarget; the other lastAdsr* stay put so deferred Attack/Decay/Sustain
+    // apply on the next note. Sentinel -1.0f guarantees the first real update is applied.
     float lastAdsrAttack = -1.0f, lastAdsrDecay = -1.0f, lastAdsrSustain = -1.0f, lastAdsrRelease = -1.0f;
     float lastFilterAdsrAttack = -1.0f, lastFilterAdsrDecay = -1.0f, lastFilterAdsrSustain = -1.0f, lastFilterAdsrRelease = -1.0f;
 
