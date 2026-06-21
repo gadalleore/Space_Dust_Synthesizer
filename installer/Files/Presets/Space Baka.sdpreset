@@ -191,7 +191,7 @@
   <PARAM id="tranceGateStep9" value="1.0"/>
   <PARAM id="tranceGateSteps" value="1.0"/>
   <PARAM id="tranceGateSync" value="1.0"/>
-  <PARAM id="transientCoarse" value="14.0"/>
+  <PARAM id="transientCoarse" value="12.0"/>
   <PARAM id="transientEnabled" value="1.0"/>
   <PARAM id="transientKaDonk" value="0.0"/>
   <PARAM id="transientLength" value="0.3999999761581421"/>
