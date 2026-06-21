@@ -13,7 +13,7 @@ if(CMAKE_HOST_APPLE)
     endif()
 endif()
 
-project(SpaceDust VERSION 1.0.5)
+project(SpaceDust VERSION 1.0.6)
 
 # --- Windows: statically link the MSVC C Run-Time (CRT) ---
 # Bakes VCRUNTIME140/MSVCP140 into the binaries so the plugin loads on a clean
@@ -43,17 +43,27 @@ else()
 endif()
 
 # Create the plugin
+# ASan builds: skip JUCE's VST3 auto-manifest step. It generates moduleinfo.json by
+# *executing* the freshly-built plugin, which aborts under ASan ("interceptors loaded
+# too late") since the helper runs without DYLD_INSERT_LIBRARIES. Ableton 10 predates
+# moduleinfo and scans the plugin the old way, so skipping it is harmless for testing.
+set(SPACEDUST_VST3_AUTO_MANIFEST TRUE)
+if(ENABLE_ASAN)
+    set(SPACEDUST_VST3_AUTO_MANIFEST FALSE)
+endif()
+
 juce_add_plugin(SpaceDust
     COMPANY_NAME "63C"
     PLUGIN_NAME "Space Dust"
     PLUGIN_MANUFACTURER_CODE YcPl
     PLUGIN_CODE SpDs
     FORMATS VST3 AU Standalone
+    VST3_AUTO_MANIFEST ${SPACEDUST_VST3_AUTO_MANIFEST}
     BUNDLE_ID "com.63c.SpaceDust"
     PRODUCT_NAME "Space Dust"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/AppIcon.png"
     DESCRIPTION "Cosmic particles of sound"
-    VERSION 1.0.5
+    VERSION 1.0.6
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
@@ -201,8 +211,46 @@ if(ENABLE_ASAN)
         target_link_options(SpaceDust PRIVATE -fsanitize=address)
         target_compile_definitions(SpaceDust PRIVATE SPACEDUST_ASAN=1)
         message(STATUS "AddressSanitizer ENABLED for SpaceDust target (Clang/GCC).")
+
+        # The plugin FORMAT wrapper targets (VST3, AU) link the instrumented shared
+        # code but SpaceDust's -fsanitize=address is PRIVATE and does not propagate.
+        # The final .vst3/.component binary must itself be compiled+linked with ASan
+        # so the runtime is embedded — this lets us load the plugin into Ableton and
+        # catch the host-driven OOB write that the standalone/harness cannot reach.
+        # (Standalone is handled in its own block below.)
+        foreach(_fmt SpaceDust_VST3 SpaceDust_AU)
+            if(TARGET ${_fmt})
+                target_compile_options(${_fmt} PRIVATE
+                    -fsanitize=address -fno-omit-frame-pointer -g)
+                target_link_options(${_fmt} PRIVATE -fsanitize=address)
+                message(STATUS "AddressSanitizer ENABLED for ${_fmt} (Clang/GCC).")
+            endif()
+        endforeach()
     else()
         message(WARNING "ENABLE_ASAN: unrecognized compiler; ignored.")
+    endif()
+endif()
+
+#==============================================================================
+# ThreadSanitizer (TSan) — finds DATA RACES that ASan cannot see (races on
+# already-allocated memory, e.g. the audio thread vs the message thread).
+# Mutually exclusive with ASan. Applied to the shared code + the stress harness
+# only (not the format wrappers — TSan + a real editor is too noisy).
+# Configure with: cmake -B build-tsan -DENABLE_TSAN=ON
+#==============================================================================
+option(ENABLE_TSAN "Build with ThreadSanitizer (clang -fsanitize=thread)" OFF)
+if(ENABLE_TSAN)
+    if(ENABLE_ASAN)
+        message(FATAL_ERROR "ENABLE_TSAN and ENABLE_ASAN are mutually exclusive.")
+    endif()
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(SpaceDust PRIVATE
+            -fsanitize=thread -fno-omit-frame-pointer -g)
+        target_link_options(SpaceDust PRIVATE -fsanitize=thread)
+        target_compile_definitions(SpaceDust PRIVATE SPACEDUST_TSAN=1)
+        message(STATUS "ThreadSanitizer ENABLED for SpaceDust target (Clang/GCC).")
+    else()
+        message(WARNING "ENABLE_TSAN: unrecognized compiler; ignored.")
     endif()
 endif()
 
@@ -277,6 +325,19 @@ if(TARGET SpaceDust_Standalone)
     target_sources(SpaceDust_Standalone PRIVATE Source/StandaloneApp.cpp)
     target_compile_definitions(SpaceDust_Standalone PRIVATE JUCE_USE_CUSTOM_PLUGIN_STANDALONE_APP=1)
     message(STATUS "Standalone: custom app with auto MIDI-input detection ENABLED.")
+
+    # When ASan is on, the SpaceDust shared code is instrumented but its
+    # -fsanitize=address is PRIVATE and does not propagate to this executable.
+    # The final Standalone binary must still be compiled+linked with ASan so the
+    # runtime is present and the wrapper/UI code is instrumented too — that lets
+    # us click through the REAL preset browser + UI under ASan to catch an OOB
+    # write the headless harness can't reach.
+    if(ENABLE_ASAN AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+        target_compile_options(SpaceDust_Standalone PRIVATE
+            -fsanitize=address -fno-omit-frame-pointer -g)
+        target_link_options(SpaceDust_Standalone PRIVATE -fsanitize=address)
+        message(STATUS "AddressSanitizer ENABLED for SpaceDust_Standalone (Clang/GCC).")
+    endif()
 endif()
 
 #==============================================================================
@@ -285,10 +346,19 @@ endif()
 # host-automation-flood heap corruption that pluginval/the editor can't trigger.
 # Build:  cmake -B build-asan -DENABLE_ASAN=ON ; cmake --build build-asan --target SpaceDustStress
 #==============================================================================
-if(ENABLE_ASAN)
+if(ENABLE_ASAN OR ENABLE_TSAN)
     juce_add_console_app(SpaceDustStress PRODUCT_NAME "SpaceDustStress")
     target_sources(SpaceDustStress PRIVATE tools/stress/stress_main.cpp)
-    if(MSVC)
+    # Source/ for PluginProcessor.h (preset sweep downcasts to SpaceDustAudioProcessor),
+    # and the factory preset folder so the sweep can load every .sdpreset.
+    target_include_directories(SpaceDustStress PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Source")
+    target_compile_definitions(SpaceDustStress PRIVATE
+        SPACEDUST_PRESET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/installer/Files/Presets")
+    if(ENABLE_TSAN)
+        target_compile_options(SpaceDustStress PRIVATE
+            -fsanitize=thread -fno-omit-frame-pointer -g)
+        target_link_options(SpaceDustStress PRIVATE -fsanitize=thread)
+    elseif(MSVC)
         target_compile_options(SpaceDustStress PRIVATE /fsanitize=address /Zi)
         target_link_options(SpaceDustStress PRIVATE /INCREMENTAL:NO)
         # Match SpaceDust's container-annotation setting so the ASan objects link.
@@ -317,5 +387,42 @@ if(ENABLE_ASAN)
         juce::juce_gui_basics
         juce::juce_gui_extra)
     message(STATUS "SpaceDustStress harness ENABLED (ASan).")
+endif()
+
+#==============================================================================
+# VST3-wrapper crash host (ASan builds only). Unlike SpaceDustStress (which calls
+# the processor directly) and the Standalone, this HOSTS the real .vst3 through
+# juce::VST3PluginFormat — exercising the VST3 wrapper + host state path that
+# Ableton uses. The host is itself ASan-instrumented so the runtime loads BEFORE
+# it dlopens the (also ASan) plugin: no "interceptors loaded too late" abort.
+# It deliberately does NOT link the SpaceDust shared lib (the code lives in the
+# dlopened .vst3) to avoid duplicate symbols.
+# Build:  cmake --build build-asan --target SpaceDustVST3Host
+#==============================================================================
+if(ENABLE_ASAN AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    juce_add_console_app(SpaceDustVST3Host PRODUCT_NAME "SpaceDustVST3Host")
+    target_sources(SpaceDustVST3Host PRIVATE tools/vst3host/vst3host_main.cpp)
+    target_compile_definitions(SpaceDustVST3Host PRIVATE
+        JUCE_PLUGINHOST_VST3=1
+        JUCE_MODAL_LOOPS_PERMITTED=0
+        SPACEDUST_PRESET_DIR="${CMAKE_CURRENT_SOURCE_DIR}/installer/Files/Presets"
+        SPACEDUST_VST3_PATH="${CMAKE_CURRENT_BINARY_DIR}/SpaceDust_artefacts/RelWithDebInfo/VST3/Space Dust.vst3")
+    target_compile_options(SpaceDustVST3Host PRIVATE
+        -fsanitize=address -fno-omit-frame-pointer -g)
+    target_link_options(SpaceDustVST3Host PRIVATE -fsanitize=address)
+    target_link_libraries(SpaceDustVST3Host PRIVATE
+        juce::juce_audio_basics
+        juce::juce_audio_devices
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        juce::juce_gui_extra)
+    message(STATUS "SpaceDustVST3Host ENABLED (ASan, hosts the real VST3).")
 endif()
 

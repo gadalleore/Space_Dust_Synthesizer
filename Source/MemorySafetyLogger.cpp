@@ -17,6 +17,8 @@
  #include <windows.h>
  #include <DbgHelp.h>
  #pragma comment (lib, "DbgHelp.lib")
+#else
+ #include <unistd.h>   // getpid() on macOS / Linux (Windows gets it from <windows.h>)
 #endif
 
 namespace spacedust

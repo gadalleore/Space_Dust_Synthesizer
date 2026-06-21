@@ -4,6 +4,7 @@ Build/
 build-safety/
 build-release/
 build-asan/
+build-tsan/
 *.build/
 
 # Local crash reports — contain machine/user info; never commit to a public repo

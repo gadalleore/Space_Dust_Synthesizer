@@ -860,12 +860,19 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         tranceGate_.prepare(reverbSpec);
         tranceGate_.reset();
 
-        // Initialize goniometer buffers (double-buffered for Spectral tab Lissajous display)
-        const int gonioSamples = juce::jmin(goniometerMaxSamples, samplesPerBlock);
-        goniometerBuffer[0].setSize(2, gonioSamples, false, true, true);
-        goniometerBuffer[1].setSize(2, gonioSamples, false, true, true);
+        // Initialize goniometer buffers (double-buffered for Spectral tab Lissajous display).
+        // Size them to the FIXED maximum (not samplesPerBlock): the editor's paint thread
+        // holds a reference returned by getGoniometerBuffer() and reads up to validSamples.
+        // If prepareToPlay reallocated these (host changing buffer size / sample rate while
+        // the Spectral tab is visible) the in-flight paint would read freed memory. A fixed
+        // capacity means setSize never reallocates after the first prepare, so the pointer
+        // the paint thread holds stays valid for the process lifetime. Writes copy at most
+        // this many samples (see processBlock), so the buffer is never overrun.
+        goniometerBuffer[0].setSize(2, goniometerMaxSamples, false, true, true);
+        goniometerBuffer[1].setSize(2, goniometerMaxSamples, false, true, true);
         goniometerBuffer[0].clear();
         goniometerBuffer[1].clear();
+        goniometerValidSamples.store(0, std::memory_order_release);
         goniometerReadIndex.store(0);
         
         DBG("Space Dust: prepareToPlay - Step 4: Sample rate set to " + safeStringFromNumber(sampleRate));
@@ -2812,13 +2819,16 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         const int readIdx = goniometerReadIndex.load(std::memory_order_relaxed);
         const int writeIdx = 1 - readIdx;
         auto& dest = goniometerBuffer[writeIdx];
-        if (dest.getNumChannels() >= 2 && dest.getNumSamples() >= numSamples)
+        // Buffers are fixed at goniometerMaxSamples; clamp the copy so a block larger
+        // than that capacity (host block-size violation) can never overrun the buffer.
+        const int copyN = juce::jmin(numSamples, dest.getNumSamples());
+        if (dest.getNumChannels() >= 2 && copyN > 0)
         {
-            dest.copyFrom(0, 0, buffer, 0, 0, numSamples);
-            dest.copyFrom(1, 0, buffer, 1, 0, numSamples);
-            if (numSamples < dest.getNumSamples())
-                dest.clear(numSamples, dest.getNumSamples() - numSamples);
-            goniometerValidSamples.store(numSamples, std::memory_order_release);
+            dest.copyFrom(0, 0, buffer, 0, 0, copyN);
+            dest.copyFrom(1, 0, buffer, 1, 0, copyN);
+            if (copyN < dest.getNumSamples())
+                dest.clear(copyN, dest.getNumSamples() - copyN);
+            goniometerValidSamples.store(copyN, std::memory_order_release);
             goniometerReadIndex.store(writeIdx, std::memory_order_release);
         }
     }

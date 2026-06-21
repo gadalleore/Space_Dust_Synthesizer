@@ -26,7 +26,10 @@
 #include <atomic>
 #include <thread>
 #include <cstdio>
+#include <cstdlib>
 #include <map>
+
+#include "PluginProcessor.h"   // SpaceDustAudioProcessor — preset sweep needs getValueTreeState()
 
 // Defined in the plugin's shared code (PluginProcessor.cpp).
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter();
@@ -120,6 +123,36 @@ int main()
         if (it != byId.end() && it->second != nullptr) it->second->setValueNotifyingHost (v);
     };
 
+    // Downcast for preset loading (replaceState — the UI's preset-flip path) and
+    // pre-parse every factory preset into a ValueTree once. Declared here so the
+    // editor-race lambda below can also flip presets while the editor is open.
+    auto* sdProc = dynamic_cast<SpaceDustAudioProcessor*> (proc.get());
+    juce::Array<juce::ValueTree> presetStates;
+    juce::StringArray presetNames;
+    if (sdProc != nullptr)
+    {
+        juce::File presetDir { juce::String (SPACEDUST_PRESET_DIR) };
+        juce::Array<juce::File> files;
+        presetDir.findChildFiles (files, juce::File::findFiles, false, "*.sdpreset");
+        files.sort();
+        const auto rootType = sdProc->getValueTreeState().state.getType();
+        for (auto& f : files)
+        {
+            auto xml = juce::XmlDocument::parse (f);
+            if (xml != nullptr && xml->hasTagName (rootType))
+            {
+                presetStates.add (juce::ValueTree::fromXml (*xml));
+                presetNames.add (f.getFileNameWithoutExtension());
+            }
+        }
+        std::printf ("Loaded %d factory preset states from %s\n",
+                     presetStates.size(), SPACEDUST_PRESET_DIR);
+    }
+    else
+    {
+        std::puts ("(processor is not SpaceDustAudioProcessor — preset sweep skipped)");
+    }
+
     // ---------------------------------------------------------------------
     //  EDITOR RACE: the user crashed while EDITING the Trance Gate with the plugin
     //  WINDOW OPEN under heavy automation. The headless harness never had an editor,
@@ -170,6 +203,16 @@ int main()
             if (tabs != nullptr && numTabs > 0)
                 tabs->setCurrentTabIndex ((tabTick++) % numTabs);
 
+            // FLIP A PRESET with the editor open — the user's exact repro. replaceState
+            // drives every parameter-attachment update + dependent resized() (trance-gate
+            // step buttons, reverb-filter show/hide) on this (message) thread, while the
+            // audio thread renders notes AND the visualizer timers read the spectrum/gonio
+            // FIFOs during paint. This is the full "flip presets + play notes, window open"
+            // surface the headless lockstep/race sweeps could not exercise.
+            if (sdProc != nullptr && ! presetStates.isEmpty() && (tabTick % 2) == 0)
+                sdProc->getValueTreeState().replaceState (
+                    presetStates.getReference (rng.nextInt (presetStates.size())).createCopy());
+
             // Heavy automation from the message thread (like the host + UI both moving params).
             for (int c = 0; c < 20; ++c)
                 if (auto* p = params[rng.nextInt (params.size())]) p->setValueNotifyingHost (rng.nextFloat());
@@ -197,6 +240,20 @@ int main()
             setIdNotify ("reverbFilterLPResonance", rng.nextFloat());
             setIdNotify ("reverbDecayTime", rng.nextFloat());
             setIdNotify ("reverbWetMix", rng.nextFloat());
+
+            // OFFSCREEN PAINT — the crash fired inside a paint (drawLabel -> drawText).
+            // Headless, the editor has no window so isShowing() is false and nothing
+            // ever paints; force it. paintEntireComponent runs paint() on the current
+            // tab's whole tree, INCLUDING SpectralPageComponent::paint -> drawLissajous
+            // reading the goniometer buffer the audio thread is concurrently writing,
+            // and every drawLabel/drawText. This recreates the exact paint-thread
+            // activity that detected the heap corruption in the live session.
+            if (editor->getWidth() > 0 && editor->getHeight() > 0)
+            {
+                juce::Image img (juce::Image::ARGB, editor->getWidth(), editor->getHeight(), true);
+                juce::Graphics g (img);
+                editor->paintEntireComponent (g, false);
+            }
 
             // Pump the native message queue so JUCE's async attachment updates +
             // combo onChange/resized() actually run (this thread is the message thread).
@@ -226,9 +283,202 @@ int main()
         proc->releaseResources();
     };
 
+    // ---------------------------------------------------------------------
+    //  PRESET SWEEP: the user crashed while FLIPPING THROUGH PRESETS and
+    //  playing a couple of notes on each. Flipping a preset in the plugin's
+    //  browser calls PresetManager::loadPreset -> apvts.replaceState(...),
+    //  which slams in a whole COORDINATED, often EXTREME combination of
+    //  parameter values at once (a combination the random per-parameter flood
+    //  above may never produce together) — then a note is played into exactly
+    //  that state. Two variants:
+    //    (1) deterministic lockstep — replaceState(preset) then render many
+    //        note-blocks, in order, no race. Catches a preset-value-driven OOB
+    //        cleanly and reproducibly under ASan.
+    //    (2) cross-thread race — audio thread renders+plays notes while THIS
+    //        (message) thread flips presets, exactly like the live UI.
+    // ---------------------------------------------------------------------
+    // (1) Deterministic lockstep: apply each preset, then render note-blocks.
+    auto runPresetSweepLockstep = [&] (double sr, int blockSize, int blocksPerPreset, juce::uint32 seed)
+    {
+        if (presetStates.isEmpty()) return;
+        proc->setRateAndBufferSizeDetails (sr, blockSize);
+        proc->prepareToPlay (sr, blockSize);
+        juce::AudioBuffer<float> buf (2, blockSize);
+        juce::Random rng (seed);
+
+        auto& vts = sdProc->getValueTreeState();
+        for (int pi = 0; pi < presetStates.size(); ++pi)
+        {
+            // The exact UI preset-flip: whole-tree swap on the message thread.
+            vts.replaceState (presetStates.getReference (pi).createCopy());
+
+            for (int b = 0; b < blocksPerPreset; ++b)
+            {
+                buf.clear();
+                juce::MidiBuffer midi;
+                // "a couple of notes on each one"
+                if ((b % 4) == 0)
+                    midi.addEvent (juce::MidiMessage::noteOn (1, 36 + rng.nextInt (60),
+                                                              (juce::uint8) (60 + rng.nextInt (60))),
+                                   rng.nextInt (blockSize));
+                if ((b % 9) == 0)
+                    midi.addEvent (juce::MidiMessage::noteOff (1, 36 + rng.nextInt (60)),
+                                   rng.nextInt (blockSize));
+                proc->processBlock (buf, midi);
+            }
+        }
+        proc->releaseResources();
+    };
+
+    // (2) Cross-thread race: audio renders+notes; message thread flips presets.
+    auto runPresetSweepRace = [&] (int blockSize, int rounds, juce::uint32 seed)
+    {
+        if (presetStates.isEmpty()) return;
+        proc->setRateAndBufferSizeDetails (sampleRate, blockSize);
+        proc->prepareToPlay (sampleRate, blockSize);
+
+        std::atomic<bool> running { true };
+        std::thread audioThread ([&]
+        {
+            juce::AudioBuffer<float> buf (2, blockSize);
+            juce::Random arng (seed ^ 0xA17D);
+            int ctr = 0;
+            while (running.load (std::memory_order_relaxed))
+            {
+                buf.clear();
+                juce::MidiBuffer midi;
+                if ((ctr % 3) == 0)
+                    midi.addEvent (juce::MidiMessage::noteOn (1, 36 + arng.nextInt (60),
+                                                              (juce::uint8) 100),
+                                   arng.nextInt (blockSize));
+                if ((ctr % 7) == 0)
+                    midi.addEvent (juce::MidiMessage::noteOff (1, 36 + arng.nextInt (60)),
+                                   arng.nextInt (blockSize));
+                proc->processBlock (buf, midi);
+                ++ctr;
+            }
+        });
+
+        auto& vts = sdProc->getValueTreeState();
+        juce::Random rng (seed);
+        for (int r = 0; r < rounds; ++r)
+            for (int pi = 0; pi < presetStates.size(); ++pi)
+                vts.replaceState (presetStates.getReference (rng.nextInt (presetStates.size())).createCopy());
+
+        running = false;
+        audioThread.join();
+        proc->releaseResources();
+    };
+
+    // (3) AUTOMATION + PRESET race — the ThreadSanitizer target. Ableton applies
+    // parameter automation ON THE AUDIO THREAD (the VST3/AU param queue is drained
+    // inside processBlock), firing parameterChanged on the audio thread — something
+    // neither the headless flood nor the standalone ever did. Here the AUDIO thread
+    // applies automation (setValue) + renders notes, WHILE the MESSAGE thread flips
+    // presets (replaceState) + floods params. No editor (keeps TSan output focused on
+    // the DSP/parameter shared state). Run under -fsanitize=thread to surface a data
+    // race ASan structurally cannot see.
+    auto runAutomationPresetRace = [&] (int blockSize, int seconds, juce::uint32 seed)
+    {
+        if (presetStates.isEmpty()) return;
+        proc->setRateAndBufferSizeDetails (sampleRate, blockSize);
+        proc->prepareToPlay (sampleRate, blockSize);
+        const auto& ps = proc->getParameters();
+
+        std::atomic<bool> running { true };
+        std::thread audioThread ([&]
+        {
+            juce::AudioBuffer<float> buf (2, blockSize);
+            juce::Random arng (seed ^ 0xA070u);
+            int ctr = 0;
+            while (running.load (std::memory_order_relaxed))
+            {
+                // Host-style automation drained on the audio thread before render.
+                for (int c = 0; c < 12; ++c)
+                    if (auto* p = ps[arng.nextInt (ps.size())]) p->setValue (arng.nextFloat());
+
+                buf.clear();
+                juce::MidiBuffer midi;
+                if ((ctr % 3) == 0)
+                    midi.addEvent (juce::MidiMessage::noteOn (1, 36 + arng.nextInt (60),
+                                                              (juce::uint8) 100), arng.nextInt (blockSize));
+                if ((ctr % 7) == 0)
+                    midi.addEvent (juce::MidiMessage::noteOff (1, 36 + arng.nextInt (60)),
+                                   arng.nextInt (blockSize));
+                proc->processBlock (buf, midi);
+                ++ctr;
+            }
+        });
+
+        auto& vts = sdProc->getValueTreeState();
+        juce::Random rng (seed);
+        const auto end = juce::Time::currentTimeMillis() + (juce::int64) seconds * 1000;
+        while (juce::Time::currentTimeMillis() < end)
+        {
+            vts.replaceState (presetStates.getReference (rng.nextInt (presetStates.size())).createCopy());
+            for (int c = 0; c < 12; ++c)
+                if (auto* p = ps[rng.nextInt (ps.size())]) p->setValueNotifyingHost (rng.nextFloat());
+        }
+
+        running = false;
+        audioThread.join();
+        proc->releaseResources();
+    };
+
+    // Focused mode: SPACEDUST_AUTOMATION_RACE=1 runs ONLY the automation+preset race
+    // (the ThreadSanitizer target) and exits.
+    if (std::getenv ("SPACEDUST_AUTOMATION_RACE") != nullptr)
+    {
+        for (int bs : { 64, 128, 256, 512 })
+        {
+            std::printf ("=== automation+preset race @ block %d ===\n", bs);
+            std::fflush (stdout);
+            runAutomationPresetRace (bs, 20, (juce::uint32) (bs * 7 + 1));
+        }
+        std::puts ("AUTOMATION RACE DONE - no sanitizer error.");
+        return 0;
+    }
+
+    // Focused mode: SPACEDUST_EDITOR_ONLY=1 runs just the editor+preset+paint race
+    // (window open, flip presets, play notes, paint every frame) and exits — the
+    // closest reproduction of the user's live crash. Run it long.
+    if (std::getenv ("SPACEDUST_EDITOR_ONLY") != nullptr)
+    {
+        for (int bs : { 64, 128, 256, 512 })
+        {
+            std::printf ("=== editor+preset+paint race @ block %d ===\n", bs);
+            std::fflush (stdout);
+            runEditorRace (bs, 30);
+        }
+        std::puts ("EDITOR RACE DONE - no AddressSanitizer error.");
+        return 0;
+    }
+
+    for (double srSweep : { 22050.0, 44100.0, 48000.0, 96000.0, 192000.0 })
+        for (int bs : { 32, 64, 128, 256, 512, 1024 })
+        {
+            std::printf ("=== preset sweep LOCKSTEP @ sr %.0f block %d ===\n", srSweep, bs);
+            runPresetSweepLockstep (srSweep, bs, 400, (juce::uint32) (bs + (int) srSweep));
+        }
+    for (juce::uint32 seed : { 0x9001u, 0x5050u, 0xF00Du })
+        for (int bs : { 64, 128, 256, 512 })
+        {
+            std::printf ("=== preset sweep RACE @ block %d seed %u ===\n", bs, seed);
+            std::fflush (stdout);
+            runPresetSweepRace (bs, 200, seed);
+        }
+
+    // Focused mode: SPACEDUST_PRESET_ONLY=1 runs just the preset sweeps (the
+    // user's flip-through-presets repro) and exits, skipping the long legacy passes.
+    if (std::getenv ("SPACEDUST_PRESET_ONLY") != nullptr)
+    {
+        std::puts ("PRESET SWEEP DONE - no AddressSanitizer error.");
+        return 0;
+    }
+
     for (int bs : { 64, 128, 256, 512 })
     {
-        std::printf ("=== editor race (Trance Gate) @ block %d ===\n", bs);
+        std::printf ("=== editor+preset+paint race @ block %d ===\n", bs);
         runEditorRace (bs, 12);
     }
 
