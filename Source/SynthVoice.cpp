@@ -1478,18 +1478,23 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // ±2 octaves = ±ln(4) ≈ ±1.386 in natural-log units (timbreLogScale cached above).
         const float timbreLogOffset = timbreBipolar * timbreLogScale;
 
-        // Glide- AND pitch-env-aware key-track for all three filters. The cutoff must
-        // follow the actual SOUNDING pitch (pitchForOscillators = glide + pitch env),
-        // not just the raw glide pitch — otherwise the filter snaps to the note while
-        // the pitch envelope is still bending the oscillators, so key-tracking lags the
-        // audible pitch sweep. pitchForOscillators == currentPitch when the env is idle,
-        // so the glide-only path is unchanged. When NEITHER glide nor pitch env is
-        // active we fall through to the static per-block value (bit-identical to before).
+        // Glide-, pitch-env-, AND MPE-pitch-bend-aware key-track for all three filters.
+        // The cutoff must follow the actual SOUNDING pitch, which is
+        // pitchForOscillators (glide + pitch env) × bendRatio (MPE per-note bend +
+        // manual UI bend) — exactly the frequency fed to the oscillators above. Without
+        // the bend term the filter snapped to the played key while a Seaboard glissando
+        // (or the manual bend slider) slid the oscillators, so key-tracking lagged the
+        // audible pitch. pitchForOscillators == currentPitch and bendRatio == 1.0 when
+        // nothing is moving, so the static per-block path below stays bit-identical to
+        // before (full backward compatibility for non-glide, non-bent, non-MPE notes).
         float keyTrackLogOffset  = keyTrackLogOffsetStatic;
         float keyTrackMultiplier = keyTrackMultiplierStatic;
-        if (anyKeyTrackOn && (glideDelta != 0.0 || pitchEnvShapingNow) && pitchForOscillators > 0.0)
+        if (anyKeyTrackOn
+            && (glideDelta != 0.0 || pitchEnvShapingNow || totalBendStBlock != 0.0)
+            && pitchForOscillators > 0.0)
         {
-            keyTrackMultiplier = static_cast<float>(pitchForOscillators / keyTrackRefHz);
+            const double soundingPitch = pitchForOscillators * bendRatio;
+            keyTrackMultiplier = static_cast<float>(soundingPitch / keyTrackRefHz);
             keyTrackLogOffset  = std::log(keyTrackMultiplier);
         }
 

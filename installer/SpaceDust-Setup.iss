@@ -15,7 +15,7 @@
 ; =============================================================================
 
 #define MyAppName       "Space Dust Synthesizer"
-#define MyAppVersion    "1.0.6"
+#define MyAppVersion    "1.0.7"
 #define MyPublisher     "63C"
 #define MyAppCopyright  "Copyright (c) 2026 63C"
 ; Stable GUID keeps upgrade/uninstall registration consistent across releases.
