@@ -308,6 +308,22 @@ private:
     int clippingHoldTicks = 0;
     static constexpr int clippingHoldDuration = 10;  // ~500ms at 50ms timer
 
+    // -- Unified glow meter level --
+    // Single per-frame snapshot of the averaged L/R output level driving ALL glow in the
+    // UI (group halos, edge glow, starfield, tab overlays). Computed ONCE per timer tick in
+    // timerCallback so every object in a given frame glows from the identical value. Reading
+    // the live atomics independently at each paint site let the audio thread update them
+    // mid paint-pass, so different objects sampled slightly different levels -> they appeared
+    // to glow at different rates. All glow sites now read this snapshot instead.
+    float glowMeterLevel_ = 0.0f;
+
+public:
+    /** Averaged (L+R)/2 output level [0,1] for glow, snapshotted once per timer tick.
+        All glow drawing must use this so every object glows consistently. */
+    float getGlowMeterLevel() const noexcept { return glowMeterLevel_; }
+
+private:
+
     // TooltipWindow required for setTooltip() to display (e.g. Pan labels)
     std::unique_ptr<juce::TooltipWindow> tooltipWindow;
 

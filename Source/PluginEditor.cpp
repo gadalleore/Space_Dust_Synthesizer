@@ -290,8 +290,7 @@ public:
         const int oh = getHeight();
         if (w <= 0 || oh <= 0) return;
 
-        float avgLevel = 0.5f * (editor.audioProcessor.getLeftPeakLevel() + editor.audioProcessor.getRightPeakLevel());
-        avgLevel = juce::jmin(1.0f, avgLevel);
+        float avgLevel = editor.getGlowMeterLevel();  // single per-frame averaged L/R snapshot
         const bool isRed = (editor.clippingHoldTicks > 0);
         // 50% more subtle on tabs: scale down alpha
         juce::uint8 peakAlpha = static_cast<juce::uint8>(juce::jlimit(0, 255, static_cast<int>((6 + 60 * avgLevel) * 0.5f)));
@@ -350,8 +349,7 @@ public:
         const int oh = getHeight();
         if (w <= 0 || oh <= 0) return;
 
-        float avgLevel = 0.5f * (editor.audioProcessor.getLeftPeakLevel() + editor.audioProcessor.getRightPeakLevel());
-        avgLevel = juce::jmin(1.0f, avgLevel);
+        float avgLevel = editor.getGlowMeterLevel();  // single per-frame averaged L/R snapshot
         const bool isRed = (editor.clippingHoldTicks > 0);
         // 50% more subtle on tabs: scale down alpha
         juce::uint8 peakAlpha = static_cast<juce::uint8>(juce::jlimit(0, 255, static_cast<int>((6 + 60 * avgLevel) * 0.5f)));
@@ -651,8 +649,7 @@ void MainPageComponent::updateSubOscVisibility()
 void MainPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
-    float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
-    avgLevel = juce::jmin(1.0f, avgLevel);
+    float avgLevel = parentEditor.getGlowMeterLevel();  // single per-frame averaged L/R snapshot
     drawStarfield(g, getWidth(), getHeight(), avgLevel);
     const int baseAlpha = 8 + static_cast<int>(44.0f * avgLevel);
     drawGlows(g, baseAlpha, meterLinkedGroupGlowHue(parentEditor.clippingHoldTicks > 0),
@@ -1241,8 +1238,7 @@ void ModulationPageComponent::parameterChanged(const juce::String& parameterID, 
 void ModulationPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
-    float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
-    avgLevel = juce::jmin(1.0f, avgLevel);
+    float avgLevel = parentEditor.getGlowMeterLevel();  // single per-frame averaged L/R snapshot
     drawStarfield(g, getWidth(), getHeight(), avgLevel);
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
     drawGlows(g, baseAlpha, meterLinkedGroupGlowHue(parentEditor.clippingHoldTicks > 0),
@@ -1937,8 +1933,7 @@ void EffectsPageComponent::updateReverbFilterVisibility()
 void EffectsPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
-    float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
-    avgLevel = juce::jmin(1.0f, avgLevel);
+    float avgLevel = parentEditor.getGlowMeterLevel();  // single per-frame averaged L/R snapshot
     drawStarfield(g, getWidth(), getHeight(), avgLevel);
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
     drawGlows(g, baseAlpha, meterLinkedGroupGlowHue(parentEditor.clippingHoldTicks > 0),
@@ -2513,8 +2508,7 @@ SaturationColorPageComponent::SaturationColorPageComponent(SpaceDustAudioProcess
 void SaturationColorPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
-    float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
-    avgLevel = juce::jmin(1.0f, avgLevel);
+    float avgLevel = parentEditor.getGlowMeterLevel();  // single per-frame averaged L/R snapshot
     drawStarfield(g, getWidth(), getHeight(), avgLevel);
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
     drawGlows(g, baseAlpha, meterLinkedGroupGlowHue(parentEditor.clippingHoldTicks > 0), { &parentEditor.bitCrusherGroup, &parentEditor.compressorGroup, &parentEditor.softClipperGroup, &parentEditor.lofiGroup, &parentEditor.transientGroup, &parentEditor.finalEQGroup });
@@ -2722,8 +2716,7 @@ SpectralPageComponent::GlowOverlayComponent::GlowOverlayComponent(SpectralPageCo
 
 void SpectralPageComponent::GlowOverlayComponent::paint(juce::Graphics& g)
 {
-    float avgLevel = 0.5f * (pageRef.parentEditor.audioProcessor.getLeftPeakLevel() + pageRef.parentEditor.audioProcessor.getRightPeakLevel());
-    avgLevel = juce::jmin(1.0f, avgLevel);
+    float avgLevel = pageRef.parentEditor.getGlowMeterLevel();  // single per-frame averaged L/R snapshot
     const int baseAlpha = 8 + static_cast<int>(44.0f * avgLevel);
     drawGlows(g, baseAlpha, meterLinkedGroupGlowHue(pageRef.parentEditor.clippingHoldTicks > 0),
         { &pageRef.goniometerGroup, &pageRef.oscilloscopeGroup, &pageRef.spectrumGroup });
@@ -2760,8 +2753,7 @@ SpectralPageComponent::SpectralPageComponent(SpaceDustAudioProcessorEditor& edit
 void SpectralPageComponent::paint(juce::Graphics& g)
 {
     g.fillAll(juce::Colour(0xff0a0a1f));
-    float avgLevel = 0.5f * (parentEditor.audioProcessor.getLeftPeakLevel() + parentEditor.audioProcessor.getRightPeakLevel());
-    avgLevel = juce::jmin(1.0f, avgLevel);
+    float avgLevel = parentEditor.getGlowMeterLevel();  // single per-frame averaged L/R snapshot
     drawStarfield(g, getWidth(), getHeight(), avgLevel);
     if (!lissajousDrawArea.isEmpty())
         drawLissajous(g, lissajousDrawArea, parentEditor.audioProcessor.getGoniometerBuffer(),
@@ -6034,12 +6026,17 @@ void SpaceDustAudioProcessorEditor::timerCallback()
         }
     }
     
-    // Update stereo level meters and box glow (glow brightness follows output level)
-    if (stereoLevelMeter != nullptr && !isBeingDestroyed.load())
+    // Snapshot the averaged L/R output level ONCE per frame so every glow site reads the
+    // identical value. (Reading the live atomics at each paint site let the audio thread
+    // update them mid paint-pass -> objects glowed at slightly different rates.)
     {
-        float leftPeak = audioProcessor.getLeftPeakLevel();
+        float leftPeak  = audioProcessor.getLeftPeakLevel();
         float rightPeak = audioProcessor.getRightPeakLevel();
-        stereoLevelMeter->updateLevels(leftPeak, rightPeak);
+        glowMeterLevel_ = juce::jmin(1.0f, 0.5f * (leftPeak + rightPeak));
+
+        // Update stereo level meters (glow brightness follows output level)
+        if (stereoLevelMeter != nullptr && !isBeingDestroyed.load())
+            stereoLevelMeter->updateLevels(leftPeak, rightPeak);
     }
     // Update clipping hold state (runs every tick regardless of active tab)
     {
@@ -6124,9 +6121,7 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
 
     g.fillAll(juce::Colour(0xff0a0a1f));
     {
-        float starLevel = 0.5f * (audioProcessor.getLeftPeakLevel() + audioProcessor.getRightPeakLevel());
-        starLevel = juce::jmin(1.0f, starLevel);
-        drawStarfield(g, w, h, starLevel);
+        drawStarfield(g, w, h, getGlowMeterLevel());  // single per-frame averaged L/R snapshot
     }
 
     //==============================================================================
@@ -6134,8 +6129,7 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
     // Cyan -> deep blue -> transparent. Red variant when metering in red zone.
     // Tabs are translucent so glow shows through at their bottom edge.
     {
-        float avgLevel = 0.5f * (audioProcessor.getLeftPeakLevel() + audioProcessor.getRightPeakLevel());
-        avgLevel = juce::jmin(1.0f, avgLevel);
+        float avgLevel = getGlowMeterLevel();  // single per-frame averaged L/R snapshot
 
         const float maxGlowDepth = 90.0f;
         const bool isRed = (clippingHoldTicks > 0);
@@ -6258,8 +6252,7 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
     // -- Master Section Glow --
     if (masterGroup.isVisible())
     {
-        float avgLevel = 0.5f * (audioProcessor.getLeftPeakLevel() + audioProcessor.getRightPeakLevel());
-        avgLevel = juce::jmin(1.0f, avgLevel);
+        float avgLevel = getGlowMeterLevel();  // single per-frame averaged L/R snapshot
         const int baseAlpha = 8 + static_cast<int>(44.0f * avgLevel);
         drawGlows(g, baseAlpha, meterLinkedGroupGlowHue(clippingHoldTicks > 0), { &masterGroup });
     }
