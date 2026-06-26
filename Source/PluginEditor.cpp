@@ -6304,7 +6304,7 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
             const int textX = (w - gap) - textW;  // right edge sits `gap` from the right
             const int textY = gap;                // top edge sits `gap` from the top
             g.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-            g.setColour(juce::Colour(0xffa0d8ff));  // light blue, matches knob labels
+            g.setColour(juce::Colours::white);  // white, pairs with the 63C watermark
             g.drawText(versionText, textX, textY, textW, textH,
                        juce::Justification::topRight, false);
         }
