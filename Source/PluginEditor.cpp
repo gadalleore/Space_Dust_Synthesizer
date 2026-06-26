@@ -6258,36 +6258,55 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
     }
 
     //==============================================================================
-    // -- 63C company logo (bottom-right watermark) --
+    // -- 63C company logo (bottom-right watermark) + version (top-right) --
     {
         if (! logoImage.isValid())
             logoImage = juce::ImageCache::getFromMemory(BinaryData::Logo63C_png,
                                                         BinaryData::Logo63C_pngSize);
+
+        // Geometry shared by the bottom-right logo and the top-right version text.
+        // The Master box bottom in Legato (glide toggle visible) is filterBoxBottomY;
+        // the logo lives in the band beneath it, sized to a fraction of the tallest
+        // height that still clears every box on all tabs. In the Standalone the playable
+        // keyboard occupies the bottom strip, so the band stops at the keyboard top
+        // (not the window bottom) — otherwise the keys cover the logo.
+        const int kbStripH = (standaloneKeyboard != nullptr) ? standaloneKeyboardHeight : 0;
+        const int contentBottom = h - kbStripH;
+        const int masterBottom = (filterBoxBottomY > 0 ? filterBoxBottomY : contentBottom - 60);
+        const int band = contentBottom - masterBottom;
+        const int cleanH = juce::jlimit(24, 64, band - 9);
+        const int logoH = juce::roundToInt(cleanH * 0.5985f);  // cumulative downscales
+        const int logoW = juce::roundToInt(logoH * (logoImage.getWidth()
+                                                    / (float) logoImage.getHeight()));
+        // Tuck into the bottom-right corner with an equal margin on every side:
+        // gap to the window's right edge == gap to the window's bottom == gap
+        // up to the Master box bottom.
+        const int gap = (band - logoH) / 2;
+
         if (logoImage.isValid())
         {
-            // 63C wordmark in the bottom-right corner. The Master box bottom in
-            // Legato (glide toggle visible) is filterBoxBottomY; the logo lives in
-            // the band beneath it, sized to a fraction of the tallest height that
-            // still clears every box on all tabs. In the Standalone the playable
-            // keyboard occupies the bottom strip, so the band stops at the keyboard
-            // top (not the window bottom) — otherwise the keys cover the logo.
-            const int kbStripH = (standaloneKeyboard != nullptr) ? standaloneKeyboardHeight : 0;
-            const int contentBottom = h - kbStripH;
-            const int masterBottom = (filterBoxBottomY > 0 ? filterBoxBottomY : contentBottom - 60);
-            const int band = contentBottom - masterBottom;
-            const int cleanH = juce::jlimit(24, 64, band - 9);
-            const int logoH = juce::roundToInt(cleanH * 0.5985f);  // cumulative downscales
-            const int logoW = juce::roundToInt(logoH * (logoImage.getWidth()
-                                                        / (float) logoImage.getHeight()));
-            // Tuck into the bottom-right corner with an equal margin on every side:
-            // gap to the window's right edge == gap to the window's bottom == gap
-            // up to the Master box bottom.
-            const int gap = (band - logoH) / 2;
             const int logoX = (w - gap) - logoW;
             const int logoY = masterBottom + gap;
             g.setColour(juce::Colours::white.withAlpha(0.9f));
             g.drawImageWithin(logoImage, logoX, logoY, logoW, logoH,
                               juce::RectanglePlacement::centred, false);
+        }
+
+        // -- Version number (top-right) --
+        // Mirrors the 63C watermark into the top-right corner: the same distance from
+        // the top as the logo sits from the (content) bottom, and the same distance
+        // from the right edge — both equal to `gap`. Uses the synth's standard 12pt
+        // body font and the same light-blue label colour as the knob labels.
+        {
+            const juce::String versionText = "v" JucePlugin_VersionString;
+            const int textH = 16;
+            const int textW = 120;
+            const int textX = (w - gap) - textW;  // right edge sits `gap` from the right
+            const int textY = gap;                // top edge sits `gap` from the top
+            g.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+            g.setColour(juce::Colour(0xffa0d8ff));  // light blue, matches knob labels
+            g.drawText(versionText, textX, textY, textW, textH,
+                       juce::Justification::topRight, false);
         }
     }
 }
