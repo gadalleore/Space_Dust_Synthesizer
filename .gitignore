@@ -97,6 +97,10 @@ installer/Files/Standalone/
 installer/macos/payload/
 installer/macos/scripts/Presets/
 installer/macos/scripts/README.txt
+# Distribution.xml is fully (re)generated from scratch by package-macos.sh on every
+# run (version refs are rewritten to the CMake project version), so it must not be
+# tracked - otherwise it shows as dirty after every package build.
+installer/macos/Distribution.xml
 
 # Scratch files
 Untitled
