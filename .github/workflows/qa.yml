@@ -46,6 +46,8 @@ jobs:
 
       - name: Download pluginval
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}   # authenticate the api.github.com call (avoids shared-IP 403 rate limits)
         run: ./download-pluginval.ps1
 
       - name: "Run pluginval (CI smoke: strictness 4, repeat 1, no GUI tests)"
