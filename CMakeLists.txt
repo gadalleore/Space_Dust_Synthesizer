@@ -390,6 +390,35 @@ if(ENABLE_ASAN OR ENABLE_TSAN)
 endif()
 
 #==============================================================================
+# Transient Pre/Post filter routing test (plain Release, no sanitizer). A tiny
+# console app that drives the processor offline to confirm the "Post Effect"
+# toggle changes whether the Main filter colours the transient.
+# Build:  cmake -B build-ttest -DENABLE_TRANSIENT_TEST=ON ; cmake --build build-ttest --target SpaceDustTransientTest
+#==============================================================================
+option(ENABLE_TRANSIENT_TEST "Build the offline transient Pre/Post routing test" OFF)
+if(ENABLE_TRANSIENT_TEST)
+    juce_add_console_app(SpaceDustTransientTest PRODUCT_NAME "SpaceDustTransientTest")
+    target_sources(SpaceDustTransientTest PRIVATE tools/transienttest/transient_test_main.cpp)
+    target_include_directories(SpaceDustTransientTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Source")
+    target_link_libraries(SpaceDustTransientTest PRIVATE
+        SpaceDust
+        SpaceDustBinaryData
+        juce::juce_audio_basics
+        juce::juce_audio_devices
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        juce::juce_gui_extra)
+    message(STATUS "SpaceDustTransientTest ENABLED.")
+endif()
+
+#==============================================================================
 # VST3-wrapper crash host (ASan builds only). Unlike SpaceDustStress (which calls
 # the processor directly) and the Standalone, this HOSTS the real .vst3 through
 # juce::VST3PluginFormat — exercising the VST3 wrapper + host state path that

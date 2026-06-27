@@ -830,9 +830,15 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         transient_.prepare(reverbSpec);
         transient_.reset();
 
-        // Pre-mode transient "before the filter" mirror filter + render scratch.
+        // Pre-mode transient "before the filter" mirror filters + render scratch.
+        // One mirror per per-voice filter stage (master + the two Mod-tab filters)
+        // so an unlinked Mod filter cuts the transient just like the Main filter.
         transientPreFilter_.prepare(reverbSpec);
         transientPreFilter_.reset();
+        transientPreFilterMod1_.prepare(reverbSpec);
+        transientPreFilterMod1_.reset();
+        transientPreFilterMod2_.prepare(reverbSpec);
+        transientPreFilterMod2_.reset();
         transientScratch_.setSize(reverbSpec.numChannels,
                                   static_cast<int>(reverbSpec.maximumBlockSize),
                                   false, false, true);
@@ -1325,7 +1331,9 @@ void SpaceDustAudioProcessor::releaseResources()
     finalEQ_.reset();
     tranceGate_.reset();
     transientPreFilter_.reset();
-    
+    transientPreFilterMod1_.reset();
+    transientPreFilterMod2_.reset();
+
     // Step 3: (Formerly cleared SynthesiserSound array.)
     // MPE: juce::MPESynthesiser has no SynthesiserSound array.  Nothing to clear.
     
@@ -2188,11 +2196,14 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     //==============================================================================
     // -- Transient (Pre: BEFORE the filter when Post Effect OFF) --
     // The transient must be coloured by the synth filter in this mode. The real
-    // filter is per-voice (inside the synth, already run), so we render the
-    // transient into a private scratch buffer and pass it through transientPreFilter_
-    // — a linear SVF mirroring the MASTER filter's mode/cutoff/resonance — then sum
-    // it into the mix. Post mode (below) stays end-of-chain and unfiltered. This is
-    // confined to the master chain; SynthVoice is untouched.
+    // filters are per-voice (inside the synth, already run), so we render the
+    // transient into a private scratch buffer and pass it through a SERIES of linear
+    // SVF mirrors — one for the MASTER (Main-tab) filter, then one for each Mod-tab
+    // filter that is Shown AND unlinked — then sum it into the mix. This mirrors the
+    // per-voice order (master → mod1 → mod2 in series, mod stages active only when
+    // Shown && unlinked), so the unlinked Mod filters cut the transient exactly like
+    // the Main filter does. Post mode (below) stays end-of-chain and unfiltered. This
+    // is confined to the master chain; SynthVoice is untouched.
     if (transientEnabled && !transientPostEffect)
     {
         SpaceDustTransient::Parameters tp;
@@ -2216,24 +2227,54 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             scratch.clear();
             transient_.process(scratch);
 
-            // Mirror the master filter (mode 0=LP/1=BP/2=HP; Q matches NonlinearSVF's
+            // Configure one mirror SVF (mode 0=LP/1=BP/2=HP; Q matches NonlinearSVF's
             // legacy curve Q = 0.1 + res*19.9, capped below self-osc for stability).
-            const int   preFilterMode = static_cast<int>(safeGetParam(apvts, "filterMode"));
-            const float preFilterCutoff = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "filterCutoff", 8000.0f));
-            const float preFilterRes  = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "filterResonance"));
-            transientPreFilter_.setType(
-                preFilterMode == 1 ? juce::dsp::StateVariableTPTFilterType::bandpass
-              : preFilterMode == 2 ? juce::dsp::StateVariableTPTFilterType::highpass
-                                   : juce::dsp::StateVariableTPTFilterType::lowpass);
-            transientPreFilter_.setCutoffFrequency(preFilterCutoff);
-            const float resQ = 0.1f + juce::jmin(preFilterRes, 0.80f) * 19.9f;
-            transientPreFilter_.setResonance(juce::jlimit(0.1f, 16.0f, resQ));
+            auto configureMirror = [](juce::dsp::StateVariableTPTFilter<float>& f,
+                                      int mode, float cutoffHz, float res)
+            {
+                f.setType(mode == 1 ? juce::dsp::StateVariableTPTFilterType::bandpass
+                        : mode == 2 ? juce::dsp::StateVariableTPTFilterType::highpass
+                                    : juce::dsp::StateVariableTPTFilterType::lowpass);
+                f.setCutoffFrequency(juce::jlimit(20.0f, 20000.0f, cutoffHz));
+                const float resQ = 0.1f + juce::jmin(juce::jlimit(0.0f, 1.0f, res), 0.80f) * 19.9f;
+                f.setResonance(juce::jlimit(0.1f, 16.0f, resQ));
+            };
+
+            // Master mirror (always present — it is the only filter when no Mod
+            // filter is active, so the master-only sound is unchanged).
+            configureMirror(transientPreFilter_,
+                            static_cast<int>(safeGetParam(apvts, "filterMode")),
+                            safeGetParam(apvts, "filterCutoff", 8000.0f),
+                            safeGetParam(apvts, "filterResonance"));
+
+            // Mod mirrors: active only when Shown AND unlinked, matching the per-voice
+            // chain. A linked Mod filter is NOT mirrored — the master already covers it
+            // (the per-voice synth skips it for the same reason).
+            const bool mod1Active = safeGetParam(apvts, "modFilter1Show") > 0.5f
+                                 && safeGetParam(apvts, "modFilter1LinkToMaster") <= 0.5f;
+            const bool mod2Active = safeGetParam(apvts, "modFilter2Show") > 0.5f
+                                 && safeGetParam(apvts, "modFilter2LinkToMaster") <= 0.5f;
+            if (mod1Active)
+                configureMirror(transientPreFilterMod1_,
+                                static_cast<int>(safeGetParam(apvts, "modFilter1Mode")),
+                                safeGetParam(apvts, "modFilter1Cutoff", 8000.0f),
+                                safeGetParam(apvts, "modFilter1Resonance"));
+            if (mod2Active)
+                configureMirror(transientPreFilterMod2_,
+                                static_cast<int>(safeGetParam(apvts, "modFilter2Mode")),
+                                safeGetParam(apvts, "modFilter2Cutoff", 8000.0f),
+                                safeGetParam(apvts, "modFilter2Resonance"));
 
             for (int ch = 0; ch < scratch.getNumChannels(); ++ch)
             {
                 auto* s = scratch.getWritePointer(ch);
                 for (int i = 0; i < numSamples; ++i)
-                    s[i] = transientPreFilter_.processSample(ch, s[i]);
+                {
+                    float y = transientPreFilter_.processSample(ch, s[i]);  // master
+                    if (mod1Active) y = transientPreFilterMod1_.processSample(ch, y);
+                    if (mod2Active) y = transientPreFilterMod2_.processSample(ch, y);
+                    s[i] = y;
+                }
 
                 buffer.addFrom(ch, 0, scratch, ch, 0, numSamples);
             }

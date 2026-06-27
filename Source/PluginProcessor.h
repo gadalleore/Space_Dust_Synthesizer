@@ -247,11 +247,17 @@ private:
     // Pre-mode transient routing: when Post-Effect is OFF the transient must be
     // coloured "before the filter". The per-voice synth filter lives inside the
     // synth (cannot be re-entered from the master buffer), so we mirror it here:
-    // the transient is rendered into transientScratch_, run through this filter
-    // (matched to the master filter's mode/cutoff/resonance), then summed into the
-    // mix. Post mode is unchanged (end-of-chain, unfiltered). This keeps the fix
-    // entirely in the master chain — no change to SynthVoice.
-    juce::dsp::StateVariableTPTFilter<float> transientPreFilter_;
+    // the transient is rendered into transientScratch_, run through these filters
+    // (matched to the synth's mode/cutoff/resonance), then summed into the mix.
+    // To stay consistent with the per-voice chain (master → mod1 → mod2 in series,
+    // each mod stage active only when it is Shown AND unlinked) the transient is run
+    // through the same series of mirrors, so the unlinked Mod-tab filters cut the
+    // transient exactly like the Main-tab filter does. Post mode is unchanged
+    // (end-of-chain, unfiltered). This keeps the fix entirely in the master chain —
+    // no change to SynthVoice.
+    juce::dsp::StateVariableTPTFilter<float> transientPreFilter_;     // mirrors Main-tab (master) filter
+    juce::dsp::StateVariableTPTFilter<float> transientPreFilterMod1_; // mirrors unlinked Mod filter 1
+    juce::dsp::StateVariableTPTFilter<float> transientPreFilterMod2_; // mirrors unlinked Mod filter 2
     juce::AudioBuffer<float> transientScratch_;
 
     //==============================================================================
