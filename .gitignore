@@ -128,3 +128,6 @@ build-verify/
 
 # Local preset backup zips (presets themselves are tracked under installer/Files/Presets)
 preset-backups/
+
+# Promotional materials (screenshots, marketing assets) - local only, never commit
+Promo Materials/

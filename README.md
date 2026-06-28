@@ -11,6 +11,18 @@ cd Space_Dust_Synthesizer
 
 **Known Good With:** Ableton Live 10, 11, and 12 (heavily tested for stability as of 2026).
 
+## Screenshots
+
+| Main | Modulation |
+|:---:|:---:|
+| ![Main tab](docs/images/main-tab.png) | ![Modulation tab](docs/images/modulation-tab.png) |
+| **Effects** | **Saturation Color** |
+| ![Effects tab](docs/images/effects-tab.png) | ![Saturation Color tab](docs/images/saturation-color-tab.png) |
+
+| Spectral |
+|:---:|
+| ![Spectral tab](docs/images/spectral-tab.png) |
+
 ## Features
 
 - **VST3 format** – VST3-only plugin
