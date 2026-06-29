@@ -1,6 +1,6 @@
 # Space Dust - JUCE Synthesizer Plugin
 
-A pure CMake-based polyphonic synthesizer VST3 plugin built with JUCE 8. Cosmic particles of sound.
+A pure CMake-based polyphonic synthesizer built with JUCE 8, shipping as a VST3 plugin, an Audio Unit (AU), and a standalone app. Cosmic particles of sound.
 
 **Repository:** [github.com/gadalleore/Space_Dust_Synthesizer](https://github.com/gadalleore/Space_Dust_Synthesizer)
 
@@ -25,7 +25,7 @@ cd Space_Dust_Synthesizer
 
 ## Features
 
-- **VST3 format** – VST3-only plugin
+- **Plugin formats** – VST3, Audio Unit (AU), and standalone app (macOS universal: Apple Silicon + Intel)
 - **8-voice polyphony** – Dual oscillators (with sub oscillator), filter, and ADSR per voice; **voice modes** Poly / Mono / Legato (last-note priority stack)
 - **Effects chain** – Reverb, delay (with filter), phaser, flanger, trance gate (post-effect), grain delay, parametric EQ, bitcrusher, soft clipper, compressor, transient shaper, lo-fi (with **Analog Drift**: subtle per-note pitch/filter variation and slow wander when Lo-Fi is enabled)
 - **Modulation** – Two LFOs with On toggles; LFO1 targets filter, LFO2 targets pitch (25% depth default)
