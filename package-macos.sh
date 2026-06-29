@@ -203,7 +203,10 @@ if [[ $SIGN -eq 1 ]]; then
     if [[ -n "$INSTALLER_IDENTITY" ]]; then
         INST_SIGN_ID="$INSTALLER_IDENTITY"
     else
-        INST_SIGN_ID="$(security find-identity -v -p codesigning 2>/dev/null \
+        # NOTE: Developer ID Installer certs are NOT returned by the 'codesigning'
+        # policy (that policy is for code/bundle signing only). Use the basic
+        # identity policy so productsign's installer cert is actually found.
+        INST_SIGN_ID="$(security find-identity -v 2>/dev/null \
             | grep -i 'Developer ID Installer' | head -1 | sed -E 's/.*"([^"]+)".*/\1/' || true)"
     fi
 
