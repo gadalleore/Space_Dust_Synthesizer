@@ -3650,6 +3650,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
                     juce::Colour(0xff0a0a1f), cheezeGuyGame.get(), false);
                 cheezeGuyTabAdded = true;
                 audioProcessor.cheezeGuyActivated = true;
+                // New tab button just created — stop it grabbing keyboard focus too.
+                relinquishTabButtonKeyboardFocus();
             }
             else
             {
@@ -5153,6 +5155,10 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             tabbedComponent.setCurrentTabIndex(
                 juce::jlimit(0, tabbedComponent.getNumTabs() - 1,
                              audioProcessor.lastActiveTabIndex));
+        // Keep keyboard focus with the host so tab clicks don't kill computer-keyboard
+        // MIDI (e.g. FL Studio "Typing keyboard to piano").
+        relinquishTabButtonKeyboardFocus();
+
         tabGlowOverlay = std::make_unique<TabGlowOverlayComponent>(*this);
         addAndMakeVisible(tabGlowOverlay.get());
         bottomTabGlowOverlay = std::make_unique<BottomTabGlowOverlayComponent>(*this);
@@ -5503,6 +5509,19 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
 // keyboard so the QWERTY computer keys keep working. (Knob drags use mouse capture,
 // not keyboard focus, so the knob you grabbed still drags normally - true
 // play-and-twist at the same time.) Registered only in the standalone build.
+void SpaceDustAudioProcessorEditor::relinquishTabButtonKeyboardFocus()
+{
+    auto& bar = tabbedComponent.getTabbedButtonBar();
+    for (int i = 0; i < bar.getNumTabs(); ++i)
+    {
+        if (auto* b = bar.getTabButton(i))
+        {
+            b->setWantsKeyboardFocus(false);
+            b->setMouseClickGrabsKeyboardFocus(false);
+        }
+    }
+}
+
 void SpaceDustAudioProcessorEditor::globalFocusChanged(juce::Component* focusedComponent)
 {
     if (standaloneKeyboard == nullptr || focusedComponent == nullptr)
