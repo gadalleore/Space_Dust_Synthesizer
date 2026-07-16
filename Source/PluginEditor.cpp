@@ -5235,6 +5235,21 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     mainView.setVisible(true);
 
     //==============================================================================
+    // -- Keep keyboard focus with the host (hosted/plugin builds only) --
+    // Any click that grabs keyboard focus pulls it off the DAW; the host then stops
+    // sending computer-keyboard MIDI (e.g. FL Studio "Typing keyboard to piano" — a
+    // hardware controller is routed by the driver and is unaffected). Symptom: MIDI
+    // dies on ANY click in the plugin and comes back when the window is minimised.
+    // Make the whole UI focus-transparent so no control ever grabs focus on click.
+    // Standalone is excluded: there the on-screen keyboard deliberately holds focus
+    // (globalFocusChanged hands it back), which is how the QWERTY keys play notes.
+    if (audioProcessor.wrapperType != juce::AudioProcessor::wrapperType_Standalone)
+    {
+        setMouseClickGrabsKeyboardFocus(false);
+        makeKeyboardFocusTransparent(*this, cheezeGuyGame.get());
+    }
+
+    //==============================================================================
     // -- Make the editor resizable NOW (synchronously, in the ctor) --
     // The host queries IPlugView::canResize() -> editor->isResizable() at attach time,
     // which is BEFORE the deferred timer below fires. If resizability isn't set yet the
@@ -5519,6 +5534,26 @@ void SpaceDustAudioProcessorEditor::relinquishTabButtonKeyboardFocus()
             b->setWantsKeyboardFocus(false);
             b->setMouseClickGrabsKeyboardFocus(false);
         }
+    }
+}
+
+void SpaceDustAudioProcessorEditor::makeKeyboardFocusTransparent(juce::Component& root,
+                                                                 juce::Component* except)
+{
+    for (auto* child : root.getChildren())
+    {
+        if (child == except)
+            continue;   // leave the Cheeze Guy game alone — it needs the arrow keys
+
+        // Text editors must stay focusable so typing an exact knob value still works.
+        // (While a value box is focused the host's typing keyboard is off, as expected.)
+        if (dynamic_cast<juce::TextEditor*>(child) == nullptr)
+        {
+            child->setWantsKeyboardFocus(false);
+            child->setMouseClickGrabsKeyboardFocus(false);
+        }
+
+        makeKeyboardFocusTransparent(*child, except);   // recurse into the whole subtree
     }
 }
 
