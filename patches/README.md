@@ -1,15 +1,25 @@
-# Local JUCE patch — MPE without the phantom-parameter flood
+# Local JUCE patches
 
-Space Dust needs a small modification to its JUCE copy. It lives in the JUCE tree
-(outside this repo), so it is **lost on a JUCE re-clone or update**. This folder
-captures it so you can re-apply it.
+Space Dust needs a couple of small modifications to its JUCE copy. They live in the
+JUCE tree (outside this repo), so they are **lost on a JUCE re-clone or update**. This
+folder captures them so you can re-apply them.
+
+There are two independent patches:
+
+1. **MPE without the phantom-parameter flood** — `apply-juce-mpe-patch.ps1`
+2. **FL Studio typing-keyboard fix** — `apply-juce-keyboard-focus-patch.ps1`
 
 ## TL;DR — re-applying after a fresh JUCE clone/update
 
 ```powershell
 ./patches/apply-juce-mpe-patch.ps1
-# or: ./patches/apply-juce-mpe-patch.ps1 -JucePath C:\path\to\JUCE
+./patches/apply-juce-keyboard-focus-patch.ps1
+# each also accepts -JucePath C:\path\to\JUCE
 ```
+
+---
+
+# Patch 1 — MPE without the phantom-parameter flood
 
 The script is idempotent (skips hunks already present) and string-based (line-number
 independent). If a hunk reports `[FAIL]` after a JUCE upgrade, the surrounding code
@@ -74,3 +84,51 @@ All in `modules/juce_audio_plugin_client/juce_audio_plugin_client_VST3.cpp`:
    allowlisted controllers become host parameters.
 
 See `apply-juce-mpe-patch.ps1` for the exact before/after text.
+
+---
+
+# Patch 2 — FL Studio typing-keyboard fix
+
+Re-apply with `./patches/apply-juce-keyboard-focus-patch.ps1`. Idempotent and
+string-based. Validated against **JUCE 8.0.12**. Patched file:
+`modules/juce_gui_basics/native/juce_Windowing_windows.cpp`
+
+## Why
+
+In FL Studio, "Typing keyboard to piano" (computer-keyboard MIDI) stops working the
+moment the plugin editor gains keyboard focus — e.g. after clicking a tab, knob, or
+anywhere in the window. Minimising the window (dropping its focus) makes it work
+again; a hardware MIDI controller is never affected.
+
+Cause: when the editor has keyboard focus and receives a key it does not handle, JUCE
+forwards that Windows key message to the editor's **direct parent** window
+(`GetParent`). In FL the direct parent is FL's plugin-**wrapper child window**, which
+does not route "Typing keyboard to piano", so the keystroke is dropped. (Ableton's
+direct parent handles it, which is why this only bites in FL. Hardware MIDI arrives via
+the driver, not this key path, so it is unaffected.) This is a
+[known JUCE↔FL issue](https://forum.juce.com/t/return-keyboard-focus-in-fl-studio/50711);
+the JUCE-side focus tricks (`giveAwayKeyboardFocus`, `setWantsKeyboardFocus(false)`,
+returning `false` from key handlers) are documented **not** to fix it in FL.
+
+The fix forwards unhandled key/char messages to the **root** window
+(`GetAncestor(hwnd, GA_ROOT)`) — the host's top-level window, which routes them
+correctly — instead of the direct parent.
+
+## Build flag (already set in `CMakeLists.txt`, tracked in this repo)
+
+```cmake
+JUCE_FORWARD_KEYS_TO_ROOT_WINDOW=1   # activates this patch
+```
+
+The change in `forwardMessageToParent` is wrapped in
+`#if JUCE_FORWARD_KEYS_TO_ROOT_WINDOW`. That macro is **undefined for any plugin that
+does not set it**, so sibling plugins sharing this JUCE copy compile the original
+direct-parent behaviour and are unaffected. Windows-only (the file is
+`*_windows.cpp`); other platforms don't compile it at all.
+
+## The edit (manual fallback)
+
+In `forwardMessageToParent()`, before the existing `GetParent`/`PostMessage`, add a
+guarded block that posts the message to `GetAncestor(hwnd, GA_ROOT)` (when that root
+differs from `hwnd`) and returns. See `apply-juce-keyboard-focus-patch.ps1` for the
+exact before/after text.

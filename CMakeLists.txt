@@ -13,7 +13,7 @@ if(CMAKE_HOST_APPLE)
     endif()
 endif()
 
-project(SpaceDust VERSION 1.0.12)
+project(SpaceDust VERSION 1.0.13)
 
 # --- Windows: statically link the MSVC C Run-Time (CRT) ---
 # Bakes VCRUNTIME140/MSVCP140 into the binaries so the plugin loads on a clean
@@ -63,7 +63,7 @@ juce_add_plugin(SpaceDust
     PRODUCT_NAME "Space Dust"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/AppIcon.png"
     DESCRIPTION "Cosmic particles of sound"
-    VERSION 1.0.12
+    VERSION 1.0.13
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
@@ -160,6 +160,15 @@ target_compile_definitions(SpaceDust
         # list the plugin once. JUCE guards this macro with #ifndef, so this override
         # wins. See juce_VST3ModuleInfo.h.
         JucePlugin_Vst3ComponentFlags=0
+        # Activates our local JUCE patch (juce_Windowing_windows.cpp) that forwards
+        # unhandled keystrokes to the host's ROOT window instead of the direct parent.
+        # Fixes FL Studio "Typing keyboard to piano" dying whenever the plugin holds
+        # keyboard focus: FL's direct parent of the editor is a wrapper child window
+        # that doesn't route those keys, so they were dropped. Known JUCE<->FL issue
+        # (forum.juce.com/t/return-keyboard-focus-in-fl-studio/50711). Windows-only;
+        # macro is undefined (=> no-op) for other plugins sharing this JUCE copy.
+        # See patches/apply-juce-keyboard-focus-patch.ps1.
+        JUCE_FORWARD_KEYS_TO_ROOT_WINDOW=1
 )
 
 #==============================================================================

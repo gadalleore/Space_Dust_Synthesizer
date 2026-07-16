@@ -3650,8 +3650,6 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
                     juce::Colour(0xff0a0a1f), cheezeGuyGame.get(), false);
                 cheezeGuyTabAdded = true;
                 audioProcessor.cheezeGuyActivated = true;
-                // New tab button just created — stop it grabbing keyboard focus too.
-                relinquishTabButtonKeyboardFocus();
             }
             else
             {
@@ -5155,10 +5153,6 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             tabbedComponent.setCurrentTabIndex(
                 juce::jlimit(0, tabbedComponent.getNumTabs() - 1,
                              audioProcessor.lastActiveTabIndex));
-        // Keep keyboard focus with the host so tab clicks don't kill computer-keyboard
-        // MIDI (e.g. FL Studio "Typing keyboard to piano").
-        relinquishTabButtonKeyboardFocus();
-
         tabGlowOverlay = std::make_unique<TabGlowOverlayComponent>(*this);
         addAndMakeVisible(tabGlowOverlay.get());
         bottomTabGlowOverlay = std::make_unique<BottomTabGlowOverlayComponent>(*this);
@@ -5233,21 +5227,6 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         }
     }
     mainView.setVisible(true);
-
-    //==============================================================================
-    // -- Keep keyboard focus with the host (hosted/plugin builds only) --
-    // Any click that grabs keyboard focus pulls it off the DAW; the host then stops
-    // sending computer-keyboard MIDI (e.g. FL Studio "Typing keyboard to piano" — a
-    // hardware controller is routed by the driver and is unaffected). Symptom: MIDI
-    // dies on ANY click in the plugin and comes back when the window is minimised.
-    // Make the whole UI focus-transparent so no control ever grabs focus on click.
-    // Standalone is excluded: there the on-screen keyboard deliberately holds focus
-    // (globalFocusChanged hands it back), which is how the QWERTY keys play notes.
-    if (audioProcessor.wrapperType != juce::AudioProcessor::wrapperType_Standalone)
-    {
-        setMouseClickGrabsKeyboardFocus(false);
-        makeKeyboardFocusTransparent(*this, cheezeGuyGame.get());
-    }
 
     //==============================================================================
     // -- Make the editor resizable NOW (synchronously, in the ctor) --
@@ -5524,39 +5503,6 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
 // keyboard so the QWERTY computer keys keep working. (Knob drags use mouse capture,
 // not keyboard focus, so the knob you grabbed still drags normally - true
 // play-and-twist at the same time.) Registered only in the standalone build.
-void SpaceDustAudioProcessorEditor::relinquishTabButtonKeyboardFocus()
-{
-    auto& bar = tabbedComponent.getTabbedButtonBar();
-    for (int i = 0; i < bar.getNumTabs(); ++i)
-    {
-        if (auto* b = bar.getTabButton(i))
-        {
-            b->setWantsKeyboardFocus(false);
-            b->setMouseClickGrabsKeyboardFocus(false);
-        }
-    }
-}
-
-void SpaceDustAudioProcessorEditor::makeKeyboardFocusTransparent(juce::Component& root,
-                                                                 juce::Component* except)
-{
-    for (auto* child : root.getChildren())
-    {
-        if (child == except)
-            continue;   // leave the Cheeze Guy game alone — it needs the arrow keys
-
-        // Text editors must stay focusable so typing an exact knob value still works.
-        // (While a value box is focused the host's typing keyboard is off, as expected.)
-        if (dynamic_cast<juce::TextEditor*>(child) == nullptr)
-        {
-            child->setWantsKeyboardFocus(false);
-            child->setMouseClickGrabsKeyboardFocus(false);
-        }
-
-        makeKeyboardFocusTransparent(*child, except);   // recurse into the whole subtree
-    }
-}
-
 void SpaceDustAudioProcessorEditor::globalFocusChanged(juce::Component* focusedComponent)
 {
     if (standaloneKeyboard == nullptr || focusedComponent == nullptr)

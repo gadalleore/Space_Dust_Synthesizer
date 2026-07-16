@@ -384,22 +384,6 @@ private:
     //==============================================================================
     // -- Tabbed Component for Main/Modulation Pages --
     juce::TabbedComponent tabbedComponent;
-
-    // Stop the tab header buttons from stealing keyboard focus on click. JUCE
-    // TabBarButtons (like all Buttons) grab focus when clicked; in a plugin that
-    // pulls keyboard focus off the host, killing the host's computer-keyboard MIDI
-    // (e.g. FL Studio "Typing keyboard to piano"). Must be re-run whenever tabs are
-    // added, since it operates on the buttons that exist at call time.
-    void relinquishTabButtonKeyboardFocus();
-
-    // Recursively make the plugin UI keyboard-focus-transparent (hosted builds
-    // only): no control grabs keyboard focus on click, so the host keeps keyboard
-    // focus and its computer-keyboard MIDI keeps working (e.g. FL Studio "Typing
-    // keyboard to piano"). Text editors stay focusable so typing exact knob values
-    // still works; `except` (and its subtree) is skipped to preserve the Cheeze Guy
-    // game's arrow-key focus. Not used in Standalone, where the on-screen keyboard
-    // deliberately holds focus.
-    static void makeKeyboardFocusTransparent(juce::Component& root, juce::Component* except);
     std::unique_ptr<TabGlowOverlayComponent> tabGlowOverlay;
     std::unique_ptr<BottomTabGlowOverlayComponent> bottomTabGlowOverlay;
     std::unique_ptr<MainPageComponent> mainPage;
