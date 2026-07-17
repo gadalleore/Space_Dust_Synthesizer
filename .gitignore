@@ -131,3 +131,7 @@ preset-backups/
 
 # Promotional materials (screenshots, marketing assets) - local only, never commit
 Promo Materials/
+
+# Python bytecode from patches/ tooling
+__pycache__/
+*.pyc
