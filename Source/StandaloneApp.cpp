@@ -105,6 +105,18 @@ public:
 
         if (mainWindow != nullptr)
         {
+            // Pull the restored window back onto a visible display before showing it. JUCE
+            // restores the last saved windowX/windowY blindly, so a window that was dragged
+            // to a screen edge (or last opened on a now-disconnected larger monitor) can come
+            // up entirely off-screen - the app then looks like it "won't open" because its
+            // only window sits past the edge of every display. constrainedWithin() is a no-op
+            // when the window is already fully on-screen, so this only moves a stray window.
+            {
+                const auto bounds = mainWindow->getBounds();
+                if (auto* display = Desktop::getInstance().getDisplays().getDisplayForRect (bounds))
+                    mainWindow->setBounds (bounds.constrainedWithin (display->userArea));
+            }
+
            #if JUCE_STANDALONE_FILTER_WINDOW_USE_KIOSK_MODE
             Desktop::getInstance().setKioskModeComponent (mainWindow.get(), false);
            #endif
