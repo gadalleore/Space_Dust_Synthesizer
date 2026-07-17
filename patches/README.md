@@ -11,11 +11,27 @@ There are two independent patches:
 
 ## TL;DR — re-applying after a fresh JUCE clone/update
 
+**CI applies these automatically** (`.github/workflows/qa.yml`, right after the JUCE
+checkout), so GitHub builds already include them. You only run these by hand for a
+**local build from a fresh JUCE tree**:
+
 ```powershell
+# Windows (PowerShell):
 ./patches/apply-juce-mpe-patch.ps1
 ./patches/apply-juce-keyboard-focus-patch.ps1
-# each also accepts -JucePath C:\path\to\JUCE
 ```
+
+```bash
+# macOS / Linux (PowerShell Core — `brew install powershell` if needed):
+pwsh ./patches/apply-juce-mpe-patch.ps1
+# (the keyboard patch only touches the Windows-only file, so it's a no-op on macOS —
+#  running it is harmless but unnecessary)
+# each also accepts -JucePath /path/to/JUCE
+```
+
+The scripts are cross-platform and line-ending agnostic (they normalise CRLF/LF before
+matching), so the same anchors apply whether JUCE checked out as CRLF (Windows) or LF
+(macOS/Linux). Both are idempotent — safe to re-run.
 
 ---
 

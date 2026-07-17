@@ -40,18 +40,27 @@ if (-not $JucePath) {
     exit 1
 }
 
-$file = Join-Path $JucePath "modules\juce_audio_plugin_client\juce_audio_plugin_client_VST3.cpp"
+# Forward slashes so the path resolves under PowerShell on macOS/Linux too (Windows
+# accepts them as well) - CI applies this patch on both the Windows and macOS runners.
+$file = Join-Path $JucePath "modules/juce_audio_plugin_client/juce_audio_plugin_client_VST3.cpp"
 if (-not (Test-Path $file)) {
     Write-Host "ERROR: not found: $file" -ForegroundColor Red
     exit 1
 }
 
-$text = Get-Content -LiteralPath $file -Raw
+# Normalise to LF so anchors match regardless of the file's line endings. A fresh git
+# checkout is CRLF on Windows runners but LF on macOS/Linux runners, so a fixed-ending
+# anchor could never match both. We compare and write LF; MSVC/Clang accept it fine.
+$text = (Get-Content -LiteralPath $file -Raw).Replace("`r`n", "`n")
 $orig = $text
 $applied = 0; $skipped = 0; $failed = 0
 
 function Apply-Hunk {
     param([string]$Name, [string]$Marker, [string]$Old, [string]$New)
+    # Normalise anchors too (this script file may itself be saved CRLF or LF).
+    $Marker = $Marker.Replace("`r`n", "`n")
+    $Old = $Old.Replace("`r`n", "`n")
+    $New = $New.Replace("`r`n", "`n")
     if ($script:text.Contains($Marker)) {
         Write-Host "  [skip] $Name (already applied)" -ForegroundColor DarkGray
         $script:skipped++

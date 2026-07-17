@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 50
 
     env:
-      JUCE_REF: 8.0.4   # pin to a known-good JUCE tag
+      JUCE_REF: 8.0.12  # matches local dev + the JUCE version the patches/ scripts target
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # address Node 20 deprecation warnings on actions/checkout + upload-artifact
 
     steps:
@@ -32,6 +32,20 @@ jobs:
           repository: juce-framework/JUCE
           ref: ${{ env.JUCE_REF }}
           path: JUCE
+
+      # The plugin's local JUCE patches live outside this repo (in the JUCE tree), so a
+      # fresh checkout doesn't have them. Re-apply here so CI builds match what ships.
+      # Each script exits non-zero if its anchor text is missing (JUCE version drift) so
+      # a stale patch fails loudly instead of silently building an unpatched binary.
+      # Run in separate steps: PowerShell 'exit' ends the whole session, so chaining two
+      # scripts in one step would stop after the first.
+      - name: Apply JUCE MPE patch
+        shell: pwsh
+        run: ./patches/apply-juce-mpe-patch.ps1 -JucePath "${{ github.workspace }}/JUCE"
+
+      - name: Apply JUCE keyboard-focus patch (FL typing keyboard)
+        shell: pwsh
+        run: ./patches/apply-juce-keyboard-focus-patch.ps1 -JucePath "${{ github.workspace }}/JUCE"
 
       - name: Configure CMake
         shell: pwsh
@@ -88,7 +102,7 @@ jobs:
     timeout-minutes: 50
 
     env:
-      JUCE_REF: 8.0.4   # keep in lockstep with qa-windows
+      JUCE_REF: 8.0.12  # keep in lockstep with qa-windows
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
     steps:
@@ -101,6 +115,14 @@ jobs:
           repository: juce-framework/JUCE
           ref: ${{ env.JUCE_REF }}
           path: JUCE
+
+      # Re-apply the local JUCE patch the Mac build needs (MPE param-surface trim, in the
+      # cross-platform VST3 client). The keyboard-focus patch is Windows-only (it edits
+      # juce_Windowing_windows.cpp, not compiled here), so it's not applied on macOS.
+      # pwsh is preinstalled on GitHub macOS runners.
+      - name: Apply JUCE MPE patch
+        shell: pwsh
+        run: ./patches/apply-juce-mpe-patch.ps1 -JucePath "${{ github.workspace }}/JUCE"
 
       - name: Configure CMake (Xcode)
         run: |

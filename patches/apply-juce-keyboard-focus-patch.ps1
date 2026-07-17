@@ -50,13 +50,18 @@ if (-not $JucePath) {
     exit 1
 }
 
-$file = Join-Path $JucePath "modules\juce_gui_basics\native\juce_Windowing_windows.cpp"
+# Forward slashes so the path resolves under PowerShell on macOS/Linux too (Windows
+# accepts them as well), keeping the script portable if run outside Windows.
+$file = Join-Path $JucePath "modules/juce_gui_basics/native/juce_Windowing_windows.cpp"
 if (-not (Test-Path $file)) {
     Write-Host "ERROR: not found: $file" -ForegroundColor Red
     exit 1
 }
 
-$text = Get-Content -LiteralPath $file -Raw
+# Normalise to LF so anchors match regardless of the file's line endings. A fresh git
+# checkout is CRLF on Windows runners but LF on macOS/Linux runners, so a fixed-ending
+# anchor could never match both. We compare and write LF; MSVC/Clang accept it fine.
+$text = (Get-Content -LiteralPath $file -Raw).Replace("`r`n", "`n")
 
 $marker = "JUCE_FORWARD_KEYS_TO_ROOT_WINDOW"
 if ($text.Contains($marker)) {
@@ -98,6 +103,10 @@ $new = @'
             PostMessage (parentH, message, wParam, lParam);
     }
 '@
+
+# Normalise the anchors too (this script file may itself be saved CRLF or LF).
+$old = $old.Replace("`r`n", "`n")
+$new = $new.Replace("`r`n", "`n")
 
 if (-not $text.Contains($old)) {
     Write-Host "  [FAIL] forwardMessageToParent - anchor text not found (JUCE version changed? see patches\README.md)" -ForegroundColor Red
