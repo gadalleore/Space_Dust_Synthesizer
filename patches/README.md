@@ -38,10 +38,16 @@ python3 ./patches/apply-juce-mpe-patch.py            # uses $JUCE_DIR or juce_pa
 python3 ./patches/apply-juce-mpe-patch.py --juce /path/to/JUCE
 ```
 
-`package-macos.sh` runs this automatically before every build and **aborts the build**
-if the patch can't be applied, so a local macOS release can never silently ship without
-it. (There is currently no Python port of the Windows-only keyboard patch — it's not
-needed for macOS builds.)
+**Both packaging scripts now apply the patches automatically and abort the build if a
+patch can't be applied**, so a local release can never silently ship without them:
+- `package-macos.sh` runs the Python MPE patch (the keyboard patch is Windows-only, so
+  it's skipped on macOS).
+- `package-installer.ps1` runs both `.ps1` patches (MPE + Windows keyboard-focus), each
+  in its own PowerShell process.
+
+You therefore only need to run these by hand when building **directly via CMake** (not
+through the packaging scripts) from a fresh JUCE tree. There is currently no Python port
+of the Windows-only keyboard patch — it isn't needed for macOS builds.
 
 The scripts are cross-platform and line-ending agnostic (they normalise CRLF/LF before
 matching), so the same anchors apply whether JUCE checked out as CRLF (Windows) or LF

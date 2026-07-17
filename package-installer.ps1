@@ -173,6 +173,38 @@ function Test-LoggerSymbol {
 # remember to disable logging - packaging here forces it.
 if (-not $SkipBuild) {
     $buildDir = "build"
+
+    # ── Ensure the local JUCE patches are applied before compiling ────────────
+    # The patches live in the JUCE tree (not this repo), so a JUCE update/re-clone
+    # silently wipes them. An unpatched build ships the VST3 with all 16*130 = 2080
+    # phantom "MIDI CC" params (MPE patch) AND without the FL typing-keyboard fix
+    # (the keyboard patch edits the Windows-only juce_Windowing_windows.cpp). Apply
+    # both here so a local Windows release can never silently build without them -
+    # mirrors what package-macos.sh does. Each patch runs in its OWN PowerShell
+    # process because the patch scripts call `exit`, which would otherwise terminate
+    # THIS script. They're idempotent and exit non-zero (aborting packaging) if an
+    # anchor can't be found. (CI applies the same patches, one per step.)
+    $psExe = $null
+    foreach ($cand in @('pwsh', 'powershell')) {
+        $found = Get-Command $cand -ErrorAction SilentlyContinue
+        if ($found) { $psExe = $found.Source; break }
+    }
+    if (-not $psExe) {
+        Write-Host "[Package] ERROR: no PowerShell executable (pwsh/powershell) found to run the JUCE patch scripts." -ForegroundColor Red
+        exit 1
+    }
+    foreach ($patch in @('apply-juce-mpe-patch.ps1', 'apply-juce-keyboard-focus-patch.ps1')) {
+        Write-Host "[Package] Ensuring JUCE patch applied: $patch ..." -ForegroundColor Cyan
+        $patchArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ".\patches\$patch")
+        if ($juceDir) { $patchArgs += @('-JucePath', $juceDir) }
+        & $psExe @patchArgs
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "[Package] JUCE patch '$patch' FAILED (exit $LASTEXITCODE). Aborting - refusing to build an unpatched binary." -ForegroundColor Red
+            Write-Host "          See patches\README.md; ensure your JUCE tree is on 8.0.12 (the version the patch anchors target)." -ForegroundColor Red
+            exit 1
+        }
+    }
+
     Write-Host "[Package] Configuring CMake (Release, ALL logging OFF)..." -ForegroundColor Cyan
 
     $cmakeArgs = @(
