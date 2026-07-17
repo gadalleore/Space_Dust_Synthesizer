@@ -29,6 +29,20 @@ pwsh ./patches/apply-juce-mpe-patch.ps1
 # each also accepts -JucePath /path/to/JUCE
 ```
 
+**No PowerShell? Use the Python port of the MPE patch** (`apply-juce-mpe-patch.py`) —
+functionally identical, idempotent, and validated to produce byte-for-byte the same
+result as the `.ps1`:
+
+```bash
+python3 ./patches/apply-juce-mpe-patch.py            # uses $JUCE_DIR or juce_path.local
+python3 ./patches/apply-juce-mpe-patch.py --juce /path/to/JUCE
+```
+
+`package-macos.sh` runs this automatically before every build and **aborts the build**
+if the patch can't be applied, so a local macOS release can never silently ship without
+it. (There is currently no Python port of the Windows-only keyboard patch — it's not
+needed for macOS builds.)
+
 The scripts are cross-platform and line-ending agnostic (they normalise CRLF/LF before
 matching), so the same anchors apply whether JUCE checked out as CRLF (Windows) or LF
 (macOS/Linux). Both are idempotent — safe to re-run.

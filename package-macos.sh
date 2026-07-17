@@ -164,6 +164,22 @@ echo "[Package] Artefacts        : $ARTEFACTS"
 # important thing is that a prior dev build with ENABLE_MEMORY_SAFETY_LOGGING=ON
 # does not accidentally leak into the shipped universal binaries.
 if [[ $SKIP_BUILD -eq 0 ]]; then
+    # --- Ensure the local JUCE MPE patch is present before compiling ------------
+    # The patch lives in the JUCE tree (not this repo), so a JUCE update/re-clone
+    # silently wipes it - and an unpatched build ships the VST3 exposing all
+    # 16*130 = 2080 phantom "MIDI CC" params instead of the trimmed MPE allowlist.
+    # This step is idempotent and, under `set -e`, ABORTS packaging if the anchors
+    # can't be found, so a local Mac release can never silently build without it.
+    # (CI applies the same patch via the .ps1; python3 is the pwsh-free path here.)
+    PY_BIN="$(command -v python3 || true)"
+    if [[ -z "$PY_BIN" ]]; then
+        echo "[Package] ERROR: python3 not found - cannot apply/verify the JUCE MPE patch." >&2
+        echo "          Install python3, or apply patches/apply-juce-mpe-patch.py by hand." >&2
+        exit 1
+    fi
+    echo "[Package] Ensuring local JUCE MPE patch is applied..."
+    "$PY_BIN" "$(dirname "$0")/patches/apply-juce-mpe-patch.py" --juce "${JUCE_DIR:-}"
+
     echo "[Package] Re-configuring CMake for clean Release (logging OFF)..."
     "$CMAKE_BIN" -B "$BUILD_DIR" -G Xcode \
         -DENABLE_MEMORY_SAFETY_LOGGING=OFF \
