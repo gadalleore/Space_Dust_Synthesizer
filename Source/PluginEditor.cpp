@@ -6051,7 +6051,18 @@ void SpaceDustAudioProcessorEditor::timerCallback()
 
     customLookAndFeel.setOutputMeterClipping(clippingHoldTicks > 0);
 
-    repaint();  // Redraw glow halos so they follow output level
+    // Redraw glow halos / starfield / edge glow so they follow output level - but ONLY when
+    // the level or clipping state actually changed. The whole-editor repaint re-lays-out every
+    // label/knob, so doing it unconditionally every tick pegged the CPU even at silence (the
+    // Standalone appeared to hang on launch). The painted look is a pure function of these two
+    // values, so skipping unchanged frames is visually identical and lets CPU fall to idle.
+    const bool nowClipping = (clippingHoldTicks > 0);
+    if (std::abs(glowMeterLevel_ - lastPaintedGlowLevel_) > 0.001f || nowClipping != lastPaintedClipping_)
+    {
+        lastPaintedGlowLevel_ = glowMeterLevel_;
+        lastPaintedClipping_  = nowClipping;
+        repaint();
+    }
 
     // Update Spectral tab (Lissajous drawn in SpectralPage::paint, Oscilloscope, Spectrum)
     constexpr int spectralTabIndex = 4;

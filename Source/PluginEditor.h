@@ -317,6 +317,17 @@ private:
     // to glow at different rates. All glow sites now read this snapshot instead.
     float glowMeterLevel_ = 0.0f;
 
+    // -- Idle-repaint suppression --
+    // The whole-editor repaint in timerCallback (redrawing the level-driven glow/starfield)
+    // is expensive: it re-lays-out every label/knob each tick. Since the ENTIRE painted look
+    // is a pure function of glowMeterLevel_ + clippingHoldTicks (no time-based animation), we
+    // only repaint when one of those actually changes. At silence the output level sits at 0
+    // and stops changing, so repaints stop and CPU drops to idle (was pegged ~130% before —
+    // the Standalone, with nothing to throttle its UI, appeared to hang on launch). Playing
+    // notes moves the level every tick, so the glow animates exactly as before.
+    float lastPaintedGlowLevel_ = -1.0f;   // force a paint on the very first tick
+    bool  lastPaintedClipping_  = false;
+
 public:
     /** Averaged (L+R)/2 output level [0,1] for glow, snapshotted once per timer tick.
         All glow drawing must use this so every object glows consistently. */
