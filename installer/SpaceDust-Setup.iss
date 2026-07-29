@@ -15,7 +15,7 @@
 ; =============================================================================
 
 #define MyAppName       "Space Dust Synthesizer"
-#define MyAppVersion    "1.0.16"
+#define MyAppVersion    "1.0.17"
 #define MyPublisher     "63C"
 #define MyAppCopyright  "Copyright (c) 2026 63C"
 ; Stable GUID keeps upgrade/uninstall registration consistent across releases.
@@ -33,15 +33,24 @@ AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyPublisher}
 AppCopyright={#MyAppCopyright}
-VersionInfoVersion=1.0.16.0
+VersionInfoVersion=1.0.17.0
 VersionInfoCompany={#MyPublisher}
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion=1.0.16.0
+VersionInfoProductVersion=1.0.17.0
 VersionInfoDescription={#MyAppName} Setup
 VersionInfoCopyright={#MyAppCopyright}
 DefaultDirName={autopf64}\{#MyAppName}
 ; We only use {app} for Inno's uninstall records; VST3 path is chosen separately.
 DisableDirPage=yes
+; {app} must ALWAYS resolve to DefaultDirName. Inno defaults UsePreviousAppDir=yes,
+; which reads the "Inno Setup: App Path" value recorded under our stable AppId - so a
+; sandboxed run of test-installer.ps1 (which passes /DIR=%TEMP%\SpaceDustInstallerTest
+; to this very installer) permanently redirected every LATER real install's {app} into
+; that temp folder. With DisableDirPage=yes there is no page where that would ever be
+; visible or correctable. Standalone .exe, AppIcon and notices ended up under %TEMP%
+; while Program Files sat empty. Forcing "no" is safe here because the paths that
+; actually matter (VST3 bundle, presets) come from their own wizard pages, not {app}.
+UsePreviousAppDir=no
 DisableProgramGroupPage=yes
 ; --- Modern look (Inno Setup 6+) ------------------------------------------------
 WizardStyle=modern
@@ -134,7 +143,12 @@ Source: "AppIcon.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; without also updating PresetManager.h.
 Source: "Files\Presets\*.sdpreset"; DestDir: "{code:GetPresetsDir}"; Flags: ignoreversion onlyifdoesntexist skipifsourcedoesntexist uninsneveruninstall; Components: vst3 standalone
 ; Documentation placed inside the preset folder.
-Source: "Support\README-Presets.txt"; DestDir: "{code:GetPresetsDir}"; DestName: "README.txt"; Flags: ignoreversion confirmoverwrite; Components: vst3 standalone
+; NO confirmoverwrite: this is our own README, not user content, so refreshing it on
+; every install is always correct. The flag used to be here and made an UPDATE stop
+; with an "overwrite existing file?" prompt - the one dialog standing between the user
+; and a silent upgrade, and easily mistaken for the installer threatening their presets
+; (it never was: the .sdpreset line above is onlyifdoesntexist).
+Source: "Support\README-Presets.txt"; DestDir: "{code:GetPresetsDir}"; DestName: "README.txt"; Flags: ignoreversion; Components: vst3 standalone
 
 [Icons]
 ; Standalone app shortcuts (only created when the Standalone component is selected).
