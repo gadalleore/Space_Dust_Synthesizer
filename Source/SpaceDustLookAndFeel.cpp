@@ -108,7 +108,8 @@ void SpaceDustLookAndFeel::drawGroupComponentOutline(juce::Graphics& g, int widt
     auto h = juce::jmax(0.0f, (float)height - indent * 2.0f);  // Full height minus indent
     cs = juce::jmin(cs, w * 0.5f, h * 0.5f);
 
-    auto textW = text.isEmpty() ? 0 : f.getStringWidth(text);
+    // Font::getStringWidth was removed in JUCE 8; GlyphArrangement is the replacement.
+    auto textW = text.isEmpty() ? 0.0f : juce::GlyphArrangement::getStringWidth(f, text);
     auto textX = x + titleInset;
     auto textY = indent + titleInset;  // Title inside box, upper-left
 
