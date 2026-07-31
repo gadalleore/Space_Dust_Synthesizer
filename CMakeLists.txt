@@ -157,6 +157,8 @@ target_sources(SpaceDust PRIVATE
     Source/SpaceDustLookAndFeel.h
     Source/PresetManager.cpp
     Source/PresetManager.h
+    Source/PresetHotReload.cpp
+    Source/PresetHotReload.h
     Source/CheezeGuyGame.h
     Source/FloatingShell.h
     Source/SpaceDustDither.h
@@ -379,6 +381,37 @@ if(TARGET SpaceDust_Standalone)
         target_link_options(SpaceDust_Standalone PRIVATE -fsanitize=address)
         message(STATUS "AddressSanitizer ENABLED for SpaceDust_Standalone (Clang/GCC).")
     endif()
+endif()
+
+#==============================================================================
+# Hot-reload harness. Console app that checks PresetHotReload end to end: edits a
+# preset on disk and confirms the live parameters follow, and that the current sound
+# is published to current.sdpreset. Off by default so normal builds stay lean.
+# Build:  cmake -B build -DSPACEDUST_BUILD_TESTS=ON
+#         cmake --build build --target SpaceDustHotReloadTest
+#==============================================================================
+option(SPACEDUST_BUILD_TESTS "Build the headless test harnesses" OFF)
+
+if(SPACEDUST_BUILD_TESTS)
+    juce_add_console_app(SpaceDustHotReloadTest PRODUCT_NAME "SpaceDustHotReloadTest")
+    target_sources(SpaceDustHotReloadTest PRIVATE tools/hotreload/hotreload_test.cpp)
+    target_include_directories(SpaceDustHotReloadTest PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Source")
+    target_link_libraries(SpaceDustHotReloadTest PRIVATE
+        SpaceDust
+        SpaceDustBinaryData
+        juce::juce_audio_basics
+        juce::juce_audio_devices
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        juce::juce_gui_extra)
+    message(STATUS "SpaceDustHotReloadTest harness ENABLED.")
 endif()
 
 #==============================================================================
