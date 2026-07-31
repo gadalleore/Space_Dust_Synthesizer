@@ -30,18 +30,28 @@ public:
     static constexpr const char* presetExtension = ".sdpreset";
     static constexpr const char* presetWildcard = "*.sdpreset";
 
+    //==============================================================================
+    // Where presets live, resolved the same way whether or not an editor (and so a
+    // PresetManager) exists. PresetHotReload needs this from the processor, which
+    // outlives the editor, so the lookup can't be tied to an instance.
+    static juce::File configuredPresetFolder();
+    // Per-user settings folder. Also where the plugin publishes its live state.
+    static juce::File appDataFolder();
+
 private:
     juce::AudioProcessorValueTreeState& valueTreeState;
     juce::File presetFolder;
     juce::String currentPresetName { "Init" };
 
-    juce::File getDefaultPresetFolder() const;
+    static juce::File getDefaultPresetFolder();
     void savePresetFolderConfig() const;
     void loadPresetFolderConfig();
-    // Per-user config (user-writable). Preferred on read.
-    juce::File getUserConfigFile() const;
+    // Per-user config (user-writable). Preferred on read, and the only write target.
+    static juce::File getUserConfigFile();
+    // Where older macOS builds wrote the per-user config. Read-only fallback.
+    static juce::File getLegacyUserConfigFile();
     // System-wide config written by an all-users installer. Read-only fallback.
-    juce::File getSystemConfigFile() const;
+    static juce::File getSystemConfigFile();
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PresetManager)
 };
