@@ -458,6 +458,10 @@ SpaceDustAudioProcessor::SpaceDustAudioProcessor()
         DBG("Space Dust: Unknown exception converting ADSR params");
     }
     
+    // Watch for presets edited outside the plugin, and publish what's currently loaded.
+    // Timer callbacks run on the message thread, which is where we are now.
+    presetHotReload.start();
+
     //==============================================================================
     DBG("Space Dust: Processor ctor END");
     logToFile("Processor constructed");

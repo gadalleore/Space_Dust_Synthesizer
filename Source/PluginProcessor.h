@@ -21,6 +21,7 @@
 #include "SpaceDustLofi.h"
 #include "SpaceDustTransient.h"
 #include "SpaceDustFinalEQ.h"
+#include "PresetHotReload.h"
 
 //==============================================================================
 /**
@@ -159,7 +160,11 @@ private:
     // -- Parameter Management --
     
     juce::AudioProcessorValueTreeState apvts;  // Thread-safe parameter storage
-    
+
+    // Publishes the live sound and re-applies presets edited on disk. Declared after
+    // apvts so it is destroyed first — its timer reads apvts on every tick.
+    PresetHotReload presetHotReload { *this, apvts, currentPresetName };
+
     //==============================================================================
     // -- Core Synthesis Components --
     
