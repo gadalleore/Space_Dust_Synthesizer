@@ -102,23 +102,44 @@ juce::Array<juce::File> PresetManager::getAvailablePresets() const
 }
 
 //==============================================================================
-juce::File PresetManager::getDefaultPresetFolder() const
+juce::File PresetManager::getDefaultPresetFolder()
 {
     return juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
         .getChildFile("Space Dust")
         .getChildFile("Presets");
 }
 
-juce::File PresetManager::getUserConfigFile() const
+juce::File PresetManager::appDataFolder()
+{
+    auto userData = juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory);
+
+   #if JUCE_MAC
+    // JUCE maps userApplicationDataDirectory to "~/Library" on macOS, not to
+    // "~/Library/Application Support" where per-user settings belong and where the
+    // installer writes config.xml. Be explicit rather than inheriting that surprise.
+    return userData.getChildFile("Application Support").getChildFile("Space Dust");
+   #else
+    return userData.getChildFile("Space Dust");
+   #endif
+}
+
+juce::File PresetManager::getUserConfigFile()
 {
     // %APPDATA%\Space Dust\config.xml on Windows, ~/Library/Application Support/... on macOS.
     // Always user-writable so the plugin can persist preset-folder changes without elevation.
+    return appDataFolder().getChildFile("config.xml");
+}
+
+juce::File PresetManager::getLegacyUserConfigFile()
+{
+    // Builds before appDataFolder() was corrected wrote here on macOS. Read-only, so a
+    // user who had changed their preset folder in-plugin doesn't silently lose it.
     return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
         .getChildFile("Space Dust")
         .getChildFile("config.xml");
 }
 
-juce::File PresetManager::getSystemConfigFile() const
+juce::File PresetManager::getSystemConfigFile()
 {
     // %ProgramData%\Space Dust\config.xml on Windows. Written by the all-users installer;
     // used as a read-only fallback when no per-user config exists yet.
@@ -139,9 +160,9 @@ void PresetManager::savePresetFolderConfig() const
     config.writeTo(configFile);
 }
 
-void PresetManager::loadPresetFolderConfig()
+juce::File PresetManager::configuredPresetFolder()
 {
-    auto tryLoad = [this](const juce::File& configFile) -> bool
+    auto tryLoad = [](const juce::File& configFile, juce::File& out) -> bool
     {
         if (!configFile.existsAsFile())
             return false;
@@ -151,16 +172,25 @@ void PresetManager::loadPresetFolderConfig()
         auto folderPath = xml->getStringAttribute("presetFolder");
         if (folderPath.isEmpty())
             return false;
-        presetFolder = juce::File(folderPath);
-        return presetFolder.exists();
+        out = juce::File(folderPath);
+        return out.exists();
     };
 
+    juce::File folder;
     // User config (per-user install OR previous in-plugin folder change) wins.
-    if (tryLoad(getUserConfigFile()))
-        return;
+    if (tryLoad(getUserConfigFile(), folder))
+        return folder;
+    // Then wherever older macOS builds put it.
+    if (tryLoad(getLegacyUserConfigFile(), folder))
+        return folder;
     // Fall back to system config written by an all-users installer.
-    if (tryLoad(getSystemConfigFile()))
-        return;
+    if (tryLoad(getSystemConfigFile(), folder))
+        return folder;
 
-    presetFolder = getDefaultPresetFolder();
+    return getDefaultPresetFolder();
+}
+
+void PresetManager::loadPresetFolderConfig()
+{
+    presetFolder = configuredPresetFolder();
 }
