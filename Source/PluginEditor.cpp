@@ -3226,6 +3226,41 @@ namespace
 //==============================================================================
 // -- Constructor --
 
+//==============================================================================
+// -- Is this application currently frontmost? --
+// Needed to decide whether clicking the floating window should haul the host
+// forward, or leave the z-order completely alone. Getting that wrong in either
+// direction is visible: always raising means the plugin permanently outranks the
+// DAW and clicking the DAW cannot win focus back; never raising means clicking in
+// from another application does nothing at all.
+//
+// juce::Process::isForegroundProcess() cannot be used -- it exists only in
+// juce_Threads_mac.mm, so on Windows it is a stub that silently answers nothing.
+//
+// The three Win32 calls are declared by hand rather than including <windows.h>,
+// which defines a Rectangle() function that collides with juce::Rectangle right
+// through this file.
+namespace
+{
+   #if JUCE_WINDOWS
+    extern "C" __declspec(dllimport) void*         __stdcall GetForegroundWindow();
+    extern "C" __declspec(dllimport) unsigned long __stdcall GetWindowThreadProcessId(void*, unsigned long*);
+    extern "C" __declspec(dllimport) unsigned long __stdcall GetCurrentProcessId();
+
+    bool thisAppIsFrontmost()
+    {
+        unsigned long pid = 0;
+        GetWindowThreadProcessId(GetForegroundWindow(), &pid);
+        return pid == GetCurrentProcessId();
+    }
+   #else
+    bool thisAppIsFrontmost()
+    {
+        return juce::Process::isForegroundProcess();   // genuinely implemented on macOS
+    }
+   #endif
+}
+
 SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProcessor& p)
     : AudioProcessorEditor(&p), audioProcessor(p),
       tabbedComponent(juce::TabbedButtonBar::TabsAtTop),
@@ -5523,6 +5558,33 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // than an explicit setLookAndFeel() renders as a stock JUCE widget. That is exactly
     // what made the Master knobs stop matching the rest of the synth.
     shell.setLookAndFeel(&customLookAndFeel);
+
+    // Clicking the floating window has to be able to bring the whole application
+    // forward when it is not already frontmost. The shell cannot do this itself: it
+    // refuses activation on purpose (so the DAW keeps the spacebar), and the window
+    // that actually needs raising is the HOST's, which only the editor can reach --
+    // the stub is a child of it, so getPeer() here IS the host's window.
+    //
+    // Raise the host first and this window second, in that order, or the host would
+    // land on top of the very window that was just clicked.
+    shell.onForegroundRequest = [this]
+    {
+        if (isBeingDestroyed.load())
+            return;
+
+        // ONLY when this application is not already frontmost. Doing it on every
+        // click made the plugin permanently outrank the DAW: each press shoved the
+        // window back on top, so clicking Ableton could never get the front seat
+        // back (Giuseppe, 2026-08-01). Inside the app this now does nothing at all,
+        // and ordinary window behaviour applies.
+        if (thisAppIsFrontmost())
+            return;
+
+        if (auto* hostPeer = getPeer())
+            hostPeer->toFront(true);      // BringWindowToTop on the host's HWND
+
+        shell.toFront(false);             // ...then us, without taking keyboard focus
+    };
 
     designHeight_ = 857 + (standaloneKeyboard != nullptr ? standaloneKeyboardHeight : 0);
 

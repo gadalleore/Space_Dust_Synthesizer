@@ -60,6 +60,13 @@ public:
 
         resizer = std::make_unique<juce::ResizableCornerComponent> (this, &constrainer);
         addAndMakeVisible (*resizer);
+
+        // Listen to every descendant's mouse events, not just our own. A click that
+        // lands on a knob is consumed by that knob and never reaches this component,
+        // so without this the come-back-from-another-app fix in mouseDown would only
+        // work when you happened to click bare background. mouseDown filters on
+        // eventComponent so the dragging half still only responds to the shell.
+        addMouseListener (this, true);
     }
 
     ~FloatingShell() override
@@ -187,6 +194,11 @@ public:
             removeFromDesktop();
     }
 
+    /** Called on every press anywhere in the shell. The editor uses it to bring the
+        host's window forward, which is the only way clicking this window from another
+        application activates anything -- see mouseDown for why. */
+    std::function<void()> onForegroundRequest;
+
     /** The UI that fills the shell. Not owned -- the caller keeps it alive. */
     void setContent (juce::Component* newContent)
     {
@@ -237,6 +249,36 @@ public:
     //--------------------------------------------------------------------------
     void mouseDown (const juce::MouseEvent& e) override
     {
+        // -- Clicking in from ANOTHER application --
+        // Refusing the keyboard means this window answers WM_MOUSEACTIVATE with
+        // MA_NOACTIVATE, which is what lets the DAW keep the spacebar. The cost is
+        // that a click on us activates nothing at all -- so coming back from another
+        // app (a browser, a terminal) the window stayed dead and the host never came
+        // forward (Giuseppe, 2026-08-01).
+        //
+        // Gated on the process NOT already being frontmost, which is what keeps the
+        // two behaviours from fighting: inside the host nothing happens here and the
+        // transport keeps the keyboard exactly as before; from outside, the host's
+        // process is brought forward and this window raised above it.
+        //
+        // Done through a callback the editor supplies, because the useful handle is
+        // the HOST's window and only the editor can reach it (the stub is a child of
+        // it, so its peer IS the host's window).
+        //
+        // The obvious-looking juce::Process::makeForegroundProcess() is NOT the answer
+        // on Windows: it and isForegroundProcess() are implemented only in
+        // juce_Threads_mac.mm, so on Windows they are stubs. Calling them compiled,
+        // linked, and did precisely nothing -- which is why the first attempt at this
+        // appeared to be a stale plugin in Ableton (2026-08-01).
+        if (onForegroundRequest != nullptr)
+            onForegroundRequest();
+
+        // Everything below is window-dragging, and must only run for presses on the
+        // shell ITSELF. This is also a listener on every child (see the constructor),
+        // so without this a click on any knob would start dragging the window.
+        if (e.eventComponent != this)
+            return;
+
         // Settle to home before the drag begins, so the position the dragger
         // starts from is the real one and not a shaken-out frame.
         setShakeOffset ({});
@@ -245,14 +287,23 @@ public:
         dragger.startDraggingComponent (this, e);
     }
 
+    // Both of these are reached for child events too (we listen to the whole tree),
+    // so both must ignore anything that did not start on the shell itself -- or
+    // dragging a knob would drag the window along with it.
     void mouseDrag (const juce::MouseEvent& e) override
     {
+        if (! dragging || e.eventComponent != this)
+            return;
+
         dragger.dragComponent (this, e, nullptr);
         home = getPosition();       // dragged: here is the new home
     }
 
-    void mouseUp (const juce::MouseEvent&) override
+    void mouseUp (const juce::MouseEvent& e) override
     {
+        if (e.eventComponent != this)
+            return;
+
         dragging = false;
         home = getPosition();
     }
