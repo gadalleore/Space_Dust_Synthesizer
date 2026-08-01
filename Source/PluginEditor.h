@@ -612,11 +612,12 @@ private:
     // the window twitches by a single pixel and nothing more. That IS the "really
     // subtle" that was asked for, but it also means turning this down further has
     // almost no effect: past here the only remaining step is off.
-    /** TEMPORARILY OFF (Giuseppe, 2026-08-01) so the glow can be judged without the
-        window moving underneath it. Flip to true to restore -- every tuned constant
-        below is untouched, and with it false the 60Hz timer is never started at all,
-        so the window sits exactly at its home position. */
-    static constexpr bool  kShakeEnabled = false;
+    /** Master switch for the shake. Was turned off briefly on 2026-08-01 to judge the
+        glow without the window moving underneath it, and turned back on once the glow
+        was settled. With it false the 60Hz timer is never started at all, so the
+        window sits exactly at its home position rather than being driven to a zero
+        offset every frame -- useful again any time the bloom needs judging. */
+    static constexpr bool  kShakeEnabled = true;
 
     static constexpr int   kShakeFps     = 60;
     static constexpr float kShakeMax     = 0.656f;  // px at full level (25% of 2.625)
