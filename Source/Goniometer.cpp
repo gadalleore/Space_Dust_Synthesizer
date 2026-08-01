@@ -1,4 +1,5 @@
 #include "Goniometer.h"
+#include "SpaceDustLookAndFeel.h"
 
 //==============================================================================
 void Goniometer::paint(juce::Graphics& g)
@@ -52,14 +53,40 @@ void Goniometer::paint(juce::Graphics& g)
     if (!p.isEmpty())
     {
         p.applyTransform(juce::AffineTransform::verticalFlip(ch * 0.5f));
+
+        // Older sweeps first, so the live figure lands on top of its own ghosts.
+        SpaceDustDither::ghostTrail(g, traceHistory, 2.5f * 1.4f, kTrailSpread, kTrailAlpha);
+
+        // Bloom, scaled by the meter (same law as every other element).
+        if (auto* sdLnf = dynamic_cast<SpaceDustLookAndFeel*>(&getLookAndFeel()))
+        {
+            if (const float glow = sdLnf->getGlowAmount(); glow > 0.01f)
+            {
+                for (int pass = 0; pass < 2; ++pass)
+                {
+                    g.setColour(pathColourOutside.withAlpha(glow * (pass == 0 ? 0.14f : 0.24f)));
+                    g.strokePath(p, juce::PathStrokeType(2.5f * (pass == 0 ? 4.0f : 2.2f)));
+                }
+            }
+        }
+
         g.setColour(pathColourOutside);
         g.strokePath(p, juce::PathStrokeType(2.5f));
+
+        traceHistory.push_back(p);
+
+        while (static_cast<int>(traceHistory.size()) > kHistoryLength)
+            traceHistory.erase(traceHistory.begin());
     }
 }
 
 //==============================================================================
 void Goniometer::resized()
 {
+    // Stored ghosts were built against the old size and would smear in the wrong
+    // places; drop them and let the trail rebuild.
+    traceHistory.clear();
+
     const int cw = juce::jmax(1, getWidth());
     const int ch = juce::jmax(1, getHeight());
     int dim = juce::jmin(cw, ch);

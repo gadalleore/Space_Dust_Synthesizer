@@ -234,10 +234,31 @@ namespace
         }
     }
 
+    //==========================================================================
+    // -- Ambient glow: OFF (Giuseppe, 2026-08-01) --
+    // One switch for the level-reactive bloom that used to sit behind everything:
+    // the halos around each group box, the arcade edge glow along the top and
+    // bottom of the plate, and the glow strips behind the tab bars.
+    //
+    // Switched off rather than deleted, because it is a look that may well be
+    // wanted back, and the drawing code is worth more than the lines it costs.
+    // Flip this to true and all of it returns exactly as it was.
+    //
+    // NOT included: the starfield (that is background texture, not glow) and the
+    // toggle buttons' lit state (that is how a button shows it is on). Both are
+    // still drawn. The knobs' own bloom went earlier, with the knob bodies.
+    constexpr bool kGlowEnabled = false;
+
     // Draw glow halos directly (keeps bleed fix from LookAndFeel, overlap may add slightly)
     void drawGlows(juce::Graphics& g, int baseAlpha, juce::Colour glowCol,
                   std::initializer_list<const juce::Component*> groupList)
     {
+        if constexpr (! kGlowEnabled)
+        {
+            juce::ignoreUnused(g, baseAlpha, glowCol, groupList);
+            return;
+        }
+
         const float cornerSize = 6.0f, glowExtent = 18.0f;
         const int numBands = 8;
         for (const juce::Component* comp : groupList)
@@ -265,13 +286,13 @@ namespace
     /** Group halo / drawGlows hue: cyan vs red when meter is in clipping hold (matches edge glow). */
     inline juce::Colour meterLinkedGroupGlowHue(bool clipping)
     {
-        return clipping ? juce::Colour(0xffdd3333) : juce::Colour(0xff00b4ff);
+        return clipping ? juce::Colour(SpaceDustLookAndFeel::kClipRed) : juce::Colour(0xff00b4ff);
     }
 
     /** Title outer-glow layers (slightly brighter cyan than group halos). */
     inline juce::Colour meterLinkedTitleGlowHue(bool clipping)
     {
-        return clipping ? juce::Colour(0xffdd3333) : juce::Colour(0xff00d4ff);
+        return clipping ? juce::Colour(SpaceDustLookAndFeel::kClipRed) : juce::Colour(0xff00d4ff);
     }
 }
 
@@ -290,13 +311,16 @@ public:
         const int oh = getHeight();
         if (w <= 0 || oh <= 0) return;
 
+        // Ambient glow is off; this strip draws nothing. See kGlowEnabled.
+        if constexpr (! kGlowEnabled) { juce::ignoreUnused(g); return; }
+
         float avgLevel = editor.getGlowMeterLevel();  // single per-frame averaged L/R snapshot
         const bool isRed = (editor.clippingHoldTicks > 0);
         // 50% more subtle on tabs: scale down alpha
         juce::uint8 peakAlpha = static_cast<juce::uint8>(juce::jlimit(0, 255, static_cast<int>((6 + 60 * avgLevel) * 0.5f)));
 
-        const juce::Colour edgeCol = isRed ? juce::Colour(0xffdd3333) : juce::Colour(0xff00d4ff);
-        const juce::Colour midCol  = isRed ? juce::Colour(0xff991818) : juce::Colour(0xff0066aa);
+        const juce::Colour edgeCol = isRed ? juce::Colour(SpaceDustLookAndFeel::kClipRed) : juce::Colour(0xff00d4ff);
+        const juce::Colour midCol  = isRed ? juce::Colour(SpaceDustLookAndFeel::kClipRed).darker(0.6f) : juce::Colour(0xff0066aa);
         const juce::Colour fadeCol = juce::Colours::transparentBlack;
 
         // Parabolic depth for top glow (same as main editor)
@@ -349,13 +373,16 @@ public:
         const int oh = getHeight();
         if (w <= 0 || oh <= 0) return;
 
+        // Ambient glow is off; this strip draws nothing. See kGlowEnabled.
+        if constexpr (! kGlowEnabled) { juce::ignoreUnused(g); return; }
+
         float avgLevel = editor.getGlowMeterLevel();  // single per-frame averaged L/R snapshot
         const bool isRed = (editor.clippingHoldTicks > 0);
         // 50% more subtle on tabs: scale down alpha
         juce::uint8 peakAlpha = static_cast<juce::uint8>(juce::jlimit(0, 255, static_cast<int>((6 + 60 * avgLevel) * 0.5f)));
 
-        const juce::Colour edgeCol = isRed ? juce::Colour(0xffdd3333) : juce::Colour(0xff00d4ff);
-        const juce::Colour midCol  = isRed ? juce::Colour(0xff991818) : juce::Colour(0xff0066aa);
+        const juce::Colour edgeCol = isRed ? juce::Colour(SpaceDustLookAndFeel::kClipRed) : juce::Colour(0xff00d4ff);
+        const juce::Colour midCol  = isRed ? juce::Colour(SpaceDustLookAndFeel::kClipRed).darker(0.6f) : juce::Colour(0xff0066aa);
         const juce::Colour fadeCol = juce::Colours::transparentBlack;
 
         auto parabolicDepth = [](float xNorm, float layerHeight) -> float {
@@ -398,6 +425,79 @@ StereoLevelMeterComponent::StereoLevelMeterComponent(SpaceDustAudioProcessor& pr
     : audioProcessor(processor)
 {
     setAccessible(false);
+    startTimerHz(kFps);
+}
+
+// Ballistics, run per frame at kFps. Ported from Sol Voice Tuner's EdgeMeters:
+// instant attack, a short hold, then a fall -- and a separate peak-hold mark that
+// sinks more slowly and dissolves as it goes.
+void StereoLevelMeterComponent::timerCallback()
+{
+    const float in[2] { audioProcessor.getLeftPeakLevel(),
+                        audioProcessor.getRightPeakLevel() };
+    bool changed = false;
+
+    for (int ch = 0; ch < 2; ++ch)
+    {
+        const float wasLevel = level[ch];
+        const float wasMark  = mark[ch];
+        const float wasFade  = markFade[ch];
+
+        if (in[ch] >= level[ch])
+        {
+            level[ch] = in[ch];
+            hold[ch]  = kHoldFrames;
+        }
+        else if (hold[ch] > 0)
+        {
+            --hold[ch];
+        }
+        else
+        {
+            level[ch] *= kRelease;
+
+            // Below the scale's floor there is nothing left to draw, so snap to
+            // zero rather than repainting an invisible bar forever.
+            if (dbToHeight(linearToDb(level[ch])) <= 0.0f)
+                level[ch] = 0.0f;
+        }
+
+        // The tick takes every new high instantly and never sits below the bar;
+        // left alone it sinks at its own rate and dissolves as it goes.
+        if (level[ch] >= mark[ch])
+        {
+            mark[ch]     = level[ch];
+            markHold[ch] = kMarkHoldFrames;
+            markFade[ch] = 1.0f;
+        }
+        else if (markHold[ch] > 0)
+        {
+            --markHold[ch];
+        }
+        else
+        {
+            mark[ch]     *= kMarkRelease;
+            markFade[ch] *= kMarkFade;
+
+            // Gone once it is too faint to read, without waiting for the position
+            // to crawl all the way down to the floor.
+            if (markFade[ch] <= kMarkMinAlpha || dbToHeight(linearToDb(mark[ch])) <= 0.0f)
+            {
+                mark[ch]     = 0.0f;
+                markFade[ch] = 0.0f;
+            }
+        }
+
+        changed = changed
+               || level[ch]    != wasLevel
+               || mark[ch]     != wasMark
+               || markFade[ch] != wasFade;
+    }
+
+    // Only when something actually moved: at silence every value is pinned at zero
+    // and the meter stops asking to be redrawn entirely.
+    if (changed)
+        repaint();
 }
 
 void StereoLevelMeterComponent::paint(juce::Graphics& g)
@@ -407,38 +507,75 @@ void StereoLevelMeterComponent::paint(juce::Graphics& g)
     const int barGap = 4;
     const int totalWidth = (barWidth * 2) + barGap;
     int startX = (bounds.getWidth() - totalWidth) / 2;  // Center the meters
-    
-    // Left meter
-    auto leftMeter = juce::Rectangle<int>(startX, 0, barWidth, bounds.getHeight());
-    // Right meter
-    auto rightMeter = juce::Rectangle<int>(startX + barWidth + barGap, 0, barWidth, bounds.getHeight());
-    
-    // Helper to draw a single meter bar
-    auto drawMeter = [&](juce::Rectangle<int> meterRect, float peakLevel)
+
+    const juce::Rectangle<int> meters[2] {
+        juce::Rectangle<int>(startX, 0, barWidth, bounds.getHeight()),
+        juce::Rectangle<int>(startX + barWidth + barGap, 0, barWidth, bounds.getHeight())
+    };
+
+    // Bloom amount, taken from the LookAndFeel this component inherits rather than
+    // pushed in: the plate carries SpaceDustLookAndFeel, so every child can just ask.
+    float glow = 0.0f;
+    if (auto* sdLnf = dynamic_cast<SpaceDustLookAndFeel*>(&getLookAndFeel()))
+        glow = sdLnf->getGlowAmount();
+
+    // No background and no border (Giuseppe, 2026-08-01): the bars are the whole
+    // meter, and everything else is transparent so the plate shows through. No L/R
+    // lettering either -- two vertical bars side by side read as left and right
+    // without being told.
+    for (int ch = 0; ch < 2; ++ch)
     {
-        // Background: black
-        g.setColour(juce::Colour(0xff000000));
-        g.fillRect(meterRect);
-        
-        // Calculate fill height from peak level
-        float db = linearToDb(peakLevel);
-        float heightNorm = dbToHeight(db);
-        int fillHeight = static_cast<int>(meterRect.getHeight() * heightNorm);
-        
+        const auto  meterRect = meters[ch];
+        const auto  colF      = meterRect.toFloat();
+
+        const float db         = linearToDb(level[ch]);
+        const float heightNorm = dbToHeight(db);
+        const int   fillHeight = static_cast<int>(meterRect.getHeight() * heightNorm);
+
+        const float markNorm = dbToHeight(linearToDb(mark[ch]));
+
+        // Silent channel with no mark left: draw nothing at all, and drop the trail
+        // history so the next sound does not smear from wherever it stopped.
+        if (fillHeight <= 0 && markNorm <= 0.0f)
+        {
+            trails[ch].clearQuick();
+            markTrails[ch].clearQuick();
+            continue;
+        }
+
         if (fillHeight > 0)
         {
             auto fillRect = meterRect.withHeight(fillHeight).withY(meterRect.getBottom() - fillHeight);
-            
+
+            // The RGB smear goes down FIRST, so the bar lands on top of its own
+            // tail rather than being veiled by it.
+            paintTrail(g, colF, (float) fillRect.getY(), trails[ch], kTrailHeadHeight);
+
+            // Bloom around the bar, widening outwards from its own colour.
+            if (glow > 0.01f)
+            {
+                const juce::Colour barHue = (db > -1.0f)
+                    ? juce::Colour(SpaceDustLookAndFeel::kClipRed)
+                    : juce::Colour(0xff00ffff);
+
+                for (int pass = 0; pass < 2; ++pass)
+                {
+                    const float widen = (pass == 0) ? 6.0f : 3.0f;
+                    g.setColour(barHue.withAlpha(glow * (pass == 0 ? 0.14f : 0.24f)));
+                    g.fillRect(fillRect.toFloat().expanded(widen, widen * 0.5f));
+                }
+            }
+
             // Red for clipping (above -1 dB), cyan/blue for normal
             if (db > -1.0f)
             {
                 // Clipping region: red at the TOP of the fill
-                g.setColour(juce::Colour(0xffff0000));
+                g.setColour(juce::Colour(SpaceDustLookAndFeel::kClipRed));
                 int redHeight = juce::jmin(fillHeight, static_cast<int>(meterRect.getHeight() * 0.15f)); // Top 15% = red
                 // Red rect starts at the TOP of the fill (not bottom)
                 auto redRect = fillRect.withHeight(redHeight).withY(fillRect.getY());
                 g.fillRect(redRect);
-                
+
                 // Below clipping: cyan
                 if (fillHeight > redHeight)
                 {
@@ -454,36 +591,93 @@ void StereoLevelMeterComponent::paint(juce::Graphics& g)
                 g.fillRect(fillRect);
             }
         }
-        
-        // Border: subtle gray
-        g.setColour(juce::Colour(0x33333333));
-        g.drawRect(meterRect, 1);
-    };
-    
-    // Draw both meters
-    drawMeter(leftMeter, leftPeak.load());
-    drawMeter(rightMeter, rightPeak.load());
-    
-    // Labels: "L" and "R" at the bottom if space allows
-    if (bounds.getHeight() > 30)
-    {
-        g.setColour(juce::Colour(0xffa0d8ff));  // Light blue/cosmic color
-        g.setFont(juce::Font(juce::FontOptions(12.0f, juce::Font::plain)));  // Standard body font
-        g.drawText("L", leftMeter.withY(leftMeter.getBottom() - 15).withHeight(12), juce::Justification::centred, true);
-        g.drawText("R", rightMeter.withY(rightMeter.getBottom() - 15).withHeight(12), juce::Justification::centred, true);
+        else
+        {
+            trails[ch].clearQuick();
+        }
+
+        // The peak-hold tick, trailing above the bar on its slower fall.
+        if (markNorm > 0.0f)
+        {
+            const float markY = colF.getBottom() - markNorm * colF.getHeight();
+            const float drawY = juce::jmin(markY, colF.getBottom() - kMarkThickness);
+
+            // It moves, so it smears too -- the whole tick, not just an edge of it.
+            paintTrail(g, colF, drawY, markTrails[ch], kMarkThickness);
+
+            // Red when the peak it is holding was in the red (Giuseppe, 2026-08-01).
+            // (Bloom applied just below, once the colour is known.)
+            // Tested against the MARK's own level, not the live one, because the tick
+            // represents that captured peak: it stays red the whole way down from a
+            // clip and only cools once it has sunk back below the line.
+            const bool markInRed = linearToDb(mark[ch]) > -1.0f;
+
+            const juce::Colour markHue = markInRed ? juce::Colour(SpaceDustLookAndFeel::kClipRed)
+                                                   : juce::Colour(0xff00ffff);
+            const float markAlpha = juce::jlimit(0.0f, 1.0f, markFade[ch]);
+
+            // The tick blooms too, faded by its own dissolve so a dying mark does not
+            // glow harder than the bar that outlived it.
+            if (glow > 0.01f)
+            {
+                for (int pass = 0; pass < 2; ++pass)
+                {
+                    const float widen = (pass == 0) ? 6.0f : 3.0f;
+                    g.setColour(markHue.withAlpha(glow * markAlpha
+                                                  * (pass == 0 ? 0.14f : 0.24f)));
+                    g.fillRect(colF.withY(drawY).withHeight(kMarkThickness)
+                                   .expanded(widen, widen * 0.5f));
+                }
+            }
+
+            g.setColour(markHue.withAlpha(markAlpha));
+            g.fillRect(colF.withY(drawY).withHeight(kMarkThickness));
+        }
     }
+}
+
+void StereoLevelMeterComponent::paintTrail(juce::Graphics& g, juce::Rectangle<float> col,
+                                           float top, juce::Array<float>& history,
+                                           float headHeight)
+{
+    if (history.isEmpty() || std::abs(top - history.getLast()) > kTrailMinStep)
+    {
+        history.add(top);
+
+        while (history.size() > kTrailLength)
+            history.remove(0);
+    }
+    else if (history.size() > 1)
+    {
+        // Standing still: collapse the streak back into the bar fast -- two frames'
+        // worth per frame, so it is gone in a blink.
+        history.remove(0);
+
+        if (history.size() > 1)
+            history.remove(0);
+    }
+
+    if (history.isEmpty())
+        return;
+
+    // The streak spans the whole distance travelled, not one frame's worth.
+    const float displacement = history.getFirst() - top;
+
+    if (std::abs(displacement) < kTrailMinSmear)
+        return;
+
+    // Only the head smears. Streaking the whole bar would stamp a column of stipple
+    // down the plate every time the level moved.
+    juce::Path head;
+    head.addRectangle(col.withTop(top)
+                         .withHeight(juce::jmin(headHeight, col.getBottom() - top)));
+
+    SpaceDustDither::streakRgb(g, head, { 0.0f, displacement }, kTrailSteps, kTrailAlpha);
 }
 
 void StereoLevelMeterComponent::resized()
 {
     // Component is already sized by parent, just trigger repaint
-    repaint();
-}
-
-void StereoLevelMeterComponent::updateLevels(float newLeftPeak, float newRightPeak)
-{
-    leftPeak.store(newLeftPeak);
-    rightPeak.store(newRightPeak);
     repaint();
 }
 
@@ -2834,7 +3028,7 @@ void SpectralPageComponent::drawLissajous(juce::Graphics& g, juce::Rectangle<int
     const float maxGain = 3.981f;     // +12 dB
 
     bool showClipping = parentEditor.clippingHoldTicks > 0;
-    const juce::Colour pathColour = showClipping ? juce::Colour(0xffdd2222) : juce::Colour(0xff48bde8);
+    const juce::Colour pathColour = showClipping ? juce::Colour(SpaceDustLookAndFeel::kClipRed) : juce::Colour(0xff48bde8);
 
     int dim = juce::jmin(cw, ch);
     int margin = juce::jmin(4, dim / 12);
@@ -6119,9 +6313,11 @@ void SpaceDustAudioProcessorEditor::timerCallback()
         float rightPeak = audioProcessor.getRightPeakLevel();
         glowMeterLevel_ = juce::jmin(1.0f, 0.5f * (leftPeak + rightPeak));
 
-        // Update stereo level meters (glow brightness follows output level)
-        if (stereoLevelMeter != nullptr && !isBeingDestroyed.load())
-            stereoLevelMeter->updateLevels(leftPeak, rightPeak);
+        // The stereo meter is NOT pushed from here any more. It reads the same peak
+        // atomics itself on its own 60Hz timer, because its peak-hold fall and RGB
+        // motion smear are per-frame effects that stutter when fed at this timer's
+        // 20Hz. Reading the atomics twice is free -- they are plain loads, not
+        // consumed like Sol's getAndClearMeterPeak.
     }
     // Update clipping hold state (runs every tick regardless of active tab)
     {
@@ -6135,6 +6331,10 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     }
 
     customLookAndFeel.setOutputMeterClipping(clippingHoldTicks > 0);
+
+    // Feeds the knob arcs, which fill by output level. Same per-frame snapshot every
+    // other glow site reads, so knobs, halos and starfield all move off one value.
+    customLookAndFeel.setOutputMeterLevel(glowMeterLevel_);
 
     // Redraw glow halos / starfield / edge glow so they follow output level - but ONLY when
     // the level or clipping state actually changed. The whole-editor repaint re-lays-out every
@@ -6195,8 +6395,15 @@ void SpaceDustAudioProcessorEditor::timerCallback()
         {
             // Mode changed (UI, automation, or preset): the Master box height now
             // depends on this, so relayout to collapse (Poly) / expand (Mono/Legato).
+            //
+            // layoutPlate(), NOT resized(). The editor's resized() is the stub's now and
+            // does nothing, so calling it here silently stopped the Master box resizing
+            // when the voice mode changed -- the border simply never moved. The plate is
+            // repainted too because the painted face (the logo sits off the Master box's
+            // bottom edge) depends on the layout this just changed.
             legatoGlideButton.setVisible(isMonoOrLegato);
-            resized();
+            layoutPlate();
+            plate.repaint();
         }
     }
 }
@@ -6232,6 +6439,11 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
     // -- Arcade Edge Glow (top & bottom) - parabolic, subtle, smooth color gradient --
     // Cyan -> deep blue -> transparent. Red variant when metering in red zone.
     // Tabs are translucent so glow shows through at their bottom edge.
+    //
+    // Off as of 2026-08-01 -- see kGlowEnabled at the top of this file. The whole
+    // block is compiled out by the `if constexpr`, so it costs nothing while off and
+    // comes back untouched when the flag is flipped.
+    if constexpr (kGlowEnabled)
     {
         float avgLevel = getGlowMeterLevel();  // single per-frame averaged L/R snapshot
 
@@ -6241,8 +6453,8 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
         juce::uint8 peakAlpha = static_cast<juce::uint8>(juce::jlimit(0, 255, static_cast<int>(6 + 60 * avgLevel)));
 
         // Color gradient: bright at edge, deeper shade inward, then transparent
-        const juce::Colour edgeCol = isRed ? juce::Colour(0xffdd3333) : juce::Colour(0xff00d4ff);  // Darker red when clipping
-        const juce::Colour midCol  = isRed ? juce::Colour(0xff991818) : juce::Colour(0xff0066aa);  // Deeper red
+        const juce::Colour edgeCol = isRed ? juce::Colour(SpaceDustLookAndFeel::kClipRed) : juce::Colour(0xff00d4ff);  // Darker red when clipping
+        const juce::Colour midCol  = isRed ? juce::Colour(SpaceDustLookAndFeel::kClipRed).darker(0.6f) : juce::Colour(0xff0066aa);  // Deeper red
         const juce::Colour fadeCol = juce::Colours::transparentBlack;
 
         // Parabolic depth: center extends further (U/n-shape)
@@ -6539,6 +6751,15 @@ void SpaceDustAudioProcessorEditor::driveShake(float level)
 // -- Resized Method --
 // The editor is now just the stub and has nothing to lay out. The real layout is
 // layoutPlate(), driven by the plate's resized() inside the shell.
+//
+// DELIBERATELY EMPTY, and deliberately NOT forwarding to layoutPlate(): this fires when
+// the HOST resizes the stub, which has nothing to do with the size of the floating
+// window, so forwarding would relayout the UI against the wrong dimensions.
+//
+// The trap that follows from that: any code that used to call resized() to force a
+// relayout is now a silent no-op. That is what stopped the Master box resizing on a
+// voice-mode change. Call layoutPlate() instead -- and grep for bare resized() calls
+// inside this class before assuming a layout bug is anywhere else.
 
 void SpaceDustAudioProcessorEditor::resized()
 {

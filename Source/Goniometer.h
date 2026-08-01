@@ -1,8 +1,11 @@
 #pragma once
 
 #include <array>
+#include <vector>
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_gui_basics/juce_gui_basics.h>
+
+#include "SpaceDustDither.h"
 
 // Goniometer constants (adapted from MultiMeter)
 static constexpr float GONIO_NEGATIVE_INFINITY = -120.0f;
@@ -36,6 +39,17 @@ private:
 
     juce::AudioBuffer<float> internalBuffer;
     juce::Path p;
+
+    //==========================================================================
+    // -- Motion dither --
+    // The whole figure is somewhere new each frame, so there is no single moving
+    // head to streak. Instead the last few sweeps are ghosted behind the live one,
+    // each in a different channel -- Sol's treatment on its own Lissajous.
+    static constexpr int   kHistoryLength = 4;
+    static constexpr float kTrailSpread   = 3.5f;
+    static constexpr float kTrailAlpha    = 0.55f;
+
+    std::vector<juce::Path> traceHistory;
     int w = 0, h = 0;
     juce::Point<int> center;
     std::array<juce::String, 5> chars { "+S", "-S", "L", "M", "R" };

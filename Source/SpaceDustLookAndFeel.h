@@ -15,9 +15,118 @@ public:
     SpaceDustLookAndFeel();
     ~SpaceDustLookAndFeel() override = default;
 
+    /** THE red. Every element that turns red on clipping uses exactly this
+        (Giuseppe, 2026-08-01) -- it is the meters' red, and the meters are the
+        reference because they are the thing actually reading the level.
+
+        Before this there were seven different reds in play (ff6666, dd3333, ff8888,
+        ff5555, ff4444, dd2222, 991818), so the UI went red in mismatched shades
+        depending on which element you looked at. Anything new that reacts to
+        clipping must use this rather than picking its own. */
+    static constexpr juce::uint32 kClipRed = 0xffff0000;
+
     /** When true, meter-linked glow (groups, knobs, EQ curve) uses red tones (matches peak clipping). */
     void setOutputMeterClipping(bool clipping) noexcept { outputMeterClipping = clipping; }
     bool isOutputMeterClipping() const noexcept { return outputMeterClipping; }
+
+    /** Averaged output level [0,1], pushed once per UI frame by the editor's timer.
+        The knob arcs fill by this, so every knob doubles as a meter. Uses the same
+        snapshot every other glow site reads, so the whole UI moves off one value. */
+    void setOutputMeterLevel(float level) noexcept
+    {
+        outputMeterLevel = juce::jlimit(0.0f, 1.0f, level);
+
+        // A follower that trails the level, giving the arc head a "where it came
+        // from" to smear back towards.
+        //
+        // This is why the knob smear needs no per-knob state, which matters when
+        // there are fifty-odd of them: every arc is driven by the SAME level, so one
+        // lagging copy of that level describes every head's travel at once. Each
+        // knob just scales it by its own value.
+        outputMeterLag += (outputMeterLevel - outputMeterLag) * kLagFollow;
+    }
+    float getOutputMeterLevel() const noexcept { return outputMeterLevel; }
+
+    /** 0..1 bloom amount for EVERY element that glows (Giuseppe, 2026-08-01):
+        louder output, more glow; silence, none at all.
+
+        One function so the whole UI blooms by the same law -- knobs, meters, group
+        outlines and the scopes all scale by this rather than each inventing its own
+        response, which is how the old glow ended up inconsistent between elements.
+
+        Curved below linear (^0.7) because glow is perceived closer to logarithmically
+        than linearly: a straight mapping spends most of its travel invisible and then
+        slams on near the top. Anything that glows should multiply its alpha by this
+        and draw nothing when it is zero.
+
+        NOTE: this is per-ELEMENT bloom. The old ambient glow (halos behind the group
+        boxes, the arcade edge glow) stays off -- see kGlowEnabled in PluginEditor.cpp. */
+    float getGlowAmount() const noexcept
+    {
+        return std::pow(juce::jlimit(0.0f, 1.0f, outputMeterLevel), 0.7f);
+    }
+
+    /** Two-pass bloom behind a stroked path. Widening low-alpha passes rather than a
+        real blur -- cheap, and at these weights it reads the same. Draws nothing at
+        silence. Public so components outside the LookAndFeel (the EQ curve, the close
+        control) can bloom by the same law. */
+    void glowPath(juce::Graphics& g, const juce::Path& p,
+                  juce::Colour c, float baseThickness) const
+    {
+        const float glow = getGlowAmount();
+
+        if (glow <= 0.01f)
+            return;
+
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            g.setColour(c.withAlpha(glow * (pass == 0 ? 0.14f : 0.24f)));
+            g.strokePath(p, juce::PathStrokeType(baseThickness * (pass == 0 ? 4.0f : 2.2f)));
+        }
+    }
+
+    /** Two-pass bloom behind a filled rectangle. */
+    void glowRect(juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c) const
+    {
+        const float glow = getGlowAmount();
+
+        if (glow <= 0.01f)
+            return;
+
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            const float widen = (pass == 0) ? 6.0f : 3.0f;
+            g.setColour(c.withAlpha(glow * (pass == 0 ? 0.14f : 0.24f)));
+            g.fillRect(r.expanded(widen, widen * 0.5f));
+        }
+    }
+
+    /** Bloom behind TEXT, by stamping it at diagonal offsets in the glow colour.
+
+        Text has no path to widen, so a halo has to be built out of repeat draws --
+        the expensive kind of glow. Kept to two rings of four, and gated a little
+        higher than the others (0.05 rather than 0.01) because a barely-visible halo
+        is not worth eight extra drawText calls on every label in the synth. */
+    void glowText(juce::Graphics& g, const juce::String& text, juce::Rectangle<int> area,
+                  juce::Justification just, juce::Colour c) const
+    {
+        const float glow = getGlowAmount();
+
+        if (glow <= 0.05f || text.isEmpty())
+            return;
+
+        for (int ring = 2; ring >= 1; --ring)
+        {
+            g.setColour(c.withAlpha(glow * (ring == 2 ? 0.10f : 0.18f)));
+
+            const int d = ring;
+
+            g.drawText(text, area.translated(-d, -d), just, false);
+            g.drawText(text, area.translated( d, -d), just, false);
+            g.drawText(text, area.translated(-d,  d), just, false);
+            g.drawText(text, area.translated( d,  d), just, false);
+        }
+    }
 
     /** Colours that track the meter red zone (for Final EQ and other custom paint). */
     juce::Colour getMeterResponsiveKnobArcColour() const;
@@ -86,7 +195,14 @@ private:
     juce::Colour knobRimDark    = juce::Colour(0xff303050);
     juce::Colour knobRimLight   = juce::Colour(0xff505078);
 
-    bool outputMeterClipping = false;
+    bool  outputMeterClipping = false;
+    float outputMeterLevel    = 0.0f;
+
+    /** Trails outputMeterLevel; the gap between them is how far each arc head has
+        just travelled, which is what the RGB smear is drawn along. Lower = longer,
+        laggier tail. */
+    float outputMeterLag = 0.0f;
+    static constexpr float kLagFollow = 0.35f;
 
     juce::Typeface::Ptr glitchGoblinTypeface;
 };

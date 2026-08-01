@@ -1,4 +1,5 @@
 #include "SpectrumAnalyserComponent.h"
+#include "SpaceDustLookAndFeel.h"
 
 //==============================================================================
 SpectrumAnalyserComponent::SpectrumAnalyserComponent()
@@ -44,6 +45,7 @@ void SpectrumAnalyserComponent::paint(juce::Graphics& g)
             displayMagnitudes[static_cast<size_t>(i)] = prev + (magnitudeDb - prev) * coeff;
         }
         nextFFTBlockReady = false;
+        spectrumMoved = true;   // new data folded in: the trail may advance
     }
     // else: hold the last smoothed values (no per-paint decay -> no jitter)
 
@@ -96,6 +98,19 @@ void SpectrumAnalyserComponent::paint(juce::Graphics& g)
         return peak;
     };
 
+    // Ghosts of the previous few outlines, behind the bars.
+    SpaceDustDither::ghostTrail(g, outlineHistory, 2.0f, kTrailSpread, kTrailAlpha);
+
+    // Bloom amount, from the inherited LookAndFeel. Read once for the whole frame
+    // rather than per column -- there can be 512 of them.
+    float glowAmount = 0.0f;
+    if (auto* sdLnf = dynamic_cast<SpaceDustLookAndFeel*>(&getLookAndFeel()))
+        glowAmount = sdLnf->getGlowAmount();
+
+    // The curve the bar tops trace, accumulated as we go and kept for next frame.
+    juce::Path outline;
+    bool outlineStarted = false;
+
     for (int c = 0; c < numColumns; ++c)
     {
         float t0 = static_cast<float>(c)       / static_cast<float>(numColumns);
@@ -116,11 +131,48 @@ void SpectrumAnalyserComponent::paint(juce::Graphics& g)
         // Leave a hairline gap between columns so the individual lines read.
         float drawWidth = juce::jmax(1.0f, colWidth - 1.0f);
 
+        const float capX = x + drawWidth * 0.5f;
+
+        // Bloom around each column, scaled by the meter.
+        if (glowAmount > 0.01f)
+        {
+            for (int pass = 0; pass < 2; ++pass)
+            {
+                const float widen = (pass == 0) ? 3.0f : 1.5f;
+                g.setColour(fillColour.withAlpha(glowAmount * (pass == 0 ? 0.10f : 0.18f)));
+                g.fillRect(x - widen, y - widen, drawWidth + widen * 2.0f, barHeight + widen);
+            }
+        }
+
+        if (! outlineStarted)
+        {
+            outline.startNewSubPath(capX, y);
+            outlineStarted = true;
+        }
+        else
+        {
+            outline.lineTo(capX, y);
+        }
+
         g.setColour(fillColour);
         g.fillRect(x, y, drawWidth, barHeight);
         // Brighter cap on top for that crisp, futuristic edge.
         g.setColour(lineColour);
         g.fillRect(x, y, drawWidth, juce::jmin(1.5f, barHeight));
+    }
+
+    // Only advance the trail on frames that carried new FFT data. paint() can run
+    // for all sorts of reasons; if the history advanced on every one of them, a
+    // static spectrum would still push identical ghosts and the trail would decay
+    // to nothing while the picture had not moved at all.
+    if (outlineStarted && spectrumMoved)
+    {
+        outlineHistory.push_back(outline);
+
+        while (static_cast<int>(outlineHistory.size()) > kHistoryLength)
+            outlineHistory.erase(outlineHistory.begin());
+
+        spectrumMoved = false;
     }
 }
 

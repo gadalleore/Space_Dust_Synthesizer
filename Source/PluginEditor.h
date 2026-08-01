@@ -12,6 +12,7 @@
 #include "PresetManager.h"
 #include "CheezeGuyGame.h"
 #include "FloatingShell.h"
+#include "SpaceDustDither.h"
 
 // Glow overlays are defined in PluginEditor.cpp; forward-declare them here so the
 // unique_ptr members below resolve under ordinary name lookup. (A `friend class`
@@ -188,32 +189,75 @@ private:
     Displays two vertical bars showing peak levels from -Inf to 0 dB.
     Updates smoothly via timer, with cyan/blue fill and red clipping indicator.
 */
-class StereoLevelMeterComponent : public juce::Component
+class StereoLevelMeterComponent : public juce::Component,
+                                  private juce::Timer
 {
 public:
     StereoLevelMeterComponent(SpaceDustAudioProcessor& processor);
     ~StereoLevelMeterComponent() override = default;
-    
+
     void paint(juce::Graphics& g) override;
     void resized() override;
-    
-    // Called from editor timer to refresh display
-    void updateLevels(float leftPeak, float rightPeak);
-    
+
 private:
+    void timerCallback() override;
+
     SpaceDustAudioProcessor& audioProcessor;
-    
-    // Current peak levels (0.0 = silence, 1.0 = 0 dB, > 1.0 = clipping)
-    std::atomic<float> leftPeak{0.0f};
-    std::atomic<float> rightPeak{0.0f};
-    
+
+    //==========================================================================
+    // -- Ballistics (ported from Sol Voice Tuner's EdgeMeters) --
+    // Self-driven at 60Hz rather than pushed by the editor's 20Hz timer. Sol's
+    // release constants are PER FRAME at 60Hz, and the peak-hold fall and the
+    // motion smear both need the frame rate to read properly -- at 20Hz the mark
+    // descends in visible steps and the smear stutters. Reading the processor's
+    // peak atomics directly costs nothing (they are plain loads, not consumed),
+    // and it keeps the meter's timing independent of the UI repaint throttle.
+    static constexpr int kFps = 60;
+
+    // Bar: instant attack, short hold, then fall.
+    static constexpr float kRelease    = 0.89f;   // per frame
+    static constexpr int   kHoldFrames = 4;       // ~65ms at 60Hz
+
+    // Peak-hold ticks: slower than the bar by enough that the mark reads as its
+    // own object, but out of the way quickly once it starts to drop -- it sinks
+    // and dissolves at the same time.
+    static constexpr float kMarkRelease    = 0.955f;  // ~25 dB/s at 60Hz
+    static constexpr float kMarkFade       = 0.93f;
+    static constexpr float kMarkMinAlpha   = 0.06f;
+    static constexpr int   kMarkHoldFrames = 12;      // ~0.2s at 60Hz
+    static constexpr float kMarkThickness  = 2.0f;
+
+    // Motion trail (SpaceDustDither::streakRgb).
+    static constexpr int   kTrailLength     = 8;     // frames of travel retained
+    static constexpr int   kTrailSteps      = 9;     // stamps along the streak
+    static constexpr float kTrailMinStep    = 0.9f;  // px before a ghost is kept
+    static constexpr float kTrailMinSmear   = 2.5f;  // px of travel before drawing
+    static constexpr float kTrailAlpha      = 0.75f;
+    static constexpr float kTrailHeadHeight = 6.0f;  // px of bar top that smears
+
+    float level[2]     { 0.0f, 0.0f };
+    int   hold[2]      { 0, 0 };
+    float mark[2]      { 0.0f, 0.0f };
+    float markFade[2]  { 0.0f, 0.0f };
+    int   markHold[2]  { 0, 0 };
+
+    juce::Array<float> trails[2];
+    juce::Array<float> markTrails[2];   // the falling peak ticks smear too
+
+    /** Records where a moving edge is now and streaks the head back over where it
+        has just been. A held level travels nowhere and so draws nothing.
+        `headHeight` is how much of the shape smears -- the bar streaks only its top
+        few px, the peak tick streaks its whole (2px) self. */
+    void paintTrail(juce::Graphics& g, juce::Rectangle<float> col,
+                    float top, juce::Array<float>& history, float headHeight);
+
     // Meter dimensions
     static constexpr int meterWidth = 20;  // Width of each bar
     static constexpr int meterGap = 4;     // Gap between L and R bars
-    
+
     // Helper: Convert linear peak to dB (returns -Inf for 0, 0 for 1.0)
     float linearToDb(float linear);
-    
+
     // Helper: Convert dB to normalized height (0.0 = -Inf at bottom, 1.0 = 0 dB at top)
     float dbToHeight(float db);
 };
@@ -256,7 +300,23 @@ public:
     {
         auto r = getLocalBounds().toFloat().reduced(getWidth() * 0.25f);
 
-        g.setColour(juce::Colours::grey.withAlpha(hover ? 0.95f : 0.55f));
+        const juce::Colour c = juce::Colours::grey.withAlpha(hover ? 0.95f : 0.55f);
+
+        // Blooms with everything else. The X is grey rather than cyan, so its halo
+        // is grey too -- it should read as part of the same lit surface without
+        // pretending to be one of the signal-coloured controls.
+        if (auto* sdLnf = dynamic_cast<SpaceDustLookAndFeel*>(&getLookAndFeel()))
+        {
+            juce::Path cross;
+            cross.startNewSubPath(r.getX(),     r.getY());
+            cross.lineTo         (r.getRight(), r.getBottom());
+            cross.startNewSubPath(r.getRight(), r.getY());
+            cross.lineTo         (r.getX(),     r.getBottom());
+
+            sdLnf->glowPath(g, cross, c, 1.4f);
+        }
+
+        g.setColour(c);
         g.drawLine(r.getX(),     r.getY(), r.getRight(), r.getBottom(), 1.4f);
         g.drawLine(r.getRight(), r.getY(), r.getX(),     r.getBottom(), 1.4f);
     }
@@ -398,9 +458,24 @@ private:
     // Pitch bend snap-back: poll processor ramp and sync display
     bool pitchBendSnapActive{false};
 
-    // Clipping hold for spectral tab (keeps red state for a duration after clipping)
+    // Clipping hold: how long the red state persists after the output leaves the red zone.
+    //
+    // Was 10 ticks (~500ms), which is what made the UI sit red long after the sound had
+    // stopped clipping -- and because the hold RE-ARMS on every red frame, a passage that
+    // touched the threshold repeatedly kept restarting the full 500ms. Now one tick, so
+    // the red follows the meter down almost immediately (Giuseppe, 2026-08-01: "as soon as
+    // the synth goes out of the red, the color should go back to blue").
+    //
+    // Not zero: the level is sampled by a 20Hz timer, so a hold of one tick is what
+    // guarantees a clip that happens between two samples is still shown for a frame rather
+    // than missed entirely. If brief clips start being easy to miss, this is the number to
+    // raise -- each tick is 50ms.
+    //
+    // NOTE: the peak level itself has no decay (PluginProcessor stores raw per-block
+    // getMagnitude()), so nothing else here is holding the red on. If red still lingers
+    // for seconds after this, the output genuinely is at or above -1 dBFS that long.
     int clippingHoldTicks = 0;
-    static constexpr int clippingHoldDuration = 10;  // ~500ms at 50ms timer
+    static constexpr int clippingHoldDuration = 1;   // ~50ms at the 50ms timer
 
     // -- Unified glow meter level --
     // Single per-frame snapshot of the averaged L/R output level driving ALL glow in the

@@ -257,6 +257,10 @@ void FinalEQComponent::paint(juce::Graphics& g)
         for (int i = 1; i < w; ++i)
             stroke.lineTo(x0 + static_cast<float>(i), gainToY(responseMag_[i]));
 
+        // Blooms with the rest of the UI, by the shared meter-driven law.
+        if (auto* sdLnf = dynamic_cast<SpaceDustLookAndFeel*>(&getLookAndFeel()))
+            sdLnf->glowPath(g, stroke, knobArcCol, 1.8f);
+
         g.setColour(knobArcCol.withAlpha(0.9f));
         g.strokePath(stroke, juce::PathStrokeType(1.8f,
                                                    juce::PathStrokeType::curved,

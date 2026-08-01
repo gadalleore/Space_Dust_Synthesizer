@@ -6,6 +6,8 @@
 #include <functional>
 #include <vector>
 
+#include "SpaceDustDither.h"
+
 //==============================================================================
 /**
     SpectrumAnalyser - FFT-based frequency magnitude display.
@@ -59,6 +61,23 @@ private:
     std::vector<float> displayMagnitudes;
     int fifoIndex = 0;
     bool nextFFTBlockReady = false;
+
+    //==========================================================================
+    // -- Motion dither --
+    // The bars themselves are a picket fence and smearing every one of them would
+    // just fog the panel. What actually reads as movement is the OUTLINE the tops
+    // trace, so that is what gets ghosted -- the last few frames of the curve,
+    // each in a different channel, drawn behind the live bars.
+    static constexpr int   kHistoryLength = 4;
+    static constexpr float kTrailSpread   = 3.0f;
+    static constexpr float kTrailAlpha    = 0.5f;
+
+    std::vector<juce::Path> outlineHistory;
+
+    /** Set when a new FFT frame has been folded in, cleared once the trail has
+        advanced on it. Gates the history so repaints that carry no new audio do
+        not flush the ghosts out with copies of the same curve. */
+    bool spectrumMoved = false;
 
     juce::Colour fillColour   { 0xff48bde8 };
     juce::Colour lineColour   { 0xff6ba3d0 };
