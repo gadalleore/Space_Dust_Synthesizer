@@ -99,7 +99,7 @@ void SpectrumAnalyserComponent::paint(juce::Graphics& g)
     };
 
     // Ghosts of the previous few outlines, behind the bars.
-    SpaceDustDither::ghostTrail(g, outlineHistory, 2.0f, kTrailSpread, kTrailAlpha);
+    SpaceDustDither::ghostTrail(g, outlineHistory, 2.0f, kTrailSpread, kTrailAlpha, *ditherTiles);
 
     // Bloom amount, from the inherited LookAndFeel. Read once for the whole frame
     // rather than per column -- there can be 512 of them.

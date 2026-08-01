@@ -73,6 +73,7 @@ private:
     static constexpr float kTrailAlpha    = 0.5f;
 
     std::vector<juce::Path> outlineHistory;
+    SpaceDustDither::TilesPtr ditherTiles;
 
     /** Set when a new FFT frame has been folded in, cleared once the trail has
         advanced on it. Gates the history so repaints that carry no new audio do

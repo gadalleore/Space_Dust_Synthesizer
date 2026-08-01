@@ -52,37 +52,59 @@ namespace SpaceDustDither
 
     enum class Chan { r, g, b };
 
-    /** Single-channel stipple. Built once each, on first use, and shared. */
-    inline const juce::Image& channelStipple(Chan c)
+    /** The three stipple tiles, built once and shared.
+
+        NOT function-local statics, which is how this was first written and which is
+        a genuine hazard in a plugin: a static juce::Image lives until the DLL is
+        UNLOADED, and by then JUCE's own shutdown has already run, so destroying it
+        touches a library that is no longer there. That is a classic cause of a host
+        hanging or crashing on quit, and Space Dust hung FL Studio on exit until this
+        was changed (2026-08-01).
+
+        Held instead through juce::SharedResourcePointer: the tiles are heap-allocated
+        on first use and destroyed when the last holder goes away -- editor teardown,
+        while JUCE is still alive. Every user keeps one as a member. */
+    struct Tiles
     {
-        auto build = [](juce::Colour tint, float lo, float hi)
+        Tiles()
         {
-            juce::Image img(juce::Image::ARGB, kTileSize, kTileSize, true);
-            juce::Image::BitmapData data(img, juce::Image::BitmapData::writeOnly);
+            auto build = [](juce::Colour tint, float lo, float hi)
+            {
+                juce::Image img(juce::Image::ARGB, kTileSize, kTileSize, true);
+                juce::Image::BitmapData data(img, juce::Image::BitmapData::writeOnly);
 
-            for (int y = 0; y < kTileSize; ++y)
-                for (int x = 0; x < kTileSize; ++x)
-                {
-                    const float b  = bayer(x, y);
-                    const bool  on = b >= lo && b < hi;
+                for (int y = 0; y < kTileSize; ++y)
+                    for (int x = 0; x < kTileSize; ++x)
+                    {
+                        const float b  = bayer(x, y);
+                        const bool  on = b >= lo && b < hi;
 
-                    data.setPixelColour(x, y, on ? tint : juce::Colours::transparentBlack);
-                }
+                        data.setPixelColour(x, y, on ? tint : juce::Colours::transparentBlack);
+                    }
 
-            return img;
-        };
+                return img;
+            };
 
-        static const juce::Image red   = build(juce::Colour(0xffff4d4d), 0.00f, 0.34f);
-        static const juce::Image green = build(juce::Colour(0xff4dff7a), 0.34f, 0.67f);
-        static const juce::Image blue  = build(juce::Colour(0xff4d8bff), 0.67f, 1.00f);
-
-        switch (c)
-        {
-            case Chan::r: return red;
-            case Chan::g: return green;
-            case Chan::b: default: return blue;
+            red   = build(juce::Colour(0xffff4d4d), 0.00f, 0.34f);
+            green = build(juce::Colour(0xff4dff7a), 0.34f, 0.67f);
+            blue  = build(juce::Colour(0xff4d8bff), 0.67f, 1.00f);
         }
-    }
+
+        const juce::Image& get(Chan c) const
+        {
+            switch (c)
+            {
+                case Chan::r: return red;
+                case Chan::g: return green;
+                case Chan::b: default: return blue;
+            }
+        }
+
+        juce::Image red, green, blue;
+    };
+
+    /** What every user of this namespace should hold as a member. */
+    using TilesPtr = juce::SharedResourcePointer<Tiles>;
 
     /** Tiles `tile` across `area` at `alpha`. Caller sets any clip first. */
     inline void tileOver(juce::Graphics& g, const juce::Image& tile,
@@ -106,7 +128,8 @@ namespace SpaceDustDither
 
     /** Stamps `shape`, displaced by `offset`, in one colour channel's stipple. */
     inline void fillPathChannel(juce::Graphics& g, const juce::Path& shape,
-                                juce::Point<float> offset, Chan c, float alpha)
+                                juce::Point<float> offset, Chan c, float alpha,
+                                const Tiles& tiles)
     {
         if (shape.isEmpty() || alpha <= 0.0f)
             return;
@@ -118,7 +141,7 @@ namespace SpaceDustDither
 
         juce::Graphics::ScopedSaveState saved(g);
         g.reduceClipRegion(ghost);
-        tileOver(g, channelStipple(c), ghost.getBounds(), alpha);
+        tileOver(g, tiles.get(c), ghost.getBounds(), alpha);
     }
 
     /** Ghost trail for a TRACE that redraws itself wholesale every frame -- the
@@ -133,7 +156,8 @@ namespace SpaceDustDither
         `history` runs oldest-first. Pass unstroked paths; stroking happens here so
         the ghosts can be drawn a little heavier than the live trace. */
     inline void ghostTrail(juce::Graphics& g, const std::vector<juce::Path>& history,
-                           float thickness, float spreadMax, float alpha)
+                           float thickness, float spreadMax, float alpha,
+                           const Tiles& tiles)
     {
         const int n = (int) history.size();
 
@@ -157,7 +181,7 @@ namespace SpaceDustDither
             const float spread  = (1.0f - recency) * spreadMax;
 
             fillPathChannel(g, stroked, { spread, -spread }, order[h % 3],
-                            recency * alpha);
+                            recency * alpha, tiles);
         }
     }
 
@@ -169,7 +193,8 @@ namespace SpaceDustDither
         channels along the streak is what gives the smeared prism look rather than
         three tidy ghosts. */
     inline void streakRgb(juce::Graphics& g, const juce::Path& shape,
-                          juce::Point<float> displacement, int steps, float alpha)
+                          juce::Point<float> displacement, int steps, float alpha,
+                          const Tiles& tiles)
     {
         if (shape.isEmpty() || steps <= 0 || alpha <= 0.0f)
             return;
@@ -185,7 +210,7 @@ namespace SpaceDustDither
 
             // Linear falloff with distance: far enough back to read as a tail,
             // without the aggressive curve that made it vanish entirely.
-            fillPathChannel(g, shape, offset, order[i % 3], alpha * (1.0f - t * 0.75f));
+            fillPathChannel(g, shape, offset, order[i % 3], alpha * (1.0f - t * 0.75f), tiles);
         }
     }
 }

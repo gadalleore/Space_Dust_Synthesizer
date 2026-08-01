@@ -51,9 +51,12 @@ public:
 
     FloatingShell()
     {
-        // The reason the whole class exists: never claim to fill our bounds, so
-        // anything the content leaves unpainted stays truly transparent.
-        setOpaque (false);
+        // Opaque, and it must stay in step with the addToDesktop flags in
+        // showOnDesktop(): a non-opaque top-level window without
+        // windowIsSemiTransparent leaves JUCE compositing alpha it can never use.
+        // The content fills these bounds completely, so declaring it lets JUCE skip
+        // that work entirely.
+        setOpaque (true);
 
         resizer = std::make_unique<juce::ResizableCornerComponent> (this, &constrainer);
         addAndMakeVisible (*resizer);
@@ -141,10 +144,37 @@ public:
         if (isOnDesktop())
             return;
 
+        // NOT windowIsSemiTransparent (Giuseppe, 2026-08-01: FL looked low-resolution
+        // and refreshed slowly).
+        //
+        // That flag gives a LAYERED window, which Windows composites in SOFTWARE via
+        // UpdateLayeredWindow -- the entire ~1064x888 surface pushed through the CPU
+        // every frame, and bitmap-stretched rather than rendered at native density
+        // under DPI scaling. That is both halves of the symptom: soft/low-res, and
+        // slow. A host busy with its own drawing makes it far worse than the
+        // Standalone ever showed.
+        //
+        // It was only ever there for a transparency Space Dust does not use: the
+        // plate is fully opaque and rectangular. Sol needs it because its plate has a
+        // chamfered, genuinely see-through silhouette. Add the flag back (and make
+        // the shell non-opaque again) the day Space Dust wants a shaped window, and
+        // accept the compositing cost knowingly.
         addToDesktop (juce::ComponentPeer::windowIsTemporary
-                    | juce::ComponentPeer::windowIsSemiTransparent
                     | juce::ComponentPeer::windowIgnoresKeyPresses);
-        setAlwaysOnTop (true);
+        // NOT always-on-top (Giuseppe, 2026-08-01: "the window hogs the attention...
+        // even when I click out of it, it stays open").
+        //
+        // Sol pins its window above everything, which is fine for a small dial but
+        // wrong for a full synth face: an always-on-top window cannot be sent behind
+        // anything, so it sits over the DAW, the browser and every other app until
+        // the plugin is closed. Without the flag it behaves like an ordinary window --
+        // click elsewhere and it goes behind, click the host's stub to bring it back
+        // (see the editor's mouseUp).
+        //
+        // The cost: clicking the DAW itself now puts the DAW in front of it. If that
+        // becomes the bigger annoyance, the middle ground is to make the shell an
+        // OWNED window of the host's (Win32 GWLP_HWNDPARENT), which floats above its
+        // owner only -- more code, and platform-specific.
         setVisible (true);
 
         // Anything parented since the policy was last applied has to be told.
@@ -176,6 +206,14 @@ public:
         }
 
         resized();
+    }
+
+    /** An opaque component must fill its bounds, and for one frame at startup -- or
+        any frame where the content has not been laid out yet -- the plate might not.
+        Space Dust's background colour, so a gap is invisible rather than white. */
+    void paint (juce::Graphics& g) override
+    {
+        g.fillAll (juce::Colour (0xff0a0a1f));
     }
 
     void resized() override

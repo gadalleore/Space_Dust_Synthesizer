@@ -503,14 +503,18 @@ void StereoLevelMeterComponent::timerCallback()
 void StereoLevelMeterComponent::paint(juce::Graphics& g)
 {
     auto bounds = getLocalBounds();
-    const int barWidth = 20;
-    const int barGap = 4;
     const int totalWidth = (barWidth * 2) + barGap;
     int startX = (bounds.getWidth() - totalWidth) / 2;  // Center the meters
 
+    // Vertical room for the halo. The bars used to run flush to the top and bottom
+    // edges, so the glow below them had nowhere to go and was clipped square -- which
+    // is why some corners bloomed and others were sharp (Giuseppe, 2026-08-01).
+    const int barTop = padY;
+    const int barH   = juce::jmax(1, bounds.getHeight() - padY * 2);
+
     const juce::Rectangle<int> meters[2] {
-        juce::Rectangle<int>(startX, 0, barWidth, bounds.getHeight()),
-        juce::Rectangle<int>(startX + barWidth + barGap, 0, barWidth, bounds.getHeight())
+        juce::Rectangle<int>(startX, barTop, barWidth, barH),
+        juce::Rectangle<int>(startX + barWidth + barGap, barTop, barWidth, barH)
     };
 
     // Bloom amount, taken from the LookAndFeel this component inherits rather than
@@ -551,44 +555,81 @@ void StereoLevelMeterComponent::paint(juce::Graphics& g)
             // tail rather than being veiled by it.
             paintTrail(g, colF, (float) fillRect.getY(), trails[ch], kTrailHeadHeight);
 
-            // Bloom around the bar, widening outwards from its own colour.
-            if (glow > 0.01f)
-            {
-                const juce::Colour barHue = (db > -1.0f)
-                    ? juce::Colour(SpaceDustLookAndFeel::kClipRed)
-                    : juce::Colour(0xff00ffff);
+            // Split the fill into its red overshoot and the cyan below it FIRST, so
+            // the bloom can follow the same split.
+            //
+            // The first cut of this glowed the whole bar in one colour chosen by
+            // whether the level was clipping, which is why a clipping meter grew a
+            // red wash across a bar that was still mostly cyan (Giuseppe, 2026-08-01:
+            // "a random red bar in the middle"). Each segment now blooms in its own
+            // colour, so the glow always matches the ink it comes from.
+            const bool inRed = (db > -1.0f);
 
-                for (int pass = 0; pass < 2; ++pass)
+            const int redHeight = inRed
+                ? juce::jmin(fillHeight, static_cast<int>(meterRect.getHeight() * 0.15f))
+                : 0;
+
+            const auto redRect  = fillRect.withHeight(redHeight).withY(fillRect.getY());
+            const auto cyanRect = fillRect.withHeight(fillHeight - redHeight)
+                                          .withY(fillRect.getY() + redHeight);
+
+            // Bloom: light thrown OUTWARD off the bar, not a tint inside it.
+            //
+            // Each pass is drawn as a HALO -- the expanded rect with the bar's own
+            // footprint cut out of it -- so no ink lands where the solid bar will go.
+            // Filling plain expanded rects (the first attempt) stacked four alpha
+            // layers over the bar itself, which read as an inward wash rather than a
+            // glow (Giuseppe, 2026-08-01: "should be outwardly glowing, not just
+            // inwardly"). Reach is wider now too, so it clearly leaves the bar.
+            // Glow for one segment, thrown clear of the WHOLE bar.
+            //
+            // The cut-out is `fillRect` (red plus cyan together), never the segment's
+            // own rectangle. Cutting each halo against only its own segment put a hard
+            // edge along the red/cyan boundary, because each one stopped dead where the
+            // other began -- so the light ringed the parts instead of ringing the bar.
+            // Excluding the whole bar instead means the two segments' halos meet
+            // seamlessly and the glow runs continuously all the way around.
+            auto bloom = [&](juce::Rectangle<int> seg, juce::Colour c)
+            {
+                if (glow <= 0.01f || seg.getHeight() <= 0)
+                    return;
+
+                for (int pass = 2; pass >= 0; --pass)
                 {
-                    const float widen = (pass == 0) ? 6.0f : 3.0f;
-                    g.setColour(barHue.withAlpha(glow * (pass == 0 ? 0.14f : 0.24f)));
-                    g.fillRect(fillRect.toFloat().expanded(widen, widen * 0.5f));
+                    // Sideways reach is deliberately SMALL and vertical reach larger.
+                    // The bars are only barGap apart, and the first cut of this threw
+                    // light up to 19px sideways -- so the two halos completely overlapped
+                    // in the gap, stacked alpha, and the pair read as one wide uneven
+                    // blob instead of two bars. Kept under half the gap so neighbouring
+                    // halos can never meet.
+                    const float widenX = 1.5f + (float) pass * 1.5f;
+                    const float widenY = 3.0f + (float) pass * 3.0f;
+                    const float a      = glow * 0.22f / (1.0f + (float) pass * 1.5f);
+
+                    juce::Graphics::ScopedSaveState saved(g);
+                    g.excludeClipRegion(fillRect);   // never paint over the bar itself
+
+                    g.setColour(c.withAlpha(a));
+                    g.fillRect(seg.toFloat().expanded(widenX, widenY));
                 }
+            };
+
+            const juce::Colour cyanHue = juce::Colour(0xff00ffff);
+            const juce::Colour redHue  = juce::Colour(SpaceDustLookAndFeel::kClipRed);
+
+            bloom(cyanRect, cyanHue);
+            bloom(redRect,  redHue);
+
+            if (cyanRect.getHeight() > 0)
+            {
+                g.setColour(cyanHue);
+                g.fillRect(cyanRect);
             }
 
-            // Red for clipping (above -1 dB), cyan/blue for normal
-            if (db > -1.0f)
+            if (redHeight > 0)
             {
-                // Clipping region: red at the TOP of the fill
-                g.setColour(juce::Colour(SpaceDustLookAndFeel::kClipRed));
-                int redHeight = juce::jmin(fillHeight, static_cast<int>(meterRect.getHeight() * 0.15f)); // Top 15% = red
-                // Red rect starts at the TOP of the fill (not bottom)
-                auto redRect = fillRect.withHeight(redHeight).withY(fillRect.getY());
+                g.setColour(redHue);
                 g.fillRect(redRect);
-
-                // Below clipping: cyan
-                if (fillHeight > redHeight)
-                {
-                    g.setColour(juce::Colour(0xff00ffff));  // Cyan
-                    auto cyanRect = fillRect.withHeight(fillHeight - redHeight).withY(fillRect.getY() + redHeight);
-                    g.fillRect(cyanRect);
-                }
-            }
-            else
-            {
-                // Normal level: cyan/blue
-                g.setColour(juce::Colour(0xff00ffff));  // Cyan
-                g.fillRect(fillRect);
             }
         }
         else
@@ -618,15 +659,27 @@ void StereoLevelMeterComponent::paint(juce::Graphics& g)
 
             // The tick blooms too, faded by its own dissolve so a dying mark does not
             // glow harder than the bar that outlived it.
+            //
+            // A HALO like the bar's, not a filled expanded rect. Filling washed the
+            // tick's own colour across the bar underneath it -- a cyan mark sitting on
+            // the red overshoot painted a pale fringe over the red, which is the light
+            // smear at the top of the meter in Giuseppe's screenshot (2026-08-01).
             if (glow > 0.01f)
             {
-                for (int pass = 0; pass < 2; ++pass)
+                const auto markCore = colF.withY(drawY).withHeight(kMarkThickness);
+                const auto markCut  = markCore.toNearestInt();
+
+                for (int pass = 2; pass >= 0; --pass)
                 {
-                    const float widen = (pass == 0) ? 6.0f : 3.0f;
-                    g.setColour(markHue.withAlpha(glow * markAlpha
-                                                  * (pass == 0 ? 0.14f : 0.24f)));
-                    g.fillRect(colF.withY(drawY).withHeight(kMarkThickness)
-                                   .expanded(widen, widen * 0.5f));
+                    const float widenX = 1.5f + (float) pass * 1.5f;
+                    const float widenY = 2.0f + (float) pass * 2.0f;
+
+                    juce::Graphics::ScopedSaveState saved(g);
+                    g.excludeClipRegion(markCut);   // ring the tick, do not wash over it
+
+                    g.setColour(markHue.withAlpha(glow * markAlpha * 0.22f
+                                                  / (1.0f + (float) pass * 1.5f)));
+                    g.fillRect(markCore.expanded(widenX, widenY));
                 }
             }
 
@@ -672,7 +725,7 @@ void StereoLevelMeterComponent::paintTrail(juce::Graphics& g, juce::Rectangle<fl
     head.addRectangle(col.withTop(top)
                          .withHeight(juce::jmin(headHeight, col.getBottom() - top)));
 
-    SpaceDustDither::streakRgb(g, head, { 0.0f, displacement }, kTrailSteps, kTrailAlpha);
+    SpaceDustDither::streakRgb(g, head, { 0.0f, displacement }, kTrailSteps, kTrailAlpha, *ditherTiles);
 }
 
 void StereoLevelMeterComponent::resized()
@@ -2937,6 +2990,15 @@ SpectralPageComponent::SpectralPageComponent(SpaceDustAudioProcessorEditor& edit
         parentEditor.audioProcessor.readSpectrumSamples(dest, numSamples);
     };
     spectrumAnalyser->start();
+
+    // The scope reads its own gap-free STEREO history. It used to be fed per-block
+    // goniometer snapshots, which the UI only sampled 20 times a second while blocks
+    // arrived ~86 times a second -- so its long window was stitched from non-adjacent
+    // audio and broke up visibly. See OscilloscopeComponent.h.
+    oscilloscope->fillSamplesCallback = [this](float* destL, float* destR, int numSamples)
+    {
+        parentEditor.audioProcessor.readScopeSamples(destL, destR, numSamples);
+    };
     oscilloscopeGroup.addAndMakeVisible(*oscilloscope);
     spectrumGroup.addAndMakeVisible(*spectrumAnalyser);
     // Glow overlay on top so Oscilloscope/Spectrum sit behind it - cleaner look
@@ -5621,7 +5683,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
 
             // Only once the window is actually on screen -- there is nothing to shake
             // before that, and starting the timer earlier would just move a hidden window.
-            shakeDriver.startTimerHz(kShakeFps);
+            if constexpr (kShakeEnabled)
+                shakeDriver.startTimerHz(kShakeFps);
+            shellReady_ = true;
 
             DBG("Space Dust: Timer callback - setSize() completed");
             #if JUCE_DEBUG
@@ -6678,9 +6742,15 @@ void SpaceDustAudioProcessorEditor::mouseUp(const juce::MouseEvent&)
         return;
 
     if (! shell.isOnDesktop())
+    {
         shell.showOnDesktop();
+        placeShellNearStub();
+    }
 
-    placeShellNearStub();
+    // Now that the shell is no longer always-on-top it can be buried behind the host
+    // or anything else, so clicking the stub has to RAISE it as well as show it --
+    // that is the way back to a window that has gone behind something.
+    shell.toFront(false);   // false: do not steal keyboard focus from the host
     repaint();
 }
 
@@ -6763,6 +6833,37 @@ void SpaceDustAudioProcessorEditor::driveShake(float level)
 
 void SpaceDustAudioProcessorEditor::resized()
 {
+}
+
+// The shell is a window of OUR making, so nothing takes it down when the host merely
+// hides the editor instead of destroying it -- and FL does exactly that. Left alone,
+// an always-on-top window stays registered with the OS after the plugin looks closed,
+// which is one of the ways a host ends up unable to quit (Giuseppe, 2026-08-01: FL had
+// to be force quit). Tying the shell to the editor's visibility means the only way to
+// see it is for the editor to be on screen.
+void SpaceDustAudioProcessorEditor::visibilityChanged()
+{
+    if (isBeingDestroyed.load() || ! shellReady_)
+        return;
+
+    if (isVisible())
+    {
+        if (! shell.isOnDesktop())
+        {
+            shell.showOnDesktop();
+            placeShellNearStub();
+        }
+    }
+    else
+    {
+        shell.hideFromDesktop();
+    }
+}
+
+void SpaceDustAudioProcessorEditor::parentHierarchyChanged()
+{
+    // Being detached from the host's window counts as gone, same as being hidden.
+    visibilityChanged();
 }
 
 void SpaceDustAudioProcessorEditor::layoutPlate()
@@ -6984,10 +7085,10 @@ void SpaceDustAudioProcessorEditor::layoutPlate()
     masterVolumeLabel.setVisible(true);
     masterCurrentY += knobGroupH + sectionGap;
 
-    // Stereo level meter (fixed height)
-    const int meterBarWidth = 20;
-    const int meterGap = 4;
-    const int totalMeterWidth = (meterBarWidth * 2) + meterGap;
+    // Stereo level meter (fixed height). Width comes from the component itself --
+    // it includes room for the glow, and hardcoding a second copy of the geometry
+    // here is exactly what clipped the halo before.
+    const int totalMeterWidth = StereoLevelMeterComponent::requiredWidth();
     int meterX = masterContent.getCentreX() - totalMeterWidth / 2;
     if (stereoLevelMeter != nullptr)
     {

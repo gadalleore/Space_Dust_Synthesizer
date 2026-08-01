@@ -50,6 +50,7 @@ private:
     static constexpr float kTrailAlpha    = 0.55f;
 
     std::vector<juce::Path> traceHistory;
+    SpaceDustDither::TilesPtr ditherTiles;
     int w = 0, h = 0;
     juce::Point<int> center;
     std::array<juce::String, 5> chars { "+S", "-S", "L", "M", "R" };

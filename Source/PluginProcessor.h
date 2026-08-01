@@ -138,6 +138,11 @@ public:
     // history into dest (gap-free, so the FFT window is faithful and the display is stable).
     void readSpectrumSamples(float* dest, int numSamples) const;
 
+    // Oscilloscope: the same, kept in STEREO. Copies the most-recent `numSamples` of
+    // continuous L and R output history so the scope can draw both channels over a
+    // long window without stitching non-adjacent blocks together.
+    void readScopeSamples(float* destL, float* destR, int numSamples) const;
+
     // Update all voices with current parameter values (called after preset load)
     void updateVoicesWithParameters(float lfo1Modulation = 0.0f, float lfo2Modulation = 0.0f);
 
@@ -301,6 +306,11 @@ private:
     static constexpr int spectrumFifoSize = 8192;
     std::array<float, spectrumFifoSize> spectrumFifo{};
     std::atomic<int> spectrumFifoWritePos{0};
+
+    static constexpr int scopeFifoSize = 8192;
+    std::array<float, scopeFifoSize> scopeFifoL{};
+    std::array<float, scopeFifoSize> scopeFifoR{};
+    std::atomic<int> scopeFifoWritePos{0};
     
     // -- Helper Methods --
     

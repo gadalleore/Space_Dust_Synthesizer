@@ -407,7 +407,7 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
                     .createStrokedPath(headShape, headArc);
 
                 SpaceDustDither::streakRgb(g, headShape, disp,
-                                           kKnobTrailSteps, kKnobTrailAlpha);
+                                           kKnobTrailSteps, kKnobTrailAlpha, *ditherTiles);
             }
         }
 

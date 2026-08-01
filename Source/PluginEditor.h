@@ -199,6 +199,26 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
 
+    //==========================================================================
+    // -- Geometry, owned HERE and nowhere else --
+    // The layout in layoutPlate() used to hardcode its own copy of the bar width
+    // and gap, and the moment paint's gap changed the two disagreed: the component
+    // was allotted 44px while paint wanted 52, so startX went NEGATIVE and the bars
+    // were drawn partly outside their own component. That clipped the outer edges
+    // flat and left no room at all for a halo (Giuseppe, 2026-08-01: the glow "still
+    // not fully surrounding the metering"). Ask for requiredWidth() and these can
+    // never drift apart again.
+    static constexpr int barWidth = 20;
+    static constexpr int barGap   = 12;   // wide enough that two halos cannot meet
+
+    /** Padding INSIDE the component, so the glow has somewhere to go on every side.
+        Without it a halo is clipped by the component's own bounds. */
+    static constexpr int padX = 10;
+    static constexpr int padY = 10;
+
+    static constexpr int requiredWidth()  { return barWidth * 2 + barGap + padX * 2; }
+    static constexpr int minimumHeight()  { return padY * 2 + 20; }
+
 private:
     void timerCallback() override;
 
@@ -243,6 +263,7 @@ private:
 
     juce::Array<float> trails[2];
     juce::Array<float> markTrails[2];   // the falling peak ticks smear too
+    SpaceDustDither::TilesPtr ditherTiles;
 
     /** Records where a moving edge is now and streaks the head back over where it
         has just been. A held level travels nowhere and so draws nothing.
@@ -409,6 +430,8 @@ public:
     void paint(juce::Graphics&) override;
     void resized() override;
     void mouseUp(const juce::MouseEvent&) override;
+    void visibilityChanged() override;
+    void parentHierarchyChanged() override;
 
     //==============================================================================
     // -- The floating window (see FloatingShell.h) --
@@ -549,6 +572,10 @@ private:
     static constexpr int   kStubHeight   = 36;
     static constexpr float kStubMarkSize = 11.0f;
 
+    /** False until the deferred init has put the shell on screen. Guards
+        visibilityChanged() from acting before there is anything to act on. */
+    bool shellReady_ = false;
+
     /** Close control, in DESIGN pixels (it lives in mainView and scales with the UI).
         paintPlate() reserves room for it so the version number cannot run underneath. */
     static constexpr int kCloseSize   = 18;
@@ -585,6 +612,12 @@ private:
     // the window twitches by a single pixel and nothing more. That IS the "really
     // subtle" that was asked for, but it also means turning this down further has
     // almost no effect: past here the only remaining step is off.
+    /** TEMPORARILY OFF (Giuseppe, 2026-08-01) so the glow can be judged without the
+        window moving underneath it. Flip to true to restore -- every tuned constant
+        below is untouched, and with it false the 60Hz timer is never started at all,
+        so the window sits exactly at its home position. */
+    static constexpr bool  kShakeEnabled = false;
+
     static constexpr int   kShakeFps     = 60;
     static constexpr float kShakeMax     = 0.656f;  // px at full level (25% of 2.625)
     static constexpr float kShakeRelease = 0.72f;   // per frame at kShakeFps

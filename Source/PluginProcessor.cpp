@@ -2889,6 +2889,21 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             wp = (wp + 1) & (spectrumFifoSize - 1);
         }
         spectrumFifoWritePos.store(wp, std::memory_order_release);
+
+        // -- Oscilloscope FIFO --
+        // The same idea kept in STEREO, because the scope draws L and R separately
+        // and the spectrum's mono sum cannot serve it (2026-08-01). It has to be a
+        // continuous history for the same reason: the UI reads ~20 times a second
+        // while blocks arrive ~86 times a second, so anything assembled from the
+        // blocks the UI happens to catch is stitched from non-adjacent audio.
+        int swp = scopeFifoWritePos.load(std::memory_order_relaxed);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            scopeFifoL[static_cast<size_t>(swp)] = L[i];
+            scopeFifoR[static_cast<size_t>(swp)] = R[i];
+            swp = (swp + 1) & (scopeFifoSize - 1);
+        }
+        scopeFifoWritePos.store(swp, std::memory_order_release);
     }
 }
 
@@ -4423,3 +4438,19 @@ juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
     return new SpaceDustAudioProcessor();
 }
 
+
+//==============================================================================
+void SpaceDustAudioProcessor::readScopeSamples(float* destL, float* destR, int numSamples) const
+{
+    constexpr int mask = scopeFifoSize - 1;
+    const int count = juce::jmin(numSamples, scopeFifoSize);
+    const int wp = scopeFifoWritePos.load(std::memory_order_acquire);
+    // The most-recent `count` samples end just before the write cursor.
+    int idx = (wp - count) & mask;
+    for (int i = 0; i < count; ++i)
+    {
+        destL[i] = scopeFifoL[static_cast<size_t>(idx)];
+        destR[i] = scopeFifoR[static_cast<size_t>(idx)];
+        idx = (idx + 1) & mask;
+    }
+}

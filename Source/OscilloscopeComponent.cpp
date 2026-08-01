@@ -20,9 +20,9 @@ juce::Path OscilloscopeComponent::buildTrace() const
     const float cy    = h * 0.5f;
     const float halfH = (h - 20.0f) * 0.5f;
 
-    // Until the ring has filled once, only the part actually written holds audio;
-    // drawing the rest would paint a flat line through silence that was never there.
-    const int available = ringPrimed ? numSamples : writePos;
+    // The whole window is valid: it is filled wholesale from the processor's
+    // continuous history every update, not accumulated block by block here.
+    const int available = numSamples;
 
     if (available < 2)
         return path;
@@ -34,17 +34,15 @@ juce::Path OscilloscopeComponent::buildTrace() const
     for (int ch = 0; ch < juce::jmin(2, numCh); ++ch)
     {
         const float yBase  = (ch == 0) ? (cy - halfH * 0.5f) : (cy + halfH * 0.5f);
-        const float yScale = halfH * 0.4f;
+        const float yScale = halfH * 0.4f;   // as it always was; 0.8 read as "zoomed in"
 
         bool started = false;
 
         for (int n = 0; n < available; n += stride)
         {
             // Oldest sample first, so the wave travels left to right the way a
-            // scope's does. The ring's write head is the newest sample.
-            const int idx = ringPrimed ? ((writePos + n) % numSamples) : n;
-
-            const float sample = historyBuffer.getSample(ch, idx);
+            // scope's does. readSpectrumSamples already hands them over in order.
+            const float sample = historyBuffer.getSample(ch, n);
             const float x = juce::jmap(static_cast<float>(n), 0.0f,
                                        static_cast<float>(available - 1), 10.0f, w - 10.0f);
             const float y = yBase - sample * yScale;
@@ -70,7 +68,7 @@ void OscilloscopeComponent::paint(juce::Graphics& g)
     drawBackground(g);
 
     // Older sweeps first: the RGB dither marking where the trace has just been.
-    SpaceDustDither::ghostTrail(g, traceHistory, 2.5f * 1.4f, kTrailSpread, kTrailAlpha);
+    SpaceDustDither::ghostTrail(g, traceHistory, 2.5f * 1.4f, kTrailSpread, kTrailAlpha, *ditherTiles);
 
     const auto trace = buildTrace();
 
@@ -112,49 +110,29 @@ void OscilloscopeComponent::drawBackground(juce::Graphics& g)
 //==============================================================================
 void OscilloscopeComponent::update(const juce::AudioBuffer<float>& buffer, int validSamples)
 {
-    const int numCh = juce::jmin(2, buffer.getNumChannels());
-    const int numS  = (validSamples > 0) ? juce::jmin(validSamples, buffer.getNumSamples())
-                                         : buffer.getNumSamples();
-    if (numCh < 1 || numS <= 0)
+    juce::ignoreUnused(buffer, validSamples);
+
+    // Stereo, gap-free: both channels come from the processor's continuous scope
+    // history, so the long window is real audio rather than stitched blocks.
+    // split the scope used to show, and it is the right trade -- a gap-free mono
+    // waveform is a truer picture of what is coming out than two stereo traces
+    // stitched from non-adjacent blocks.
+    if (fillSamplesCallback == nullptr)
         return;
 
-    // Allocate the ring once, or whenever the channel count changes.
-    if (historyBuffer.getNumChannels() != numCh || historyBuffer.getNumSamples() != kWindowSamples)
+    if (historyBuffer.getNumChannels() != 2 || historyBuffer.getNumSamples() != kWindowSamples)
     {
-        historyBuffer.setSize(numCh, kWindowSamples, false, true, true);
+        historyBuffer.setSize(2, kWindowSamples, false, true, true);
         historyBuffer.clear();
-        writePos   = 0;
-        ringPrimed = false;
         traceHistory.clear();
     }
 
-    // Append this block into the ring, wrapping as needed. A block longer than the
-    // whole window keeps only its most recent tail.
-    const int src0  = juce::jmax(0, numS - kWindowSamples);
-    const int toCopy = numS - src0;
-
-    for (int i = 0; i < toCopy; ++i)
-    {
-        for (int ch = 0; ch < numCh; ++ch)
-            historyBuffer.setSample(ch, writePos, buffer.getSample(ch, src0 + i));
-
-        if (++writePos >= kWindowSamples)
-        {
-            writePos   = 0;
-            ringPrimed = true;
-        }
-    }
+    fillSamplesCallback(historyBuffer.getWritePointer(0),
+                        historyBuffer.getWritePointer(1), kWindowSamples);
 
     // Advance the ghost trail one frame, in step with the audio.
     traceHistory.push_back(buildTrace());
 
     while (static_cast<int>(traceHistory.size()) > kHistoryLength)
         traceHistory.erase(traceHistory.begin());
-
-    // Kept in sync for anything still reading it.
-    if (internalBuffer.getNumChannels() != numCh || internalBuffer.getNumSamples() != numS)
-        internalBuffer.setSize(numCh, numS, false, true, true);
-    internalBuffer.clear();
-    for (int ch = 0; ch < numCh; ++ch)
-        internalBuffer.copyFrom(ch, 0, buffer, ch, 0, numS);
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "SpaceDustDither.h"
 
 //==============================================================================
 /**
@@ -202,6 +203,7 @@ private:
         just travelled, which is what the RGB smear is drawn along. Lower = longer,
         laggier tail. */
     float outputMeterLag = 0.0f;
+    SpaceDustDither::TilesPtr ditherTiles;
     static constexpr float kLagFollow = 0.35f;
 
     juce::Typeface::Ptr glitchGoblinTypeface;

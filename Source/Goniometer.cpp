@@ -55,7 +55,7 @@ void Goniometer::paint(juce::Graphics& g)
         p.applyTransform(juce::AffineTransform::verticalFlip(ch * 0.5f));
 
         // Older sweeps first, so the live figure lands on top of its own ghosts.
-        SpaceDustDither::ghostTrail(g, traceHistory, 2.5f * 1.4f, kTrailSpread, kTrailAlpha);
+        SpaceDustDither::ghostTrail(g, traceHistory, 2.5f * 1.4f, kTrailSpread, kTrailAlpha, *ditherTiles);
 
         // Bloom, scaled by the meter (same law as every other element).
         if (auto* sdLnf = dynamic_cast<SpaceDustLookAndFeel*>(&getLookAndFeel()))
