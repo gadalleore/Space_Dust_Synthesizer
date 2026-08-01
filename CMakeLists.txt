@@ -13,7 +13,7 @@ if(CMAKE_HOST_APPLE)
     endif()
 endif()
 
-project(SpaceDust VERSION 1.0.17)
+project(SpaceDust VERSION 2.0.0)
 
 # --- Windows: statically link the MSVC C Run-Time (CRT) ---
 # Bakes VCRUNTIME140/MSVCP140 into the binaries so the plugin loads on a clean
@@ -52,18 +52,44 @@ if(ENABLE_ASAN)
     set(SPACEDUST_VST3_AUTO_MANIFEST FALSE)
 endif()
 
+#===============================================================================
+# -- LOCAL V2 TEST IDENTITY (temporary) --
+# While V2 is being built out it ships as a SEPARATE plugin, so it can be installed
+# and tested alongside the shipping V1 without either standing on the other.
+#
+# Three things have to differ for a host to treat them as two plugins, and all
+# three are set here:
+#
+#   SPACEDUST_PRODUCT_NAME  what the host and the Standalone app are called.
+#   SPACEDUST_PLUGIN_CODE   the 4-char code JUCE derives the VST3 class ID from.
+#                           Same code + same manufacturer code = the same plugin as
+#                           far as a DAW is concerned, so this MUST differ or hosts
+#                           will confuse the two and sessions will restore the wrong
+#                           one. This is the one that actually matters.
+#   SPACEDUST_DATA_FOLDER   where presets and config live. Follows the product name
+#                           automatically (see target_compile_definitions below), so
+#                           V2 cannot overwrite the V1 presets you are still selling.
+#
+# TO SHIP THIS AS THE REAL SPACE DUST: set the name back to "Space Dust", the code
+# back to SpDs, and the bundle ID back to com.63c.SpaceDust. Nothing else refers to
+# any of these by hand -- the preset folder follows the name on its own.
+#===============================================================================
+set(SPACEDUST_PRODUCT_NAME "Space Dust V2")
+set(SPACEDUST_PLUGIN_CODE  SpD2)
+set(SPACEDUST_BUNDLE_ID    "com.63c.SpaceDustV2")
+
 juce_add_plugin(SpaceDust
     COMPANY_NAME "63C"
-    PLUGIN_NAME "Space Dust"
+    PLUGIN_NAME "${SPACEDUST_PRODUCT_NAME}"
     PLUGIN_MANUFACTURER_CODE YcPl
-    PLUGIN_CODE SpDs
+    PLUGIN_CODE ${SPACEDUST_PLUGIN_CODE}
     FORMATS VST3 AU Standalone
     VST3_AUTO_MANIFEST ${SPACEDUST_VST3_AUTO_MANIFEST}
-    BUNDLE_ID "com.63c.SpaceDust"
-    PRODUCT_NAME "Space Dust"
+    BUNDLE_ID "${SPACEDUST_BUNDLE_ID}"
+    PRODUCT_NAME "${SPACEDUST_PRODUCT_NAME}"
     ICON_BIG "${CMAKE_CURRENT_SOURCE_DIR}/Resources/AppIcon.png"
     DESCRIPTION "Cosmic particles of sound"
-    VERSION 1.0.17
+    VERSION 2.0.0
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
@@ -132,6 +158,7 @@ target_sources(SpaceDust PRIVATE
     Source/PresetManager.cpp
     Source/PresetManager.h
     Source/CheezeGuyGame.h
+    Source/FloatingShell.h
     Source/MemorySafetyLogger.cpp
     Source/MemorySafetyLogger.h
 )
@@ -139,6 +166,10 @@ target_sources(SpaceDust PRIVATE
 # Disable VST2 replacement compatibility for VST3-only plugin
 target_compile_definitions(SpaceDust
     PRIVATE
+        # Preset/config folder name (see the V2 test identity block above). Derived from
+        # the product name so it needs no separate maintenance: rename the product back
+        # to "Space Dust" and this points at the shipping preset folder again.
+        SPACEDUST_DATA_FOLDER="${SPACEDUST_PRODUCT_NAME}"
         JUCE_VST3_CAN_REPLACE_VST2=0
         # MIDI-CC-as-parameters: KEEP ENABLED (=1). This emulation is the ONLY way a
         # JUCE VST3 receives controller data — pitch-bend, channel pressure and CC74 —

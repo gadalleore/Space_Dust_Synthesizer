@@ -1,5 +1,13 @@
 #include "PresetManager.h"
 
+// The folder presets and config live under. Supplied by CMake from the product name so
+// that a side-by-side V2 build keeps its own presets and cannot write over the shipping
+// V1's (see the V2 test identity block in CMakeLists.txt). The fallback is the real
+// shipping name, so a build without the definition behaves exactly as V1 always has.
+#ifndef SPACEDUST_DATA_FOLDER
+ #define SPACEDUST_DATA_FOLDER "Space Dust"
+#endif
+
 PresetManager::PresetManager(juce::AudioProcessorValueTreeState& apvts)
     : valueTreeState(apvts)
 {
@@ -105,7 +113,7 @@ juce::Array<juce::File> PresetManager::getAvailablePresets() const
 juce::File PresetManager::getDefaultPresetFolder() const
 {
     return juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
-        .getChildFile("Space Dust")
+        .getChildFile(SPACEDUST_DATA_FOLDER)
         .getChildFile("Presets");
 }
 
@@ -114,7 +122,7 @@ juce::File PresetManager::getUserConfigFile() const
     // %APPDATA%\Space Dust\config.xml on Windows, ~/Library/Application Support/... on macOS.
     // Always user-writable so the plugin can persist preset-folder changes without elevation.
     return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory)
-        .getChildFile("Space Dust")
+        .getChildFile(SPACEDUST_DATA_FOLDER)
         .getChildFile("config.xml");
 }
 
@@ -123,7 +131,7 @@ juce::File PresetManager::getSystemConfigFile() const
     // %ProgramData%\Space Dust\config.xml on Windows. Written by the all-users installer;
     // used as a read-only fallback when no per-user config exists yet.
     return juce::File::getSpecialLocation(juce::File::commonApplicationDataDirectory)
-        .getChildFile("Space Dust")
+        .getChildFile(SPACEDUST_DATA_FOLDER)
         .getChildFile("config.xml");
 }
 
