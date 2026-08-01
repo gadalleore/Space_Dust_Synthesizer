@@ -204,14 +204,15 @@ void SpaceDustLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height
     auto cornerSize = box.findColour(juce::ComboBox::outlineColourId).isTransparent() ? 0.0f : 3.0f;
     juce::Rectangle<int> boxBounds(0, 0, width, height);
 
+    // Bloom outside the box, before its own fill goes down over the inner half.
+    // Uses the OUTLINE colour rather than the fill, so the light looks like it comes
+    // off the edge that is actually drawn.
+    glowAround(g, boxBounds.toFloat(), cornerSize,
+               outputMeterClipping ? juce::Colour(kClipRed)
+                                   : box.findColour(juce::ComboBox::outlineColourId));
+
     g.setColour(box.findColour(juce::ComboBox::backgroundColourId));
     g.fillRoundedRectangle(boxBounds.toFloat(), cornerSize);
-
-    {
-        juce::Path outline;
-        outline.addRoundedRectangle(boxBounds.toFloat().reduced(0.5f, 0.5f), cornerSize);
-        glowPath(g, outline, box.findColour(juce::ComboBox::outlineColourId), 1.0f);
-    }
 
     g.setColour(box.findColour(juce::ComboBox::outlineColourId));
     g.drawRoundedRectangle(boxBounds.toFloat().reduced(0.5f, 0.5f), cornerSize, 1.0f);
@@ -237,17 +238,13 @@ void SpaceDustLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButto
 
     bool isToggled = button.getToggleState();
 
-    // Meter-driven bloom around the button's edge, on top of the fixed lit state
-    // below. The lit state says "this is on"; this says "this is how loud it is".
-    {
-        juce::Path outline;
-        outline.addRoundedRectangle(bounds.reduced(0.5f), cornerSize);
-
-        glowPath(g, outline,
-                 outputMeterClipping ? juce::Colour(kClipRed)
-                                     : juce::Colour(isToggled ? 0xff00b4ff : 0xff3a3a5f),
-                 1.5f);
-    }
+    // Meter-driven bloom OUTSIDE the button, drawn first so the button's own fills
+    // cover its inner half and only the outward spill survives.
+    glowAround(g,
+               bounds.expanded(isToggled ? 4.0f : 0.5f),
+               cornerSize + (isToggled ? 2.0f : 0.0f),
+               outputMeterClipping ? juce::Colour(kClipRed)
+                                   : juce::Colour(isToggled ? 0xff00d4ff : 0xff3a3a5f));
 
     // Background: glow effect when checked (brighter blue/cyan, or red when meter clips)
     if (isToggled)
@@ -450,31 +447,78 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
         // different widths made them read as two separate marks.
         const float pointerThickness = arcThickness;
 
+        // Runs out to the arc stroke's OUTER edge, not its centreline, so at full
+        // value the tip lands exactly on the outer corner of the arc's flat end and
+        // the two meet at a single point (Giuseppe, 2026-08-01).
+        const float tipRadius = arcRadius + arcThickness * 0.5f;
+
+        //----------------------------------------------------------------------
+        // An OBELISK (Giuseppe, 2026-08-01), not a taper: a round bottom, two
+        // PARALLEL sides, and a 45-45-90 triangle capping the top.
+        //
+        // A 90-degree apex fixes the cap's height: half-widths on both sides at
+        // 45 degrees means the point stands exactly one half-width above the
+        // shoulder. So with sides at +/-r the shoulder is at (tip - r), and there
+        // is nothing to choose -- the shape falls out of the width.
+        //
+        // Built in the pointer's own frame and mapped out: `u` runs along the
+        // pointer from the pivot, `v` across it. Much easier to reason about than
+        // rotating six points by hand.
+        const float r        = pointerThickness * 0.5f;
+        const float shoulder = tipRadius - r;
+
         const float sinA = std::sin(angle);
         const float cosA = std::cos(angle);
 
-        // Runs out to the arc stroke's OUTER edge, not its centreline. drawLine is
-        // flat-ended, so landing the tip at (arcRadius + thickness/2) puts that flat
-        // end exactly tangent to the outside of the arc's circle -- the two finish
-        // flush instead of the pointer stopping half a stroke short.
-        const float tipRadius = arcRadius + arcThickness * 0.5f;
+        auto pt = [&](float u, float v)
+        {
+            return juce::Point<float>(centreX + sinA * u + cosA * v,
+                                      centreY - cosA * u + sinA * v);
+        };
 
-        const juce::Line<float> pointerLine { centreX, centreY,
-                                              centreX + sinA * tipRadius,
-                                              centreY - cosA * tipRadius };
+        juce::Path needle;
+
+        if (shoulder <= 0.0f)
+        {
+            // Degenerate on a tiny knob: the cap alone would fill the whole length,
+            // so there is no shaft to draw. Just the pivot dot.
+            needle.addEllipse(centreX - r, centreY - r, r * 2.0f, r * 2.0f);
+        }
+        else
+        {
+            constexpr float halfPi = juce::MathConstants<float>::halfPi;
+
+            needle.startNewSubPath(pt(0.0f, r));
+
+            // The round bottom: a half-turn behind the pivot, from one side of the
+            // shaft to the other. The parallel sides are tangent to it at u = 0, so
+            // the shaft meets the curve with no shoulder.
+            needle.addCentredArc(centreX, centreY, r, r, 0.0f,
+                                 angle + halfPi, angle + halfPi * 3.0f, false);
+
+            needle.lineTo(pt(shoulder,   -r));   // up one parallel side
+            needle.lineTo(pt(tipRadius, 0.0f));  // the point
+            needle.lineTo(pt(shoulder,    r));   // back down the other
+            needle.closeSubPath();
+        }
 
         // Same bloom law as the arc, so the two halves of the dial glow together.
+        // Stroked around the filled shape rather than drawn as a fatter line, so the
+        // halo follows the taper instead of squaring it off.
         if (const float glow = getGlowAmount(); glow > 0.01f)
         {
             for (int pass = 0; pass < 2; ++pass)
             {
                 g.setColour(arcHue.withAlpha(glow * (pass == 0 ? 0.16f : 0.28f)));
-                g.drawLine(pointerLine, pointerThickness * (pass == 0 ? 2.4f : 1.6f));
+                g.strokePath(needle, juce::PathStrokeType(pointerThickness
+                                                              * (pass == 0 ? 1.4f : 0.6f),
+                                                          juce::PathStrokeType::curved,
+                                                          juce::PathStrokeType::rounded));
             }
         }
 
         g.setColour(arcHue);
-        g.drawLine(pointerLine, pointerThickness);
+        g.fillPath(needle);
     }
 }
 

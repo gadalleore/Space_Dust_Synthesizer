@@ -86,6 +86,45 @@ public:
         }
     }
 
+    /** Bloom thrown OUTWARD from a control's edge.
+
+        Expanding rounded rects with the control's own footprint clipped out, so the
+        light rings the control instead of tinting it -- and, crucially, it must be
+        drawn AFTER the control has finished painting. Drawing it first is what hid
+        it on the toggles: their lit state fills bounds.expanded(4), which painted
+        straight over the glow underneath (Giuseppe, 2026-08-01). */
+    void glowAround(juce::Graphics& g, juce::Rectangle<float> footprint,
+                    float cornerSize, juce::Colour c) const
+    {
+        const float glow = getGlowAmount();
+
+        if (glow <= 0.01f)
+            return;
+
+        // A REAL blur (juce::DropShadow), not stacked rectangles.
+        //
+        // The first version filled three expanding rounded rects with the control's
+        // footprint clipped out. Two things were wrong with that: three bands is not
+        // a falloff, it is three visible edges, and the clip hole was a plain
+        // RECTANGLE while the fill was rounded -- so the ring had square inner
+        // corners and read as a hard box around the control. In red, on a clipping
+        // synth, that was Giuseppe's "red squares" (2026-08-01).
+        //
+        // DropShadow blurs the actual rounded path, so the light falls off smoothly
+        // and follows the control's real shape. Drawn BEFORE the control paints: its
+        // own opaque fill then covers the inner half, leaving only the outward spill.
+        // Which is also why the radius has to exceed however far the control's own
+        // fills reach, or there is nothing left to see.
+        juce::Path shape;
+        shape.addRoundedRectangle(footprint, cornerSize);
+
+        juce::DropShadow shadow(c.withAlpha(juce::jlimit(0.0f, 1.0f, glow * 0.85f)),
+                                14,             // radius, comfortably past the lit state's 4px
+                                { 0, 0 });      // centred: a glow, not a shadow
+
+        shadow.drawForPath(g, shape);
+    }
+
     /** Two-pass bloom behind a filled rectangle. */
     void glowRect(juce::Graphics& g, juce::Rectangle<float> r, juce::Colour c) const
     {
