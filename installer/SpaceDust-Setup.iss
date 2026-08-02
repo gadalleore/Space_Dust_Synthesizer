@@ -2,8 +2,9 @@
 ; Space Dust Synthesizer — Windows installer (Inno Setup 6)
 ; =============================================================================
 ; Staging layout (next to this .iss file):
-;   Files\VST3\Space Dust.vst3\   ← full VST3 bundle (folder with .vst3 extension)
-;   Files\Standalone\Space Dust.exe ← standalone desktop app
+;   Files\VST3\<product>.vst3\      ← full VST3 bundle (folder with .vst3 extension)
+;   Files\Standalone\<product>.exe  ← standalone desktop app
+;     (<product> = MyProductName, defined below; "Space Dust" unless overridden)
 ;   Files\Presets\*.sdpreset      ← factory presets
 ;   License-GPLv3.txt             ← GPLv3 text for the license wizard page
 ;   THIRD-PARTY-NOTICES.txt       ← JUCE (GPL) + Glitch Goblin font (OFL) notices
@@ -13,6 +14,20 @@
 ; SelectComponentsLabel2 message). Presets/config install if EITHER is chosen.
 ; The plug-in reads presetFolder from config.xml (see PresetManager.cpp).
 ; =============================================================================
+
+; Name of the built binaries: "<product>.vst3" and "<product>.exe". This tracks
+; SPACEDUST_PRODUCT_NAME in CMakeLists.txt, which is "Space Dust" on the v1-maintenance
+; line and "Space Dust V2" on main while V2 is under development, so that the two can be
+; installed side by side. Overridable from the command line (ISCC /DMyProductName=...);
+; the default below keeps the shipping v1 installer compiling exactly as it always has.
+;
+; Deliberately scoped to the FILE names only. MyAppName, the preset folder and the
+; config.xml path all stay "Space Dust" regardless: they are the user-facing identity and
+; the uninstall-time preset-recovery path, and repointing those per-branch is how presets
+; get orphaned. V2 reverts its product name before release anyway.
+#ifndef MyProductName
+  #define MyProductName "Space Dust"
+#endif
 
 #define MyAppName       "Space Dust Synthesizer"
 #define MyAppVersion    "1.0.17"
@@ -122,9 +137,9 @@ Name: "{code:GetPresetsDir}"; Flags: uninsneveruninstall
 
 [Files]
 ; Entire VST3 bundle: recursive copy preserving inner layout. (VST3 component only.)
-Source: "Files\VST3\Space Dust.vst3\*"; DestDir: "{code:GetVST3Dir}\Space Dust.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: vst3
+Source: "Files\VST3\{#MyProductName}.vst3\*"; DestDir: "{code:GetVST3Dir}\{#MyProductName}.vst3"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: vst3
 ; Standalone desktop app -> {app} (Program Files\Space Dust Synthesizer). (Standalone component only.)
-Source: "Files\Standalone\Space Dust.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: standalone
+Source: "Files\Standalone\{#MyProductName}.exe"; DestDir: "{app}"; Flags: ignoreversion; Components: standalone
 ; Third-party notices (JUCE GPL + Glitch Goblin OFL font) — always installed, satisfies OFL.
 Source: "THIRD-PARTY-NOTICES.txt"; DestDir: "{app}"; Flags: ignoreversion
 ; App icon — installed so UninstallDisplayIcon has a stable target regardless of components.
@@ -152,8 +167,8 @@ Source: "Support\README-Presets.txt"; DestDir: "{code:GetPresetsDir}"; DestName:
 
 [Icons]
 ; Standalone app shortcuts (only created when the Standalone component is selected).
-Name: "{autoprograms}\Space Dust"; Filename: "{app}\Space Dust.exe"; Components: standalone
-Name: "{autodesktop}\Space Dust";  Filename: "{app}\Space Dust.exe"; Components: standalone; Tasks: desktopicon
+Name: "{autoprograms}\{#MyProductName}"; Filename: "{app}\{#MyProductName}.exe"; Components: standalone
+Name: "{autodesktop}\{#MyProductName}";  Filename: "{app}\{#MyProductName}.exe"; Components: standalone; Tasks: desktopicon
 ; NOTE: We deliberately do NOT create a Start Menu "Uninstall Space Dust" shortcut.
 ; Windows 10/11 filter uninstall-target shortcuts out of the Start Menu "All apps"
 ; list (by design — they route uninstalls through Settings > Apps), so such a shortcut

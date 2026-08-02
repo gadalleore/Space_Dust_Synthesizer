@@ -78,7 +78,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SpaceDust-VST3
-          path: build/SpaceDust_artefacts/Release/VST3/Space Dust.vst3/**
+          # Globbed for the product name. Note this also shifts the artifact root up one
+          # level: upload-artifact roots the artifact at a pattern's non-glob prefix, so
+          # the "<product>.vst3" directory is now INSIDE the artifact instead of being
+          # the root. qa-installer therefore extracts into VST3/ rather than into a
+          # hardcoded bundle name.
+          path: build/SpaceDust_artefacts/Release/VST3/*.vst3/**
+          # Stays "warn", not "error": these steps are if:always(), so on a genuine build
+          # failure an empty artifact is expected and must not add a second red step on
+          # top of the real one. qa-installer is where a missing bundle fails loudly.
           if-no-files-found: warn
 
       - name: Upload Standalone artifact
@@ -86,7 +94,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SpaceDust-Standalone
-          path: build/SpaceDust_artefacts/Release/Standalone/Space Dust.exe
+          path: build/SpaceDust_artefacts/Release/Standalone/*.exe
           if-no-files-found: warn
 
       - name: Upload pluginval log
@@ -136,19 +144,31 @@ jobs:
       - name: Install AU for validation
         run: |
           mkdir -p "$HOME/Library/Audio/Plug-Ins/Components"
-          cp -R "build/SpaceDust_artefacts/Release/AU/Space Dust.component" \
+          # Globbed, not hardcoded: the bundle is named after SPACEDUST_PRODUCT_NAME,
+          # which differs between the v1-maintenance line and main (V2).
+          cp -R build/SpaceDust_artefacts/Release/AU/*.component \
                 "$HOME/Library/Audio/Plug-Ins/Components/"
           killall -9 AudioComponentRegistrar 2>/dev/null || true
 
       - name: Validate AU (auval)
-        run: auval -v aumu SpDs YcPl
+        run: |
+          # The subtype is SPACEDUST_PLUGIN_CODE, which must differ per line so the two
+          # can be installed side by side. Read it from CMakeLists rather than pinning a
+          # branch-specific literal here.
+          CODE=$(sed -n 's/^[[:space:]]*set(SPACEDUST_PLUGIN_CODE[[:space:]]*\([A-Za-z0-9]*\).*/\1/p' CMakeLists.txt)
+          if [ -z "$CODE" ]; then
+            echo "Could not read SPACEDUST_PLUGIN_CODE from CMakeLists.txt" >&2
+            exit 1
+          fi
+          echo "Validating AU with plugin code: $CODE"
+          auval -v aumu "$CODE" YcPl
 
       - name: Upload AU artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: SpaceDust-AU
-          path: build/SpaceDust_artefacts/Release/AU/Space Dust.component/**
+          path: build/SpaceDust_artefacts/Release/AU/*.component/**
           if-no-files-found: warn
 
       - name: Upload macOS VST3 artifact
@@ -156,7 +176,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SpaceDust-VST3-macOS
-          path: build/SpaceDust_artefacts/Release/VST3/Space Dust.vst3/**
+          path: build/SpaceDust_artefacts/Release/VST3/*.vst3/**
           if-no-files-found: warn
 
   qa-installer:
@@ -174,11 +194,13 @@ jobs:
         shell: pwsh
         run: choco install innosetup --no-progress -y
 
+      # The VST3 artifact now carries the "<product>.vst3" directory at its root (see the
+      # upload step), so it extracts into VST3/ rather than into a hardcoded bundle name.
       - name: Download VST3 artifact
         uses: actions/download-artifact@v4
         with:
           name: SpaceDust-VST3
-          path: installer/Files/VST3/Space Dust.vst3
+          path: installer/Files/VST3
 
       - name: Download Standalone artifact
         uses: actions/download-artifact@v4
@@ -189,8 +211,28 @@ jobs:
       - name: Compile installer
         shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+
+          # The .iss defaults its product name to "Space Dust" and is overridden here, so
+          # the shipping v1-maintenance installer compiles byte-for-byte as before while
+          # main (V2) stages "Space Dust V2.vst3" / ".exe".
+          $cmake = Get-Content CMakeLists.txt -Raw
+          if ($cmake -notmatch 'set\(SPACEDUST_PRODUCT_NAME\s+"([^"]+)"') {
+              throw 'Could not read SPACEDUST_PRODUCT_NAME from CMakeLists.txt'
+          }
+          $product = $Matches[1]
+          Write-Host "Product name: $product"
+
+          # Assert the artifacts landed where the .iss will look. Without this the
+          # packaging shape can rot silently: ISCC would just skip missing sources and
+          # emit an installer that contains no plug-in.
+          $bundle = "installer/Files/VST3/$product.vst3/Contents"
+          $exe    = "installer/Files/Standalone/$product.exe"
+          if (-not (Test-Path $bundle)) { throw "VST3 bundle not staged at: $bundle" }
+          if (-not (Test-Path $exe))    { throw "Standalone not staged at: $exe" }
+
           $iscc = 'C:\Program Files (x86)\Inno Setup 6\ISCC.exe'
-          & $iscc installer/SpaceDust-Setup.iss
+          & $iscc "/DMyProductName=$product" installer/SpaceDust-Setup.iss
           if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
 
       - name: Upload installer

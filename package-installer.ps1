@@ -232,9 +232,23 @@ if (-not $SkipBuild) {
     Write-Host "[Package] -SkipBuild: reusing existing artifact (safety scan still runs)." -ForegroundColor Gray
 }
 
+# ── Product name ──────────────────────────────────────────────────────────
+# Binaries are named after SPACEDUST_PRODUCT_NAME in CMakeLists.txt: "Space Dust"
+# on the v1-maintenance line, "Space Dust V2" on main while V2 is in development.
+# Read it rather than hardcoding it, and hand it to ISCC so the .iss stages the
+# matching file names. This affects FILE names only - the preset folder and
+# config.xml path are unchanged and still "Space Dust".
+$cmakeText = Get-Content (Join-Path $PSScriptRoot 'CMakeLists.txt') -Raw
+if ($cmakeText -notmatch 'set\(SPACEDUST_PRODUCT_NAME\s+"([^"]+)"') {
+    Write-Host "[Package] Could not read SPACEDUST_PRODUCT_NAME from CMakeLists.txt" -ForegroundColor Red
+    exit 1
+}
+$product = $Matches[1]
+Write-Host "[Package] Product name: $product" -ForegroundColor Gray
+
 # ── Step 2: Stage the .vst3 bundle ────────────────────────────────────────
-$vstSrc = "build\SpaceDust_artefacts\Release\VST3\Space Dust.vst3"
-$vstDst = "installer\Files\VST3\Space Dust.vst3"
+$vstSrc = "build\SpaceDust_artefacts\Release\VST3\$product.vst3"
+$vstDst = "installer\Files\VST3\$product.vst3"
 if (-not (Test-Path $vstSrc)) {
     Write-Host "[Package] VST3 artifact missing: $vstSrc" -ForegroundColor Red
     Write-Host "          Run without -SkipBuild." -ForegroundColor Red
@@ -250,10 +264,10 @@ Write-Host "[Package] Staged VST3 -> $vstDst" -ForegroundColor Green
 # does, ENABLE_MEMORY_SAFETY_LOGGING leaked into a Release build and we abort
 # rather than ship logs onto user machines.
 Write-Host "[Package] Scanning staged VST3 for logger symbols..." -ForegroundColor Cyan
-$stagedDll = Get-ChildItem -Path $vstDst -Recurse -Filter "Space Dust.vst3" -File `
+$stagedDll = Get-ChildItem -Path $vstDst -Recurse -Filter "$product.vst3" -File `
               -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $stagedDll) {
-    Write-Host "[Package] Could not find Space Dust.vst3 DLL inside staged bundle." -ForegroundColor Red
+    Write-Host "[Package] Could not find $product.vst3 DLL inside staged bundle." -ForegroundColor Red
     exit 1
 }
 $bytes  = [System.IO.File]::ReadAllBytes($stagedDll.FullName)
@@ -287,8 +301,8 @@ if ($Sign) {
 # ── Step 2.7: Stage, scan, and sign the standalone .exe ───────────────────
 # The standalone app links the same SharedCode as the VST3, so it gets the same
 # logger safety-net scan and the same Azure signature before packaging.
-$saSrc = "build\SpaceDust_artefacts\Release\Standalone\Space Dust.exe"
-$saDst = "installer\Files\Standalone\Space Dust.exe"
+$saSrc = "build\SpaceDust_artefacts\Release\Standalone\$product.exe"
+$saDst = "installer\Files\Standalone\$product.exe"
 if (-not (Test-Path $saSrc)) {
     Write-Host "[Package] Standalone artifact missing: $saSrc" -ForegroundColor Red
     Write-Host "          Run without -SkipBuild." -ForegroundColor Red
@@ -357,7 +371,7 @@ if (-not $SkipPresets) {
 # sidesteps PowerShell/ISCC quoting of the space-bearing tool/dlib/meta paths;
 # $f is auto-quoted by Inno. The same /tr timestamp keeps it valid past cert
 # rotation, mirroring Invoke-CodeSign.
-$isccArgs = @()
+$isccArgs = @("/DMyProductName=$product")
 if ($Sign) {
     $metaAbs  = (Resolve-Path $meta).Path
     $signCmd  = '/Sspacedust=$q' + $signtool + '$q sign /v /fd SHA256 ' +

@@ -19,7 +19,11 @@ param(
 $ErrorActionPreference = 'Stop'
 $root        = $PSScriptRoot
 $pluginval   = Join-Path $root 'tools/pluginval/pluginval.exe'
-$vst3Bundle  = Join-Path $BuildDir 'SpaceDust_artefacts/Release/VST3/Space Dust.vst3'
+# Resolved by glob AFTER the build, never hardcoded: the bundle is named after
+# SPACEDUST_PRODUCT_NAME in CMakeLists.txt, which is "Space Dust" on the v1-maintenance
+# line and "Space Dust V2" on main. A literal name here is what turned every V2 CI run
+# red at this step while the build itself was perfectly healthy.
+$vst3Dir     = Join-Path $BuildDir 'SpaceDust_artefacts/Release/VST3'
 
 function Write-Section($title) {
     Write-Host ''
@@ -44,9 +48,20 @@ if (-not $NoBuild) {
     if ($LASTEXITCODE -ne 0) { throw "Build failed with exit $LASTEXITCODE" }
 }
 
-if (-not (Test-Path $vst3Bundle)) {
-    throw "VST3 bundle not found at: $vst3Bundle"
+# Exactly one .vst3 is emitted here on either line. Failing loudly on two means a
+# stale bundle from a previous product name is sitting in the build tree, which would
+# otherwise get validated instead of the one just built.
+$found = @(Get-ChildItem -Path $vst3Dir -Filter '*.vst3' -Directory -ErrorAction SilentlyContinue)
+
+if ($found.Count -eq 0) {
+    throw "No .vst3 bundle found in: $vst3Dir"
 }
+if ($found.Count -gt 1) {
+    throw ("Expected one .vst3 in {0}, found {1}: {2}" -f $vst3Dir, $found.Count, ($found.Name -join ', '))
+}
+
+$vst3Bundle = $found[0].FullName
+Write-Host "Validating: $vst3Bundle" -ForegroundColor Cyan
 
 # 3) Pluginval invocation. --strictness-level 10 enables the most aggressive
 #    tests, including repeated open/close, parameter abuse, threading checks,
