@@ -464,8 +464,7 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
         // Built in the pointer's own frame and mapped out: `u` runs along the
         // pointer from the pivot, `v` across it. Much easier to reason about than
         // rotating six points by hand.
-        const float r        = pointerThickness * 0.5f;
-        const float shoulder = tipRadius - r;
+        const float r = pointerThickness * 0.5f;
 
         const float sinA = std::sin(angle);
         const float cosA = std::cos(angle);
@@ -476,31 +475,37 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
                                       centreY - cosA * u + sinA * v);
         };
 
-        juce::Path needle;
+        // Parameterised on where the apex lands, because the glow needs a SHORTER
+        // obelisk than the fill -- see the glow passes below.
+        auto buildNeedle = [&](float apexRadius)
+        {
+            juce::Path p;
+            const float shoulder = apexRadius - r;
 
-        if (shoulder <= 0.0f)
-        {
-            // Degenerate on a tiny knob: the cap alone would fill the whole length,
-            // so there is no shaft to draw. Just the pivot dot.
-            needle.addEllipse(centreX - r, centreY - r, r * 2.0f, r * 2.0f);
-        }
-        else
-        {
+            if (shoulder <= 0.0f)
+            {
+                // Degenerate on a tiny knob: the cap alone would fill the whole length,
+                // so there is no shaft to draw. Just the pivot dot.
+                p.addEllipse(centreX - r, centreY - r, r * 2.0f, r * 2.0f);
+                return p;
+            }
+
             constexpr float halfPi = juce::MathConstants<float>::halfPi;
 
-            needle.startNewSubPath(pt(0.0f, r));
+            p.startNewSubPath(pt(0.0f, r));
 
             // The round bottom: a half-turn behind the pivot, from one side of the
             // shaft to the other. The parallel sides are tangent to it at u = 0, so
             // the shaft meets the curve with no shoulder.
-            needle.addCentredArc(centreX, centreY, r, r, 0.0f,
-                                 angle + halfPi, angle + halfPi * 3.0f, false);
+            p.addCentredArc(centreX, centreY, r, r, 0.0f,
+                            angle + halfPi, angle + halfPi * 3.0f, false);
 
-            needle.lineTo(pt(shoulder,   -r));   // up one parallel side
-            needle.lineTo(pt(tipRadius, 0.0f));  // the point
-            needle.lineTo(pt(shoulder,    r));   // back down the other
-            needle.closeSubPath();
-        }
+            p.lineTo(pt(shoulder,    -r));   // up one parallel side
+            p.lineTo(pt(apexRadius, 0.0f));  // the point
+            p.lineTo(pt(shoulder,     r));   // back down the other
+            p.closeSubPath();
+            return p;
+        };
 
         // Same bloom law as the arc, so the two halves of the dial glow together.
         // Stroked around the filled shape rather than drawn as a fatter line, so the
@@ -509,16 +514,29 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
         {
             for (int pass = 0; pass < 2; ++pass)
             {
+                // Each pass is stroked on a needle whose apex is pulled back by exactly
+                // half that pass's stroke width, so the stroke's OUTER boundary lands on
+                // tipRadius rather than beyond it.
+                //
+                // Without this the arrow visibly overshot the arc (Giuseppe, 2026-08-02).
+                // A stroke is centred on its path, and the rounded join at a 90-degree
+                // apex is a half-disc centred on the point -- so the glow spilled
+                // 0.7 * thickness straight out along the pointer's axis. The arc's glow
+                // spreads the same distance but spreads it evenly along the whole curve,
+                // where it reads as a halo; concentrated at a single point it read as the
+                // tip sticking out past the rim.
+                const float strokeWidth = pointerThickness * (pass == 0 ? 1.4f : 0.6f);
+
                 g.setColour(arcHue.withAlpha(glow * (pass == 0 ? 0.16f : 0.28f)));
-                g.strokePath(needle, juce::PathStrokeType(pointerThickness
-                                                              * (pass == 0 ? 1.4f : 0.6f),
-                                                          juce::PathStrokeType::curved,
-                                                          juce::PathStrokeType::rounded));
+                g.strokePath(buildNeedle(tipRadius - strokeWidth * 0.5f),
+                             juce::PathStrokeType(strokeWidth,
+                                                  juce::PathStrokeType::curved,
+                                                  juce::PathStrokeType::rounded));
             }
         }
 
         g.setColour(arcHue);
-        g.fillPath(needle);
+        g.fillPath(buildNeedle(tipRadius));
     }
 }
 
