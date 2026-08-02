@@ -17,6 +17,13 @@
 #if JUCE_MAC
  #include <CoreFoundation/CoreFoundation.h>
 #endif
+#if JUCE_WINDOWS
+ // NOMINMAX matters: windows.h otherwise defines min/max as macros, which collide with
+ // juce::dsp::SIMDFallbackOps::max and break the juce_dsp headers pulled in below.
+ #define NOMINMAX
+ #define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
+#endif
 #include <cstdio>
 #include <memory>
 
@@ -41,6 +48,18 @@ namespace
         {
            #if JUCE_MAC
             CFRunLoopRunInMode (kCFRunLoopDefaultMode, 0.01, true);
+           #elif JUCE_WINDOWS
+            // Sleeping alone is not enough on Windows: JUCE's timers are delivered as
+            // messages to the message thread, so a thread that only sleeps never runs a
+            // single timerCallback and every check here fails regardless of the feature.
+            // Drain the queue, then sleep briefly so this doesn't spin a core.
+            MSG msg;
+            while (PeekMessage (&msg, nullptr, 0, 0, PM_REMOVE))
+            {
+                TranslateMessage (&msg);
+                DispatchMessage (&msg);
+            }
+            juce::Thread::sleep (5);
            #else
             juce::Thread::sleep (10);
            #endif
