@@ -36,9 +36,9 @@ juce::Path OscilloscopeComponent::buildTrace() const
     //==========================================================================
     // -- Lane separation, and what happens past full scale (Giuseppe, 2026-08-03) --
     // Each channel keeps to its own half of the display. laneHalf sets how far the
-    // two resting lines sit from centre and yScale how far the wave swings, and
-    // laneHalf is the larger of the two on purpose: it leaves clear air down the
-    // middle so a loud L and a loud R still read as two separate traces.
+    // two resting lines sit from centre and yScale how far the wave swings, so the
+    // lane a channel can occupy runs from yBase - yScale to yBase + yScale and the
+    // traces stay readable as two.
     //
     // Past full scale the trace is simply NOT DRAWN. The subpath breaks and picks
     // up again where the signal comes back in range, leaving a gap in the line.
@@ -47,14 +47,44 @@ juce::Path OscilloscopeComponent::buildTrace() const
     // was worse: a flat line is a drawn line, and it puts a stretch of waveform on
     // screen that the audio never contained. A gap says "over" without inventing
     // signal to say it with.
-    const float yScale   = halfH * 0.4f;   // swing; as it always was, 0.8 read as "zoomed in"
-    const float laneHalf = halfH * 0.5f;   // resting lines, kept wider than the swing
+    //
+    // Where the break FALLS matters too (Giuseppe, 2026-08-04). Ending the subpath
+    // on the last in-range column left every break at a different height, because
+    // with stride decimation that column sits anywhere between the lane edge and a
+    // whole stride short of it -- so a redlining saw frayed into ragged stumps. The
+    // segment that leaves the lane is now cut at the point it actually crosses +/-1
+    // and the line is carried to there, so every break lands flush on the same
+    // edge: the trace hits a wall. Same on the way back in.
+    //
+    // The two walls are butted up against each other. The resting lines stay exactly
+    // where they were; it is the SWING that grew to meet in the middle, equally up
+    // and down, until L's floor and R's ceiling sit one stroke width apart -- edges
+    // just touching, no strip of empty space left between the lanes.
+    const float laneHalf = halfH * 0.5f;                          // resting lines, unmoved
+    const float yScale   = laneHalf - kTraceThickness * 0.5f;     // swing, out to the wall
 
     for (int ch = 0; ch < juce::jmin(2, numCh); ++ch)
     {
         const float yBase = (ch == 0) ? (cy - laneHalf) : (cy + laneHalf);
 
-        bool started = false;
+        bool  started  = false;   // a subpath is open
+        bool  havePrev = false;   // the previous column held a usable sample
+        float prevSample = 0.0f;
+        float prevX      = 0.0f;
+
+        // Where along prev..cur the segment passes through the lane edge, as a
+        // fraction. One end is in range and the other is not, so they always
+        // differ; the guard is only there to keep a denormal gap from producing
+        // an infinity, and the clamp to keep the cut inside the segment.
+        const auto crossingT = [] (float from, float to, float level)
+        {
+            const float span = to - from;
+
+            if (std::abs(span) < 1.0e-12f)
+                return 0.0f;
+
+            return juce::jlimit(0.0f, 1.0f, (level - from) / span);
+        };
 
         for (int n = 0; n < available; n += stride)
         {
@@ -62,28 +92,63 @@ juce::Path OscilloscopeComponent::buildTrace() const
             // scope's does. readSpectrumSamples already hands them over in order.
             const float sample = historyBuffer.getSample(ch, n);
 
-            // Out of the lane: draw nothing, and break the line so the next in-range
-            // sample starts a fresh subpath instead of being joined straight across
-            // the excursion. Written as !(<=) so a NaN sample fails it too.
-            if (! (std::abs(sample) <= 1.0f))
+            const float x = juce::jmap(static_cast<float>(n), 0.0f,
+                                       static_cast<float>(available - 1), 10.0f, w - 10.0f);
+
+            // A NaN or infinite sample can't be interpolated towards, so it breaks
+            // the line outright and takes the crossing history with it.
+            if (! std::isfinite(sample))
             {
-                started = false;
+                started = havePrev = false;
                 continue;
             }
 
-            const float x = juce::jmap(static_cast<float>(n), 0.0f,
-                                       static_cast<float>(available - 1), 10.0f, w - 10.0f);
-            const float y = yBase - sample * yScale;
-
-            if (! started)
+            if (std::abs(sample) <= 1.0f)
             {
-                path.startNewSubPath(x, y);
-                started = true;
+                const float y = yBase - sample * yScale;
+
+                if (! started)
+                {
+                    // havePrev here means the column before was out of the lane, so
+                    // pick the line up on the edge it comes back through rather than
+                    // in mid-air a stride inside.
+                    if (havePrev)
+                    {
+                        const float level = (prevSample > 1.0f) ? 1.0f : -1.0f;
+                        const float t     = crossingT(prevSample, sample, level);
+
+                        path.startNewSubPath(prevX + (x - prevX) * t, yBase - level * yScale);
+                        path.lineTo(x, y);
+                    }
+                    else
+                    {
+                        path.startNewSubPath(x, y);
+                    }
+
+                    started = true;
+                }
+                else
+                {
+                    path.lineTo(x, y);
+                }
             }
             else
             {
-                path.lineTo(x, y);
+                // Leaving the lane: carry the line as far as the edge, then break it.
+                if (started)
+                {
+                    const float level = (sample > 1.0f) ? 1.0f : -1.0f;
+                    const float t     = crossingT(prevSample, sample, level);
+
+                    path.lineTo(prevX + (x - prevX) * t, yBase - level * yScale);
+                }
+
+                started = false;
             }
+
+            prevSample = sample;
+            prevX      = x;
+            havePrev   = true;
         }
     }
 
@@ -96,7 +161,7 @@ void OscilloscopeComponent::paint(juce::Graphics& g)
     drawBackground(g);
 
     // Older sweeps first: the RGB dither marking where the trace has just been.
-    SpaceDustDither::ghostTrail(g, traceHistory, 2.5f * 1.4f, kTrailSpread, kTrailAlpha, *ditherTiles);
+    SpaceDustDither::ghostTrail(g, traceHistory, kTraceThickness * 1.4f, kTrailSpread, kTrailAlpha, *ditherTiles);
 
     const auto trace = buildTrace();
 
@@ -106,10 +171,10 @@ void OscilloscopeComponent::paint(juce::Graphics& g)
         // than pushed in, so this needs no wiring from the editor. glowTrace, not
         // glowPath: see the note there on why a trace needs the tighter spread.
         if (auto* sdLnf = dynamic_cast<SpaceDustLookAndFeel*>(&getLookAndFeel()))
-            sdLnf->glowTrace(g, trace, traceColour, 2.5f);
+            sdLnf->glowTrace(g, trace, traceColour, kTraceThickness);
 
         g.setColour(traceColour);
-        g.strokePath(trace, juce::PathStrokeType(2.5f));
+        g.strokePath(trace, juce::PathStrokeType(kTraceThickness));
     }
 }
 

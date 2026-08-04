@@ -71,6 +71,11 @@ private:
     static constexpr float kTrailSpread   = 3.0f;
     static constexpr float kTrailAlpha    = 0.55f;
 
+    // How thick the trace is drawn. buildTrace() needs it too: the two lanes are
+    // spaced so their clip edges sit exactly this far apart, which only lands right
+    // if the number the geometry uses is the number the stroke uses.
+    static constexpr float kTraceThickness = 2.5f;
+
     std::vector<juce::Path> traceHistory;
     SpaceDustDither::TilesPtr ditherTiles;
 
