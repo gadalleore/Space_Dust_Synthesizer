@@ -11,6 +11,34 @@ cd Space_Dust_Synthesizer
 
 **Known Good With:** Ableton Live 10, 11, and 12 (heavily tested for stability as of 2026).
 
+## Versions and branches
+
+Two versions of Space Dust are maintained side by side in this one repository, on
+separate branches. Neither is abandoned — pick the branch for the version you mean
+to work on.
+
+| Branch | Version | Product name | Status |
+|---|---|---|---|
+| `main` | 2.0.0 | **Space Dust V2** | In development. Installs alongside V1 rather than replacing it — different product name, different preset folder. |
+| `v1-maintenance` | 1.0.18 | **Space Dust** | The released version, in the wild. Still maintained: fixes for shipped users land here. |
+
+Because the two install under different names, both can be loaded in the same
+project at once, which is what makes it safe to develop V2 while V1 is in use.
+
+**Going back to a released version.** Releases are marked with annotated tags on
+`v1-maintenance`:
+
+```bash
+git checkout v1.0.18      # the current V1 release
+git checkout v1.0.17
+```
+
+Tag every release as it ships — `git tag -a v1.0.19 -m "Space Dust v1.0.19 - Version 1
+release"` on the commit that bumps the version in `CMakeLists.txt`, then
+`git push origin v1.0.19`. Only `v1.0.0`, `v1.0.17` and `v1.0.18` carry tags today;
+the versions in between were bumped without one and can only be found by reading
+the log, which is exactly the situation the tags exist to avoid.
+
 ## Screenshots
 
 | Main | Modulation |
