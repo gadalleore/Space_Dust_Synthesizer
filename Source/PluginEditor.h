@@ -180,6 +180,21 @@ private:
     juce::Rectangle<int> lissajousDrawArea;
     std::unique_ptr<OscilloscopeComponent> oscilloscope;
     std::unique_ptr<SpectrumAnalyserComponent> spectrumAnalyser;
+
+    //==========================================================================
+    // -- Lissajous motion dither (Giuseppe, 2026-08-02) --
+    // The Lissajous is drawn straight into this page rather than by a component of
+    // its own, and it was the one scope that never picked up the treatment the
+    // others have: no ghost trail, no bloom, just a flat stroke. Same technique as
+    // OscilloscopeComponent -- the last few figures ghosted behind the live one,
+    // each in a different colour channel -- since the whole figure is somewhere new
+    // every frame and so has no single moving head to streak.
+    static constexpr int   kLissajousHistory = 4;
+    static constexpr float kLissajousSpread  = 3.5f;
+    static constexpr float kLissajousAlpha   = 0.55f;
+
+    std::vector<juce::Path> lissajousHistory;
+    SpaceDustDither::TilesPtr ditherTiles;
 };
 
 //==============================================================================

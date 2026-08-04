@@ -3066,7 +3066,15 @@ void SpectralPageComponent::resized()
     const int gonioDim = juce::jmax(80, juce::jmin(gonioInner.getWidth(), gonioInner.getHeight()));
     int gx = gonioGroupBounds.getX() + (gonioGroupBounds.getWidth() - gonioDim) / 2;
     int gy = gonioGroupBounds.getY() + labelSpace + (gonioInner.getHeight() - gonioDim) / 2;
-    lissajousDrawArea = juce::Rectangle<int>(gx, gy, gonioDim, gonioDim);
+
+    const auto newLissajousArea = juce::Rectangle<int>(gx, gy, gonioDim, gonioDim);
+
+    // Stored ghosts hold absolute coordinates from the old area, so they would smear
+    // in the wrong place; drop them and let the trail rebuild over the next few frames.
+    if (newLissajousArea != lissajousDrawArea)
+        lissajousHistory.clear();
+
+    lissajousDrawArea = newLissajousArea;
 
     // Oscilloscope: center the component vertically in its box (symmetric top/bottom
     // margins) so the trace sits in the MIDDLE of the box rather than low. The trace is
@@ -3128,8 +3136,24 @@ void SpectralPageComponent::drawLissajous(juce::Graphics& g, juce::Rectangle<int
         }
         if (!p.isEmpty())
         {
+            // Older figures first, so the live one lands on top of its own ghosts.
+            SpaceDustDither::ghostTrail(g, lissajousHistory, 2.5f * 1.4f,
+                                        kLissajousSpread, kLissajousAlpha, *ditherTiles);
+
+            // Bloom, scaled by the meter -- the same law as every other element.
+            if (auto* sdLnf = dynamic_cast<SpaceDustLookAndFeel*>(&getLookAndFeel()))
+                sdLnf->glowTrace(g, p, pathColour, 2.5f);
+
             g.setColour(pathColour);
             g.strokePath(p, juce::PathStrokeType(2.5f));
+
+            // Advance the trail. This page repaints off the editor's timer, in step
+            // with the goniometer snapshot it draws, so one frame here is one frame
+            // of audio -- the same relationship the scope's history has.
+            lissajousHistory.push_back(p);
+
+            while (static_cast<int>(lissajousHistory.size()) > kLissajousHistory)
+                lissajousHistory.erase(lissajousHistory.begin());
         }
     }
 

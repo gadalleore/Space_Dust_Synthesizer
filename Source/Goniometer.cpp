@@ -59,16 +59,7 @@ void Goniometer::paint(juce::Graphics& g)
 
         // Bloom, scaled by the meter (same law as every other element).
         if (auto* sdLnf = dynamic_cast<SpaceDustLookAndFeel*>(&getLookAndFeel()))
-        {
-            if (const float glow = sdLnf->getGlowAmount(); glow > 0.01f)
-            {
-                for (int pass = 0; pass < 2; ++pass)
-                {
-                    g.setColour(pathColourOutside.withAlpha(glow * (pass == 0 ? 0.14f : 0.24f)));
-                    g.strokePath(p, juce::PathStrokeType(2.5f * (pass == 0 ? 4.0f : 2.2f)));
-                }
-            }
-        }
+            sdLnf->glowTrace(g, p, pathColourOutside, 2.5f);
 
         g.setColour(pathColourOutside);
         g.strokePath(p, juce::PathStrokeType(2.5f));

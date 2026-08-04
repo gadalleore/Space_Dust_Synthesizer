@@ -86,6 +86,32 @@ public:
         }
     }
 
+    /** Bloom behind a SCOPE TRACE -- the same law as glowPath, drawn tighter.
+
+        glowPath's widest pass is 4x the line, which is right for a knob arc or the
+        EQ curve: one slow shape whose halo has room to fall off. A scope trace is a
+        long, fast, densely-folded line, and at 4x every fold's halo runs into its
+        neighbour's; the separate glows merge into one slab of light that swamps the
+        trace and looks like it has burst its box (Giuseppe, 2026-08-02). Half the
+        spread and slightly lower alphas keep the bloom attached to the line.
+
+        Used by both traces -- oscilloscope and Lissajous -- so they bloom alike.
+        The spectrum is bars, not a trace, and keeps its own per-column bloom. */
+    void glowTrace(juce::Graphics& g, const juce::Path& p,
+                   juce::Colour c, float baseThickness) const
+    {
+        const float glow = getGlowAmount();
+
+        if (glow <= 0.01f)
+            return;
+
+        for (int pass = 0; pass < 2; ++pass)
+        {
+            g.setColour(c.withAlpha(glow * (pass == 0 ? 0.10f : 0.18f)));
+            g.strokePath(p, juce::PathStrokeType(baseThickness * (pass == 0 ? 2.0f : 1.4f)));
+        }
+    }
+
     /** Bloom thrown OUTWARD from a control's edge.
 
         Expanding rounded rects with the control's own footprint clipped out, so the
