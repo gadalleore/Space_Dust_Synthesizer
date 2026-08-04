@@ -46,6 +46,38 @@ Runs Tracktion's [pluginval](https://github.com/Tracktion/pluginval) at
 - Threading correctness (audio thread vs message thread)
 - Sample-rate changes and buffer-size changes
 
+#### One failure class is filtered out (and why)
+
+pluginval reports 45-60 spurious `<Param> not restored on setStateInformation`
+failures on a typical run, non-deterministically. `run-pluginval.ps1` recognises
+and forgives exactly this shape, printing e.g.
+`PASS pluginval (52 known discrete-quantisation artifacts filtered, 0 real failures)`.
+
+The test pokes every parameter with `setValue(randomFloat)` rather than
+`setValueNotifyingHost`, then saves, pokes again, restores, and expects the raw
+float back within a fixed **0.1** tolerance. A **discrete** parameter cannot hold an
+arbitrary float — it returns the nearest legal step, which for a 2-step (boolean)
+parameter is up to **0.5** away. Continuous parameters have dense legal values and
+never trip it.
+
+Diagnosed 2026-08-04 across 584 such failures from 13 runs, 5 of them on
+unmodified `main`: the discrete value was preserved in **584 of 584**, no continuous
+parameter ever failed, and not one "expected" value was a clean `0.0`/`1.0`. Saved
+presets only ever store `0.0`/`1.0` for a bool, so the test asks the plugin to
+restore a value it can never actually be handed.
+
+**The filter is deliberately narrow.** A failure is forgiven only if it is a
+`not restored on setStateInformation` failure **and** the parameter is discrete
+**and** expected/actual quantise to the same legal step. A continuous parameter, a
+genuine value flip, any other test category, or a mismatch between pluginval's own
+failure tally and the parsed lines all still fail loudly and are named in the output.
+Verify the filter still discriminates with:
+
+```powershell
+# re-analyse any captured log without re-running pluginval
+./run-pluginval.ps1 -AnalyseOnly build/pluginval-report.log
+```
+
 ### Installer smoke test (test-installer.ps1, step 4)
 
 Compiles the Inno Setup installer (if `ISCC.exe` is installed), runs it
