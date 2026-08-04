@@ -125,9 +125,9 @@ juce::File PresetManager::appDataFolder()
     // JUCE maps userApplicationDataDirectory to "~/Library" on macOS, not to
     // "~/Library/Application Support" where per-user settings belong and where the
     // installer writes config.xml. Be explicit rather than inheriting that surprise.
-    return userData.getChildFile("Application Support").getChildFile("Space Dust");
+    return userData.getChildFile("Application Support").getChildFile(SPACEDUST_DATA_FOLDER);
    #else
-    return userData.getChildFile("Space Dust");
+    return userData.getChildFile(SPACEDUST_DATA_FOLDER);
    #endif
 }
 
