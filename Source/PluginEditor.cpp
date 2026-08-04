@@ -1,5 +1,8 @@
-#include "PluginEditor.h"
+﻿#include "PluginEditor.h"
 #include "BinaryData.h"
+
+#include <cmath>
+#include <limits>
 
 //==============================================================================
 // -- Safe String Helper (Same as PluginProcessor) --
@@ -13,8 +16,8 @@ namespace
         return juce::String(raw);
     }
 
-    // Astronomically accurate starfield: Costa Mesa, CA (33.66°N, 117.90°W)
-    // March 29, 2026 at midnight PDT — commemorating the completion of Space Dust.
+    // Astronomically accurate starfield: Costa Mesa, CA (33.66Â°N, 117.90Â°W)
+    // March 29, 2026 at midnight PDT â€” commemorating the completion of Space Dust.
     // Star positions from Yale Bright Star Catalog (J2000.0 epoch), projected via
     // horizontal coordinate transform for the exact date/time/location.
     // Bortle 7-8 sky (moderate light pollution): ~mag 4.0 naked-eye limit.
@@ -28,121 +31,121 @@ namespace
         struct CatStar { float ra, dec, mag; };
         static const CatStar catalog[] = {
             // -- Orion (setting in west) --
-            {88.79f,   7.41f, 0.50f},   // Betelgeuse (α Ori)
-            {78.63f,  -8.20f, 0.13f},   // Rigel (β Ori)
-            {81.28f,   6.35f, 1.64f},   // Bellatrix (γ Ori)
-            {83.00f,  -0.30f, 2.23f},   // Mintaka (δ Ori)
-            {84.05f,  -1.20f, 1.69f},   // Alnilam (ε Ori)
-            {85.19f,  -1.94f, 1.77f},   // Alnitak (ζ Ori)
-            {86.94f,  -9.67f, 2.09f},   // Saiph (κ Ori)
+            {88.79f,   7.41f, 0.50f},   // Betelgeuse (Î± Ori)
+            {78.63f,  -8.20f, 0.13f},   // Rigel (Î² Ori)
+            {81.28f,   6.35f, 1.64f},   // Bellatrix (Î³ Ori)
+            {83.00f,  -0.30f, 2.23f},   // Mintaka (Î´ Ori)
+            {84.05f,  -1.20f, 1.69f},   // Alnilam (Îµ Ori)
+            {85.19f,  -1.94f, 1.77f},   // Alnitak (Î¶ Ori)
+            {86.94f,  -9.67f, 2.09f},   // Saiph (Îº Ori)
             // -- Canis Major --
-            {101.29f,-16.72f,-1.46f},   // Sirius (α CMa)
-            {95.68f, -17.96f, 1.98f},   // Mirzam (β CMa)
-            {107.10f,-26.39f, 1.84f},   // Adhara (ε CMa)
-            {104.66f,-28.97f, 1.50f},   // Wezen (δ CMa)
+            {101.29f,-16.72f,-1.46f},   // Sirius (Î± CMa)
+            {95.68f, -17.96f, 1.98f},   // Mirzam (Î² CMa)
+            {107.10f,-26.39f, 1.84f},   // Adhara (Îµ CMa)
+            {104.66f,-28.97f, 1.50f},   // Wezen (Î´ CMa)
             // -- Canis Minor --
-            {114.83f,  5.22f, 0.34f},   // Procyon (α CMi)
-            {111.79f,  8.29f, 2.90f},   // Gomeisa (β CMi)
+            {114.83f,  5.22f, 0.34f},   // Procyon (Î± CMi)
+            {111.79f,  8.29f, 2.90f},   // Gomeisa (Î² CMi)
             // -- Gemini --
-            {116.33f, 28.03f, 1.14f},   // Pollux (β Gem)
-            {113.65f, 31.89f, 1.58f},   // Castor (α Gem)
-            {99.43f,  16.40f, 1.93f},   // Alhena (γ Gem)
-            {95.74f,  22.51f, 2.88f},   // Tejat (μ Gem)
-            {100.98f, 25.13f, 2.98f},   // Mebsuta (ε Gem)
-            {110.03f, 21.98f, 3.53f},   // Wasat (δ Gem)
+            {116.33f, 28.03f, 1.14f},   // Pollux (Î² Gem)
+            {113.65f, 31.89f, 1.58f},   // Castor (Î± Gem)
+            {99.43f,  16.40f, 1.93f},   // Alhena (Î³ Gem)
+            {95.74f,  22.51f, 2.88f},   // Tejat (Î¼ Gem)
+            {100.98f, 25.13f, 2.98f},   // Mebsuta (Îµ Gem)
+            {110.03f, 21.98f, 3.53f},   // Wasat (Î´ Gem)
             // -- Auriga --
-            {79.17f,  46.00f, 0.08f},   // Capella (α Aur)
-            {89.88f,  44.95f, 1.90f},   // Menkalinan (β Aur)
+            {79.17f,  46.00f, 0.08f},   // Capella (Î± Aur)
+            {89.88f,  44.95f, 1.90f},   // Menkalinan (Î² Aur)
             // -- Taurus --
-            {68.98f,  16.51f, 0.85f},   // Aldebaran (α Tau)
-            {81.57f,  28.61f, 1.65f},   // Elnath (β Tau)
+            {68.98f,  16.51f, 0.85f},   // Aldebaran (Î± Tau)
+            {81.57f,  28.61f, 1.65f},   // Elnath (Î² Tau)
             // -- Leo --
-            {152.09f, 11.97f, 1.35f},   // Regulus (α Leo)
-            {177.27f, 14.57f, 2.14f},   // Denebola (β Leo)
-            {154.99f, 19.84f, 2.28f},   // Algieba (γ Leo)
-            {168.53f, 20.52f, 2.56f},   // Zosma (δ Leo)
-            {168.56f, 15.43f, 3.34f},   // Chertan (θ Leo)
-            {154.17f, 23.42f, 3.44f},   // Adhafera (ζ Leo)
-            {151.83f, 16.76f, 3.52f},   // η Leo
+            {152.09f, 11.97f, 1.35f},   // Regulus (Î± Leo)
+            {177.27f, 14.57f, 2.14f},   // Denebola (Î² Leo)
+            {154.99f, 19.84f, 2.28f},   // Algieba (Î³ Leo)
+            {168.53f, 20.52f, 2.56f},   // Zosma (Î´ Leo)
+            {168.56f, 15.43f, 3.34f},   // Chertan (Î¸ Leo)
+            {154.17f, 23.42f, 3.44f},   // Adhafera (Î¶ Leo)
+            {151.83f, 16.76f, 3.52f},   // Î· Leo
             // -- Virgo --
-            {201.30f,-11.16f, 0.97f},   // Spica (α Vir)
-            {190.42f, -1.45f, 2.74f},   // Porrima (γ Vir)
-            {195.54f, 10.96f, 2.83f},   // Vindemiatrix (ε Vir)
-            // -- Boötes --
-            {213.92f, 19.18f,-0.05f},   // Arcturus (α Boo)
-            {221.25f, 27.07f, 2.70f},   // Izar (ε Boo)
-            {208.67f, 18.40f, 2.68f},   // Muphrid (η Boo)
-            {218.02f, 38.31f, 3.03f},   // Seginus (γ Boo)
-            {225.49f, 40.39f, 3.50f},   // Nekkar (β Boo)
+            {201.30f,-11.16f, 0.97f},   // Spica (Î± Vir)
+            {190.42f, -1.45f, 2.74f},   // Porrima (Î³ Vir)
+            {195.54f, 10.96f, 2.83f},   // Vindemiatrix (Îµ Vir)
+            // -- BoÃ¶tes --
+            {213.92f, 19.18f,-0.05f},   // Arcturus (Î± Boo)
+            {221.25f, 27.07f, 2.70f},   // Izar (Îµ Boo)
+            {208.67f, 18.40f, 2.68f},   // Muphrid (Î· Boo)
+            {218.02f, 38.31f, 3.03f},   // Seginus (Î³ Boo)
+            {225.49f, 40.39f, 3.50f},   // Nekkar (Î² Boo)
             // -- Ursa Major (Big Dipper high overhead) --
-            {165.93f, 61.75f, 1.79f},   // Dubhe (α UMa)
-            {165.46f, 56.38f, 2.37f},   // Merak (β UMa)
-            {178.46f, 53.69f, 2.44f},   // Phecda (γ UMa)
-            {183.86f, 57.03f, 3.31f},   // Megrez (δ UMa)
-            {193.51f, 55.96f, 1.77f},   // Alioth (ε UMa)
-            {200.98f, 54.93f, 2.27f},   // Mizar (ζ UMa)
-            {206.89f, 49.31f, 1.86f},   // Alkaid (η UMa)
-            {155.58f, 41.50f, 3.05f},   // Tania Australis (μ UMa)
-            {154.27f, 42.91f, 3.45f},   // Tania Borealis (λ UMa)
-            {169.62f, 33.09f, 3.49f},   // Alula Borealis (ν UMa)
-            {169.55f, 31.53f, 3.79f},   // Alula Australis (ξ UMa)
+            {165.93f, 61.75f, 1.79f},   // Dubhe (Î± UMa)
+            {165.46f, 56.38f, 2.37f},   // Merak (Î² UMa)
+            {178.46f, 53.69f, 2.44f},   // Phecda (Î³ UMa)
+            {183.86f, 57.03f, 3.31f},   // Megrez (Î´ UMa)
+            {193.51f, 55.96f, 1.77f},   // Alioth (Îµ UMa)
+            {200.98f, 54.93f, 2.27f},   // Mizar (Î¶ UMa)
+            {206.89f, 49.31f, 1.86f},   // Alkaid (Î· UMa)
+            {155.58f, 41.50f, 3.05f},   // Tania Australis (Î¼ UMa)
+            {154.27f, 42.91f, 3.45f},   // Tania Borealis (Î» UMa)
+            {169.62f, 33.09f, 3.49f},   // Alula Borealis (Î½ UMa)
+            {169.55f, 31.53f, 3.79f},   // Alula Australis (Î¾ UMa)
             {201.31f, 54.99f, 4.01f},   // Alcor (80 UMa)
             // -- Ursa Minor --
-            {37.95f,  89.26f, 1.98f},   // Polaris (α UMi)
-            {222.68f, 74.16f, 2.08f},   // Kochab (β UMi)
-            {230.18f, 71.83f, 3.05f},   // Pherkad (γ UMi)
+            {37.95f,  89.26f, 1.98f},   // Polaris (Î± UMi)
+            {222.68f, 74.16f, 2.08f},   // Kochab (Î² UMi)
+            {230.18f, 71.83f, 3.05f},   // Pherkad (Î³ UMi)
             // -- Hydra --
-            {141.90f, -8.66f, 1.98f},   // Alphard (α Hya)
+            {141.90f, -8.66f, 1.98f},   // Alphard (Î± Hya)
             // -- Cancer --
-            {124.13f,  9.19f, 3.52f},   // Al Tarf (β Cnc)
-            {131.17f, 18.15f, 3.94f},   // Asellus Australis (δ Cnc)
+            {124.13f,  9.19f, 3.52f},   // Al Tarf (Î² Cnc)
+            {131.17f, 18.15f, 3.94f},   // Asellus Australis (Î´ Cnc)
             // -- Corvus --
-            {183.95f,-17.54f, 2.59f},   // Gienah (γ Crv)
-            {188.60f,-23.40f, 2.65f},   // Kraz (β Crv)
-            {187.47f,-16.52f, 2.95f},   // Algorab (δ Crv)
-            {182.53f,-22.62f, 3.02f},   // Minkar (ε Crv)
+            {183.95f,-17.54f, 2.59f},   // Gienah (Î³ Crv)
+            {188.60f,-23.40f, 2.65f},   // Kraz (Î² Crv)
+            {187.47f,-16.52f, 2.95f},   // Algorab (Î´ Crv)
+            {182.53f,-22.62f, 3.02f},   // Minkar (Îµ Crv)
             // -- Canes Venatici --
-            {194.01f, 38.32f, 2.90f},   // Cor Caroli (α CVn)
+            {194.01f, 38.32f, 2.90f},   // Cor Caroli (Î± CVn)
             // -- Corona Borealis --
-            {233.67f, 26.71f, 2.23f},   // Alphecca (α CrB)
+            {233.67f, 26.71f, 2.23f},   // Alphecca (Î± CrB)
             // -- Draco --
-            {269.15f, 51.49f, 2.23f},   // Eltanin (γ Dra)
-            {262.61f, 52.30f, 2.79f},   // Rastaban (β Dra)
-            {211.10f, 64.38f, 3.65f},   // Thuban (α Dra)
+            {269.15f, 51.49f, 2.23f},   // Eltanin (Î³ Dra)
+            {262.61f, 52.30f, 2.79f},   // Rastaban (Î² Dra)
+            {211.10f, 64.38f, 3.65f},   // Thuban (Î± Dra)
             // -- Hercules --
-            {247.55f, 21.49f, 2.77f},   // Kornephoros (β Her)
-            {250.32f, 31.60f, 2.81f},   // ζ Her
-            {258.76f, 36.81f, 3.16f},   // π Her
-            {258.76f, 24.84f, 3.14f},   // Sarin (δ Her)
-            {258.66f, 14.39f, 3.48f},   // Rasalgethi (α Her)
-            {266.62f, 27.72f, 3.42f},   // μ Her
-            {250.72f, 38.92f, 3.53f},   // η Her
+            {247.55f, 21.49f, 2.77f},   // Kornephoros (Î² Her)
+            {250.32f, 31.60f, 2.81f},   // Î¶ Her
+            {258.76f, 36.81f, 3.16f},   // Ï€ Her
+            {258.76f, 24.84f, 3.14f},   // Sarin (Î´ Her)
+            {258.66f, 14.39f, 3.48f},   // Rasalgethi (Î± Her)
+            {266.62f, 27.72f, 3.42f},   // Î¼ Her
+            {250.72f, 38.92f, 3.53f},   // Î· Her
             // -- Serpens --
-            {236.07f,  6.43f, 2.65f},   // Unukalhai (α Ser)
+            {236.07f,  6.43f, 2.65f},   // Unukalhai (Î± Ser)
             // -- Libra --
-            {222.72f,-16.04f, 2.75f},   // Zubenelgenubi (α Lib)
-            {229.25f, -9.38f, 2.61f},   // Zubeneschamali (β Lib)
+            {222.72f,-16.04f, 2.75f},   // Zubenelgenubi (Î± Lib)
+            {229.25f, -9.38f, 2.61f},   // Zubeneschamali (Î² Lib)
             // -- Lyra --
-            {279.23f, 38.78f, 0.03f},   // Vega (α Lyr)
+            {279.23f, 38.78f, 0.03f},   // Vega (Î± Lyr)
             // -- Cygnus --
-            {310.36f, 45.28f, 1.25f},   // Deneb (α Cyg)
+            {310.36f, 45.28f, 1.25f},   // Deneb (Î± Cyg)
             // -- Centaurus --
-            {211.67f,-36.37f, 2.06f},   // Menkent (θ Cen)
+            {211.67f,-36.37f, 2.06f},   // Menkent (Î¸ Cen)
             // -- Perseus (low NW) --
-            {51.08f,  49.86f, 1.80f},   // Mirfak (α Per)
+            {51.08f,  49.86f, 1.80f},   // Mirfak (Î± Per)
             // -- Lynx --
-            {140.26f, 34.39f, 3.13f},   // α Lyn
+            {140.26f, 34.39f, 3.13f},   // Î± Lyn
             // -- Leo Minor --
             {163.33f, 34.22f, 3.83f},   // Praecipua (46 LMi)
             // -- Cepheus --
-            {319.65f, 62.59f, 2.51f},   // Alderamin (α Cep)
+            {319.65f, 62.59f, 2.51f},   // Alderamin (Î± Cep)
             // -- Ophiuchus --
-            {263.73f, 12.56f, 2.08f},   // Rasalhague (α Oph)
+            {263.73f, 12.56f, 2.08f},   // Rasalhague (Î± Oph)
             // -- Monoceros --
-            {107.99f, -0.49f, 3.93f},   // α Mon
+            {107.99f, -0.49f, 3.93f},   // Î± Mon
             // -- Cassiopeia (low north) --
-            {10.13f,  56.54f, 2.23f},   // Schedar (α Cas)
-            {2.29f,   59.15f, 2.27f},   // Caph (β Cas)
+            {10.13f,  56.54f, 2.23f},   // Schedar (Î± Cas)
+            {2.29f,   59.15f, 2.27f},   // Caph (Î² Cas)
         };
         static const int catalogSize = sizeof(catalog) / sizeof(catalog[0]);
 
@@ -157,10 +160,10 @@ namespace
             computed = true;
             projCount = 0;
 
-            // Costa Mesa, CA: 33.6646°N, 117.9034°W
+            // Costa Mesa, CA: 33.6646Â°N, 117.9034Â°W
             // March 29, 2026 midnight PDT (UTC-7) = 07:00 UTC
-            // GMST at 0h UTC: 188.81° + 7h sidereal rotation (105.29°) = 294.10°
-            // LST = GMST + longitude = 294.10 + (-117.90) = 176.20°
+            // GMST at 0h UTC: 188.81Â° + 7h sidereal rotation (105.29Â°) = 294.10Â°
+            // LST = GMST + longitude = 294.10 + (-117.90) = 176.20Â°
             constexpr float lat       = 33.6646f;
             constexpr float lst       = 176.20f;
             constexpr float degToRad  = 3.14159265f / 180.0f;
@@ -188,7 +191,7 @@ namespace
                 float cosAlt = std::cos(alt * degToRad);
                 if (cosAlt < 0.001f) cosAlt = 0.001f;  // zenith guard
 
-                // Azimuth (0°=N, 90°=E, 180°=S, 270°=W)
+                // Azimuth (0Â°=N, 90Â°=E, 180Â°=S, 270Â°=W)
                 float sinAz = -cosDec * std::sin(ha) / cosAlt;
                 float cosAz = (sinDec - sinLat * sinAlt) / (cosLat * cosAlt);
                 float az    = std::atan2(sinAz, cosAz) / degToRad;
@@ -802,6 +805,8 @@ MainPageComponent::MainPageComponent(SpaceDustAudioProcessorEditor& editor)
     addAndMakeVisible(parentEditor.filterResonanceLabel);
     addAndMakeVisible(parentEditor.warmSaturationMasterButton);
     addAndMakeVisible(parentEditor.filterKeyTrackButton);
+    addChildComponent(parentEditor.filterNoteLockButton);     // shown by resized() when Key Tracking is on
+    addChildComponent(parentEditor.filterHarmonicLockButton); // shown by resized() when Note Lock is on
 
     addAndMakeVisible(parentEditor.filterEnvGroup);
     addAndMakeVisible(parentEditor.filterEnvAttackSlider);
@@ -837,6 +842,10 @@ MainPageComponent::MainPageComponent(SpaceDustAudioProcessorEditor& editor)
     addAndMakeVisible(parentEditor.subOscCoarseLabel);
     
     parentEditor.audioProcessor.getValueTreeState().addParameterListener("subOscOn", this);
+    // Key Tracking gates whether the Note Lock toggle exists, and Note Lock in turn
+    // gates the Harmonic Series toggle (resized() reads both).
+    parentEditor.audioProcessor.getValueTreeState().addParameterListener("filterKeyTrack", this);
+    parentEditor.audioProcessor.getValueTreeState().addParameterListener("filterNoteLock", this);
     updateSubOscVisibility();
     
     // Pan labels: click to reset to center, with tooltip
@@ -851,6 +860,8 @@ MainPageComponent::MainPageComponent(SpaceDustAudioProcessorEditor& editor)
 MainPageComponent::~MainPageComponent()
 {
     parentEditor.audioProcessor.getValueTreeState().removeParameterListener("subOscOn", this);
+    parentEditor.audioProcessor.getValueTreeState().removeParameterListener("filterKeyTrack", this);
+    parentEditor.audioProcessor.getValueTreeState().removeParameterListener("filterNoteLock", this);
     cancelPendingUpdate();   // listener gone; drop any queued visibility refresh
     parentEditor.osc1PanLabel.removeMouseListener(this);
     parentEditor.osc2PanLabel.removeMouseListener(this);
@@ -866,8 +877,8 @@ void MainPageComponent::mouseUp(const juce::MouseEvent& event)
 
 void MainPageComponent::parameterChanged(const juce::String&, float)
 {
-    // APVTS delivers this on the AUDIO thread under host automation. The only param
-    // we listen for is "subOscOn", and its handler (updateSubOscVisibility) calls
+    // APVTS delivers this on the AUDIO thread under host automation. Both params we
+    // listen for ("subOscOn", "filterKeyTrack") end in a relayout, and that calls
     // setVisible()/resized() -> grabKeyboardFocus() -> macOS HIToolbox, which aborts
     // with SIGILL if not on the message thread (dispatch_assert_queue). Marshal it;
     // AsyncUpdater coalesces automation bursts into a single relayout and self-cancels
@@ -877,7 +888,9 @@ void MainPageComponent::parameterChanged(const juce::String&, float)
 
 void MainPageComponent::handleAsyncUpdate()
 {
-    // Message thread (AsyncUpdater guarantee) — safe to touch the UI.
+    // Message thread (AsyncUpdater guarantee) â€” safe to touch the UI.
+    // This also covers "filterKeyTrack": updateSubOscVisibility ends in resized(),
+    // which is where the Note Lock toggle's visibility is decided.
     updateSubOscVisibility();
 }
 
@@ -1039,7 +1052,7 @@ void MainPageComponent::resized()
     parentEditor.osc1PanSlider.setBounds(oscContent.getX(), osc1PanY, comboWidth, panSliderHeight);
     parentEditor.osc1PanLabel.setBounds(oscContent.getX(), osc1PanY + panSliderHeight + 2, comboWidth, labelHeight);
     
-    // Knobs shifted down so title labels (Coarse, Detune, Level) sit above — matches Filter Cutoff/Resonance
+    // Knobs shifted down so title labels (Coarse, Detune, Level) sit above â€” matches Filter Cutoff/Resonance
     int osc1KnobY = osc1Y + (comboHeight - knobDiameter) / 2 + labelHeight + oscKnobLabelGap;
     int osc1KnobX = oscContent.getX() + comboWidth + horizontalSpacing;
     
@@ -1100,7 +1113,7 @@ void MainPageComponent::resized()
     int eqKnob1X = noiseKnobX;                                        // Low Shelf/Cut (first column)
     int eqKnob2X = eqKnob1X + knobDiameter + horizontalSpacing;       // High Shelf/Cut (second column)
     int noiseLevelX = eqKnob2X + knobDiameter + horizontalSpacing;    // Level (third column)
-    const int eqLabelWidth = 90;  // "Low Shelf/Cut" / "High Shelf/Cut" — wider than knob
+    const int eqLabelWidth = 90;  // "Low Shelf/Cut" / "High Shelf/Cut" â€” wider than knob
     int lowShelfLabelX = eqKnob1X + (knobDiameter - eqLabelWidth) / 2;
     int highShelfLabelX = eqKnob2X + (knobDiameter - eqLabelWidth) / 2;
     parentEditor.lowShelfAmountLabel.setBounds(lowShelfLabelX, noiseKnobY - labelHeight - oscKnobLabelGap, eqLabelWidth, labelHeight);
@@ -1121,7 +1134,7 @@ void MainPageComponent::resized()
     // RIGHT SIDE: AMP ENVELOPE (Tall, narrow vertical column)
     // Master section is now handled by main editor, always visible on right side
     // Box shrinks/expands based on Sub Oscillator toggle (like Filter in Effects tab)
-    // Label→knob→value: same rhythm as Oscillators (oscKnobLabelGap + oscLabelSpacing).
+    // Labelâ†’knobâ†’value: same rhythm as Oscillators (oscKnobLabelGap + oscLabelSpacing).
     // Between rows/sections: ampVerticalSpacing (tighter than default verticalSpacing) to save height.
     // ============================================================================
     // Use temp full height to compute content positions, then set final height
@@ -1135,18 +1148,18 @@ void MainPageComponent::resized()
     auto layoutAmpEnvKnob = [&](juce::Slider& knob, juce::Label& label)
     {
         label.setBounds(ampEnvKnobX, ampEnvKnobY, knobDiameter, labelHeight);
-        ampEnvKnobY += labelHeight + oscKnobLabelGap; // match Oscillators: label bottom → knob top
+        ampEnvKnobY += labelHeight + oscKnobLabelGap; // match Oscillators: label bottom â†’ knob top
         knob.setBounds(ampEnvKnobX, ampEnvKnobY, knobDiameter, knobDiameter);
-        ampEnvKnobY += knobDiameter + oscLabelSpacing + ampVerticalSpacing; // knob → value area (osc) + tight row gap
+        ampEnvKnobY += knobDiameter + oscLabelSpacing + ampVerticalSpacing; // knob â†’ value area (osc) + tight row gap
     };
     layoutAmpEnvKnob(parentEditor.envAttackSlider, parentEditor.envAttackLabel);
     layoutAmpEnvKnob(parentEditor.envDecaySlider, parentEditor.envDecayLabel);
     layoutAmpEnvKnob(parentEditor.envSustainSlider, parentEditor.envSustainLabel);
     layoutAmpEnvKnob(parentEditor.envReleaseSlider, parentEditor.envReleaseLabel);
     
-    // Pitch envelope: 3 knobs in a row (Amount, Time, Pitch) — labels above knobs
+    // Pitch envelope: 3 knobs in a row (Amount, Time, Pitch) â€” labels above knobs
     const int pitchEnvKnobSize = 56;
-    // 56×56 bounds match other Main-tab rotaries (LAF splits dial + textbox inside the rect).
+    // 56Ã—56 bounds match other Main-tab rotaries (LAF splits dial + textbox inside the rect).
     // Place Sub Osc using LookAndFeel-measured textBoxBounds (hardcoded gaps drift vs actual layout).
     int pitchEnvTotalWidth = 3 * pitchEnvKnobSize + 2 * 10;  // 3 knobs + 2 gaps
     int pitchEnvStartX = ampEnvContent.getCentreX() - pitchEnvTotalWidth / 2;
@@ -1169,7 +1182,7 @@ void MainPageComponent::resized()
         parentEditor.pitchEnvPitchSlider.getBottom());
     
     // Sub oscillator (below pitch envelope, expandable when toggle is on)
-    // Section gap after pitch value text = topBottomGap (same as Oscillators ↔ Filter)
+    // Section gap after pitch value text = topBottomGap (same as Oscillators â†” Filter)
     int subOscY = pitchValueBottom + topBottomGap;
     int subOscToggleWidth = 120;  // Wide enough for "Sub Oscillator"
     int subOscToggleHeight = 22;
@@ -1180,7 +1193,7 @@ void MainPageComponent::resized()
     int subOscItemGap = pitchEnvGap;          // Match pitch envelope gap (10)
     int subOscKnobsTotalWidth = 2 * subOscItemWidth + subOscItemGap;  // Level + Coarse only
     int subOscKnobsStartX = ampEnvContent.getCentreX() - subOscKnobsTotalWidth / 2;
-    // Row 1: Level and Coarse — labels above knobs (match Main tab)
+    // Row 1: Level and Coarse â€” labels above knobs (match Main tab)
     parentEditor.subOscLevelLabel.setBounds(subOscKnobsStartX, subOscKnobsY, subOscItemWidth, labelHeight);
     parentEditor.subOscCoarseLabel.setBounds(subOscKnobsStartX + subOscItemWidth + subOscItemGap, subOscKnobsY, subOscItemWidth, labelHeight);
     subOscKnobsY += labelHeight + oscKnobLabelGap;
@@ -1189,7 +1202,7 @@ void MainPageComponent::resized()
     const int subOscValueBottom = juce::jmax(
         parentEditor.subOscLevelSlider.getBottom(),
         parentEditor.subOscCoarseSlider.getBottom());
-    // Row 2: Wave — topBottomGap after Level/Coarse value text, then label + combo
+    // Row 2: Wave â€” topBottomGap after Level/Coarse value text, then label + combo
     int subOscWaveLabelTop = subOscValueBottom + topBottomGap;
     int subOscWaveWidth = 80;  // Wide enough for "Triangle", centered - avoids overlap with Level/Coarse columns
     int subOscWaveX = ampEnvContent.getCentreX() - subOscWaveWidth / 2;
@@ -1200,7 +1213,7 @@ void MainPageComponent::resized()
     // Amp Envelope box height: shrink when Sub Osc off, expand when on (like Filter in Effects tab)
     // Bottom inset below last control matches Modulation tab LFO1 box: after the Filter toggle row,
     // ModulationPageComponent uses lfo1FinalH = lfo1CurrentY - modulationContent.getY() + lfoBoxPadV
-    // where lfo1CurrentY already includes modRowSpacing below the row — same as lfoBoxPadV + modRowSpacing
+    // where lfo1CurrentY already includes modRowSpacing below the row â€” same as lfoBoxPadV + modRowSpacing
     // from the bottom of the Filter button to the bottom of the LFO1 group (32 + 4).
     const int modLfoBoxPadV = 32;       // ModulationPageComponent lfoBoxPadV
     const int modRowSpacing = 4;      // ModulationPageComponent modRowSpacing (gap after last row)
@@ -1262,10 +1275,16 @@ void MainPageComponent::resized()
     int filterResonanceKnobY = filterKnobStartY + labelHeight + filterLabelGap;
     parentEditor.filterResonanceSlider.setBounds(filterKnobX, filterResonanceKnobY, knobDiameter, knobDiameter);
 
+    // Row below the Cutoff/Resonance knobs. Warm Saturation sits at its left end and
+    // Note Lock at its right, so both share this Y and read as one row. Hoisted above
+    // the Key Tracking block because Note Lock is positioned there but has to line up
+    // with a button laid out further down.
+    const int belowFilterKnobsRowY = filterResonanceKnobY + knobDiameter + 12;
+
     // Key Tracking toggle: centred horizontally over the Filter-Envelope "Amount"
     // knob column (one column right of Resonance), sitting above it. Height matches
     // the Sub Oscillator button (22). Vertically the button centre lines up with the
-    // Resonance knob's CIRCLE centre — the rotary sits above its value box, so the
+    // Resonance knob's CIRCLE centre â€” the rotary sits above its value box, so the
     // circle centre is higher than the bounds centre by half the text-box height.
     {
         const int keyTrackW = 86;
@@ -1275,12 +1294,33 @@ void MainPageComponent::resized()
         int keyTrackX = amountColX + (knobDiameter - keyTrackW) / 2;       // centre button over that column
         int keyTrackY = filterResonanceKnobY + (knobDiameter - resTextBoxH) / 2 - keyTrackH / 2;
         parentEditor.filterKeyTrackButton.setBounds(keyTrackX, keyTrackY, keyTrackW, keyTrackH);
+
+        // Note Lock sits below Key Tracking in the same column, on the Warm Saturation
+        // row so the two toggles line up across the box. It only exists while Key
+        // Tracking is on -- quantising the cutoff to steps from the played note is only
+        // a meaningful idea once the cutoff tracks the note at all. Visibility is set
+        // here rather than only in the parameter listener because resized() runs on
+        // every relayout and would otherwise reveal a button that should be hidden.
+        parentEditor.filterNoteLockButton.setBounds(keyTrackX, belowFilterKnobsRowY,
+                                                    keyTrackW, keyTrackH);
+        const bool keyTrackOn = parentEditor.safeGetParam("filterKeyTrack") > 0.5f;
+        parentEditor.filterNoteLockButton.setVisible(keyTrackOn);
+
+        // Harmonic Series sits immediately left of Note Lock on the same row, centred
+        // over the Resonance column the way Note Lock is centred over the Amount one.
+        // It is a mode FOR Note Lock, so it only exists while Note Lock is on --
+        // nesting the visibility the same way Note Lock nests inside Key Tracking.
+        int harmonicX = filterKnobX + (knobDiameter - keyTrackW) / 2;   // filterKnobX == Resonance column
+        parentEditor.filterHarmonicLockButton.setBounds(harmonicX, belowFilterKnobsRowY,
+                                                        keyTrackW, keyTrackH);
+        parentEditor.filterHarmonicLockButton.setVisible(
+            keyTrackOn && parentEditor.safeGetParam("filterNoteLock") > 0.5f);
     }
 
-    // Warm Saturation toggle: below resonance row, before Filter Envelope
+    // Warm Saturation toggle: below resonance row, before Filter Envelope.
+    // Shares belowFilterKnobsRowY with Note Lock at the other end of the row.
     filterKnobX = filterContent.getX();
-    int warmSatButtonY = filterResonanceKnobY + knobDiameter + 12;
-    parentEditor.warmSaturationMasterButton.setBounds(filterKnobX, warmSatButtonY, 130, 22);
+    parentEditor.warmSaturationMasterButton.setBounds(filterKnobX, belowFilterKnobsRowY, 130, 22);
     
     // ============================================================================
     // FILTER ENVELOPE: Position inside Filter box (below Cutoff/Resonance)
@@ -1377,11 +1417,9 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     : parentEditor(editor)
 {
     setAccessible(false);
-    parentEditor.audioProcessor.getValueTreeState().addParameterListener(
-        juce::ParameterID{"modFilter1Show", 1}.getParamID(), this);
-    parentEditor.audioProcessor.getValueTreeState().addParameterListener(
-        juce::ParameterID{"modFilter2Show", 1}.getParamID(), this);
-    
+    for (const auto& id : relayoutTriggerParams())
+        parentEditor.audioProcessor.getValueTreeState().addParameterListener(id, this);
+
     // Add all modulation page components as children (no outer Modulation box or title)
     addAndMakeVisible(parentEditor.lfo1Group);
     addAndMakeVisible(parentEditor.lfo1EnabledButton);
@@ -1432,6 +1470,8 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     addAndMakeVisible(parentEditor.modFilter1ResonanceSlider);
     addAndMakeVisible(parentEditor.warmSaturationMod1Button);
     addAndMakeVisible(parentEditor.modFilter1KeyTrackButton);
+    addChildComponent(parentEditor.modFilter1NoteLockButton);     // shown by resized() when Key Tracking is on
+    addChildComponent(parentEditor.modFilter1HarmonicLockButton); // shown by resized() when Note Lock is on
     addAndMakeVisible(parentEditor.modFilter1ModeLabel);
     addAndMakeVisible(parentEditor.modFilter1CutoffLabel);
     addAndMakeVisible(parentEditor.modFilter1ResonanceLabel);
@@ -1442,6 +1482,8 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     addAndMakeVisible(parentEditor.modFilter2ResonanceSlider);
     addAndMakeVisible(parentEditor.warmSaturationMod2Button);
     addAndMakeVisible(parentEditor.modFilter2KeyTrackButton);
+    addChildComponent(parentEditor.modFilter2NoteLockButton);     // shown by resized() when Key Tracking is on
+    addChildComponent(parentEditor.modFilter2HarmonicLockButton); // shown by resized() when Note Lock is on
     addAndMakeVisible(parentEditor.modFilter2ModeLabel);
     addAndMakeVisible(parentEditor.modFilter2CutoffLabel);
     addAndMakeVisible(parentEditor.modFilter2ResonanceLabel);
@@ -1460,26 +1502,39 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
 
 ModulationPageComponent::~ModulationPageComponent()
 {
-    parentEditor.audioProcessor.getValueTreeState().removeParameterListener(
-        juce::ParameterID{"modFilter1Show", 1}.getParamID(), this);
-    parentEditor.audioProcessor.getValueTreeState().removeParameterListener(
-        juce::ParameterID{"modFilter2Show", 1}.getParamID(), this);
+    for (const auto& id : relayoutTriggerParams())
+        parentEditor.audioProcessor.getValueTreeState().removeParameterListener(id, this);
+}
+
+juce::StringArray ModulationPageComponent::relayoutTriggerParams()
+{
+    // Params whose value changes what this page shows, so resized() has to re-run:
+    //   *Show      -- whether each mod filter's controls exist at all
+    //   *KeyTrack  -- whether that filter's Note Lock toggle is offered
+    //   *NoteLock  -- whether that filter's Harmonic Series toggle is offered
+    //   *Link      -- which filter's toggles the shown ones reflect
+    // Registration and removal share this list so the two can never drift apart.
+    return { "modFilter1Show",         "modFilter2Show",
+             "filterKeyTrack",         "filterNoteLock",
+             "modFilter1KeyTrack",     "modFilter2KeyTrack",
+             "modFilter1NoteLock",     "modFilter2NoteLock",
+             "modFilter1LinkToMaster", "modFilter2LinkToMaster" };
 }
 
 void ModulationPageComponent::parameterChanged(const juce::String& parameterID, float newValue)
 {
-    if (parameterID == juce::ParameterID{"modFilter1Show", 1}.getParamID() ||
-        parameterID == juce::ParameterID{"modFilter2Show", 1}.getParamID())
+    juce::ignoreUnused(parameterID, newValue);
+
+    // Every param we subscribe to resolves to the same response: relayout. APVTS
+    // delivers this on the audio thread under host automation, so marshal it.
+    juce::MessageManager::callAsync([safeThis = juce::Component::SafePointer<ModulationPageComponent>(this)]
     {
-        juce::MessageManager::callAsync([safeThis = juce::Component::SafePointer<ModulationPageComponent>(this)]
+        if (safeThis != nullptr)
         {
-            if (safeThis != nullptr)
-            {
-                safeThis->resized();
-                safeThis->repaint();
-            }
-        });
-    }
+            safeThis->resized();
+            safeThis->repaint();
+        }
+    });
 }
 
 void ModulationPageComponent::paint(juce::Graphics& g)
@@ -1728,7 +1783,7 @@ void ModulationPageComponent::resized()
     lfo1CurrentY += modButtonHeight + modRowSpacing;
     
     // LFO1 Filter controls (when filter shown): Cutoff, Resonance, Mode dropdown, Link to master
-    // Rotary must use modRotaryTextBoxTotalH like Depth/Phase — TextBoxBelow in a square bounds shrinks the knob
+    // Rotary must use modRotaryTextBoxTotalH like Depth/Phase â€” TextBoxBelow in a square bounds shrinks the knob
     if (modFilter1Show)
     {
         const int filterKnobSize = modRateKnobSize;  // Rotary width matches Rate/Depth/Phase
@@ -1754,6 +1809,23 @@ void ModulationPageComponent::resized()
             int ktY = lfo1CurrentY + (filterKnobSize - ktH) / 2;
             int ktW = juce::jmin(84, lfo1Content.getRight() - ktX);
             parentEditor.modFilter1KeyTrackButton.setBounds(ktX, ktY, ktW, ktH);
+            // Note Lock directly below, same column. Only while Key Tracking is on --
+            // and when this filter is linked to the master, the master's Key Tracking
+            // is what the shared toggle reflects, so read the same param the button does.
+            const bool linked1 = parentEditor.safeGetParam("modFilter1LinkToMaster") > 0.5f;
+            const int noteLockY = ktY + ktH + 12;
+            parentEditor.modFilter1NoteLockButton.setBounds(ktX, noteLockY, ktW, ktH);
+            const bool kt1 = parentEditor.safeGetParam(linked1 ? "filterKeyTrack" : "modFilter1KeyTrack") > 0.5f;
+            parentEditor.modFilter1NoteLockButton.setVisible(kt1);
+
+            // Harmonic Series mirrors Note Lock across the knob pair: same row, same
+            // width, but in the empty column to the LEFT of Cutoff. Clamped to the box
+            // so a narrow LFO column shrinks it instead of letting it escape the panel.
+            int hsX = juce::jmax(lfo1Content.getX(), filterPairLeft - 8 - ktW);
+            int hsW = juce::jmin(ktW, filterPairLeft - 8 - hsX);
+            parentEditor.modFilter1HarmonicLockButton.setBounds(hsX, noteLockY, hsW, ktH);
+            parentEditor.modFilter1HarmonicLockButton.setVisible(
+                kt1 && parentEditor.safeGetParam(linked1 ? "filterNoteLock" : "modFilter1NoteLock") > 0.5f);
         }
         lfo1CurrentY += modRotaryTextBoxTotalH + gapValueToNextLabel;
         parentEditor.modFilter1ModeLabel.setBounds(lfo1CentreX - filterComboW / 2, lfo1CurrentY, filterComboW, 12);
@@ -1781,6 +1853,8 @@ void ModulationPageComponent::resized()
         parentEditor.modFilter1ModeLabel.setVisible(false);
         parentEditor.modFilter1LinkButton.setVisible(false);
         parentEditor.modFilter1KeyTrackButton.setVisible(false);
+        parentEditor.modFilter1NoteLockButton.setVisible(false);
+        parentEditor.modFilter1HarmonicLockButton.setVisible(false);
     }
     
     // Shrink LFO1 box to fit its actual content
@@ -1873,7 +1947,7 @@ void ModulationPageComponent::resized()
     lfo2CurrentY += modButtonHeight + modRowSpacing;
 
     // LFO2 Filter controls (when filter shown): Cutoff, Resonance, Mode dropdown, Link to master
-    // Rotary must use modRotaryTextBoxTotalH like Depth/Phase — TextBoxBelow in a square bounds shrinks the knob
+    // Rotary must use modRotaryTextBoxTotalH like Depth/Phase â€” TextBoxBelow in a square bounds shrinks the knob
     if (modFilter2Show)
     {
         const int filterKnobSize = modRateKnobSize;  // Rotary width matches Rate/Depth/Phase
@@ -1899,6 +1973,19 @@ void ModulationPageComponent::resized()
             int ktY = lfo2CurrentY + (filterKnobSize - ktH) / 2;
             int ktW = juce::jmin(84, lfo2Content.getRight() - ktX);
             parentEditor.modFilter2KeyTrackButton.setBounds(ktX, ktY, ktW, ktH);
+            // Note Lock directly below, Harmonic Series mirrored to the left of the knob
+            // pair (see the LFO 1 block for the linked-filter and clamping notes).
+            const bool linked2 = parentEditor.safeGetParam("modFilter2LinkToMaster") > 0.5f;
+            const int noteLockY = ktY + ktH + 12;
+            parentEditor.modFilter2NoteLockButton.setBounds(ktX, noteLockY, ktW, ktH);
+            const bool kt2 = parentEditor.safeGetParam(linked2 ? "filterKeyTrack" : "modFilter2KeyTrack") > 0.5f;
+            parentEditor.modFilter2NoteLockButton.setVisible(kt2);
+
+            int hsX = juce::jmax(lfo2Content.getX(), filterPairLeft - 8 - ktW);
+            int hsW = juce::jmin(ktW, filterPairLeft - 8 - hsX);
+            parentEditor.modFilter2HarmonicLockButton.setBounds(hsX, noteLockY, hsW, ktH);
+            parentEditor.modFilter2HarmonicLockButton.setVisible(
+                kt2 && parentEditor.safeGetParam(linked2 ? "filterNoteLock" : "modFilter2NoteLock") > 0.5f);
         }
         lfo2CurrentY += modRotaryTextBoxTotalH + gapValueToNextLabel;
         parentEditor.modFilter2ModeLabel.setBounds(lfo2CentreX - filterComboW / 2, lfo2CurrentY, filterComboW, 12);
@@ -1926,6 +2013,8 @@ void ModulationPageComponent::resized()
         parentEditor.modFilter2ModeLabel.setVisible(false);
         parentEditor.modFilter2LinkButton.setVisible(false);
         parentEditor.modFilter2KeyTrackButton.setVisible(false);
+        parentEditor.modFilter2NoteLockButton.setVisible(false);
+        parentEditor.modFilter2HarmonicLockButton.setVisible(false);
     }
     
     // Shrink LFO2 box to fit its actual content
@@ -2126,7 +2215,7 @@ void EffectsPageComponent::parameterChanged(const juce::String&, float)
 
 void EffectsPageComponent::handleAsyncUpdate()
 {
-    // Always runs on the message thread (AsyncUpdater guarantee) — safe for UI.
+    // Always runs on the message thread (AsyncUpdater guarantee) â€” safe for UI.
     updateDelayFilterVisibility();
     updateReverbFilterVisibility();
     updateGrainDelayFilterVisibility();
@@ -2652,7 +2741,7 @@ void EffectsPageComponent::resized()
     const int flangerNaturalContentHeight = fY - flangerStartY;
 
     // Lower-row alignment uses Delay/Reverb heights *without* their filter rows, so toggling those filters
-    // only resizes Delay/Reverb and moves Grain/Trance — Grain & Flanger group heights stay the same.
+    // only resizes Delay/Reverb and moves Grain/Trance â€” Grain & Flanger group heights stay the same.
     static constexpr int kEffectsTranceGateReferenceAlignHeight = 352;
     const int delayFilterRowExtra = filterShow ? (labelH + labelGap + knobSize + gap) : 0;
     const int reverbFilterRowExtra = reverbFilterShow ? (labelH + labelGap + knobSize + gap) : 0;
@@ -2729,7 +2818,7 @@ SaturationColorPageComponent::SaturationColorPageComponent(SpaceDustAudioProcess
     addAndMakeVisible(parentEditor.lofiAmountLabel);
     addAndMakeVisible(parentEditor.analogDriftSlider);
     addAndMakeVisible(parentEditor.analogDriftLabel);
-    // Final EQ – spanning center+right columns
+    // Final EQ â€“ spanning center+right columns
     addAndMakeVisible(parentEditor.finalEQGroup);
     addAndMakeVisible(parentEditor.finalEQEnabledButton);
     addAndMakeVisible(parentEditor.finalEQEnabledLabel);
@@ -3816,6 +3905,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     filterCutoffSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     filterCutoffSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
     filterCutoffSlider.setTextValueSuffix(" Hz");
+    filterCutoffSlider.activeGrid = [this] { return activeNoteLockGrid(0); };
     filterCutoffAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "filterCutoff", filterCutoffSlider);
     filterCutoffLabel.setText(safeString("Cutoff"), juce::dontSendNotification);
@@ -3840,6 +3930,40 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     filterKeyTrackButton.setTooltip(safeString("Filter cutoff follows the played key (neutral at middle C)"));
     filterKeyTrackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "filterKeyTrack", filterKeyTrackButton);
+
+    // Shared by all three of each toggle (master + both mod filters), which are set up
+    // far apart in this constructor -- one string each so the wording cannot drift.
+    const juce::String noteLockTip (safeString(
+        "Note Lock: the Cutoff knob clicks into semitone steps measured from the note you play "
+        "-- a half step above it, a whole step, and so on all the way up and down. "
+        "The filter lands on the note's harmonics instead of somewhere between them."));
+
+    const juce::String harmonicTip (safeString(
+        "Harmonic Series: locks the Cutoff to the played note's real overtones "
+        "-- 2x its frequency, 3x, 4x and so on up, and 1/2, 1/3 and so on down -- "
+        "instead of to even half steps. These are the partials the oscillators actually "
+        "produce, so a resonant peak parked on one rings. They are not the same as the "
+        "semitone grid: the 7th overtone sits 31 cents below the note you would expect."));
+
+    filterNoteLockButton.setButtonText(safeString("Note Lock"));
+    filterNoteLockButton.setTooltip(noteLockTip);
+    filterNoteLockAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "filterNoteLock", filterNoteLockButton);
+    // Pull the cutoff onto the grid the moment it is switched on, so engaging Note
+    // Lock locks the sound you are already hearing. The attachment has written the
+    // param by the time onClick fires, so activeNoteLockGrid() already sees the new state.
+    filterNoteLockButton.onClick = [this] { snapCutoffToNoteLock(0); };
+
+    // Button text is "Harmonics", not "Harmonic Series": the toggles are 84-86px wide
+    // and the LookAndFeel draws their text on one unwrapped line at 12pt bold, so the
+    // longer name clips. The tooltip carries the full name.
+    filterHarmonicLockButton.setButtonText(safeString("Harmonics"));
+    filterHarmonicLockButton.setTooltip(harmonicTip);
+    filterHarmonicLockAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "filterHarmonicLock", filterHarmonicLockButton);
+    // Switching grid re-snaps too, so the cutoff jumps to the nearest partial rather
+    // than sitting between two of them until the knob is next touched.
+    filterHarmonicLockButton.onClick = [this] { snapCutoffToNoteLock(0); };
 
     // Filter Envelope
     filterEnvAttackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
@@ -4153,7 +4277,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     //==============================================================================
     // -- MPE Controls (shown on Modulation tab) --
 
-    // Tooltip applied to every MPE child — JUCE's TooltipWindow only consults the
+    // Tooltip applied to every MPE child â€” JUCE's TooltipWindow only consults the
     // component directly under the cursor, so the group-level tooltip alone is
     // unreachable while hovering knobs/labels/combo.
     const juce::String mpeHostTip ("NOTE: Only useable with an MPE compatible DAW or an MPE emulator");
@@ -4471,12 +4595,19 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter1CutoffSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     modFilter1CutoffSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     modFilter1CutoffSlider.setTextValueSuffix(" Hz");
+    modFilter1CutoffSlider.activeGrid = [this] { return activeNoteLockGrid(1); };
     modFilter1ResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     modFilter1ResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     warmSaturationMod1Button.setButtonText(safeString("Warm Saturation"));
     modFilter1KeyTrackButton.setButtonText(safeString("Key Tracking"));
     modFilter1KeyTrackButton.setTooltip(safeString("Filter cutoff follows the played key (neutral at middle C)"));
-    // Cutoff/Resonance/Mode/WarmSat/KeyTrack attachments are created in rebuildLinkedFilterAttachments()
+    modFilter1NoteLockButton.setButtonText(safeString("Note Lock"));
+    modFilter1NoteLockButton.setTooltip(noteLockTip);
+    modFilter1NoteLockButton.onClick = [this] { snapCutoffToNoteLock(1); };
+    modFilter1HarmonicLockButton.setButtonText(safeString("Harmonics"));
+    modFilter1HarmonicLockButton.setTooltip(harmonicTip);
+    modFilter1HarmonicLockButton.onClick = [this] { snapCutoffToNoteLock(1); };
+    // Cutoff/Resonance/Mode/WarmSat/KeyTrack/NoteLock attachments are created in rebuildLinkedFilterAttachments()
     // (called below and on every link toggle) so they can point at master or own params.
     modFilter1ModeLabel.setText(safeString("Mode"), juce::dontSendNotification);
     modFilter1CutoffLabel.setText(safeString("Cutoff"), juce::dontSendNotification);
@@ -4501,11 +4632,18 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter2CutoffSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     modFilter2CutoffSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     modFilter2CutoffSlider.setTextValueSuffix(" Hz");
+    modFilter2CutoffSlider.activeGrid = [this] { return activeNoteLockGrid(2); };
     modFilter2ResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     modFilter2ResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     warmSaturationMod2Button.setButtonText(safeString("Warm Saturation"));
     modFilter2KeyTrackButton.setButtonText(safeString("Key Tracking"));
     modFilter2KeyTrackButton.setTooltip(safeString("Filter cutoff follows the played key (neutral at middle C)"));
+    modFilter2NoteLockButton.setButtonText(safeString("Note Lock"));
+    modFilter2NoteLockButton.setTooltip(noteLockTip);
+    modFilter2NoteLockButton.onClick = [this] { snapCutoffToNoteLock(2); };
+    modFilter2HarmonicLockButton.setButtonText(safeString("Harmonics"));
+    modFilter2HarmonicLockButton.setTooltip(harmonicTip);
+    modFilter2HarmonicLockButton.onClick = [this] { snapCutoffToNoteLock(2); };
     modFilter2ModeLabel.setText(safeString("Mode"), juce::dontSendNotification);
     modFilter2CutoffLabel.setText(safeString("Cutoff"), juce::dontSendNotification);
     modFilter2ResonanceLabel.setText(safeString("Resonance"), juce::dontSendNotification);
@@ -5765,7 +5903,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     juce::Component::SafePointer<SpaceDustAudioProcessorEditor> safeThis(this);
     juce::Timer::callAfterDelay(10, [this, safeThis]() {
         if (safeThis == nullptr)
-            return;  // editor already gone — do not touch `this`
+            return;  // editor already gone â€” do not touch `this`
         DBG("Space Dust: Timer callback - About to set window size");
         #if JUCE_DEBUG
         try
@@ -6234,12 +6372,89 @@ void SpaceDustAudioProcessorEditor::rebuildLinkedFilterAttachments()
     setSlider(modFilter1ResonanceAttachment, modFilter1ResonanceSlider, link1 ? "filterResonance"      : "modFilter1Resonance");
     setButton(warmSaturationMod1Attachment,  warmSaturationMod1Button,  link1 ? "warmSaturationMaster" : "warmSaturationMod1");
     setButton(modFilter1KeyTrackAttachment,  modFilter1KeyTrackButton,  link1 ? "filterKeyTrack"       : "modFilter1KeyTrack");
+    setButton(modFilter1NoteLockAttachment,  modFilter1NoteLockButton,  link1 ? "filterNoteLock"       : "modFilter1NoteLock");
+    setButton(modFilter1HarmonicLockAttachment, modFilter1HarmonicLockButton, link1 ? "filterHarmonicLock" : "modFilter1HarmonicLock");
 
     setCombo (modFilter2ModeAttachment,      modFilter2ModeCombo,       link2 ? "filterMode"           : "modFilter2Mode");
     setSlider(modFilter2CutoffAttachment,    modFilter2CutoffSlider,    link2 ? "filterCutoff"         : "modFilter2Cutoff");
     setSlider(modFilter2ResonanceAttachment, modFilter2ResonanceSlider, link2 ? "filterResonance"      : "modFilter2Resonance");
     setButton(warmSaturationMod2Attachment,  warmSaturationMod2Button,  link2 ? "warmSaturationMaster" : "warmSaturationMod2");
     setButton(modFilter2KeyTrackAttachment,  modFilter2KeyTrackButton,  link2 ? "filterKeyTrack"       : "modFilter2KeyTrack");
+    setButton(modFilter2NoteLockAttachment,  modFilter2NoteLockButton,  link2 ? "filterNoteLock"       : "modFilter2NoteLock");
+    setButton(modFilter2HarmonicLockAttachment, modFilter2HarmonicLockButton, link2 ? "filterHarmonicLock" : "modFilter2HarmonicLock");
+}
+
+//==============================================================================
+// -- Note Lock --
+
+std::optional<NoteLock::Grid> SpaceDustAudioProcessorEditor::activeNoteLockGrid(int filterIndex) const
+{
+    // Note Lock is only offered while Key Tracking is on -- that is what makes the
+    // cutoff a ratio to the played note, and so what makes one grid mean "n steps
+    // above the root" for every key. Checking it here as well as in the layout means
+    // a preset that saved Note Lock on with Key Tracking off (or host automation
+    // turning Key Tracking off under a hidden toggle) leaves the knob free rather
+    // than silently quantised by a control you cannot see. Harmonic Series is nested
+    // the same way inside Note Lock.
+    juce::String keyTrackID = "filterKeyTrack";
+    juce::String noteLockID = "filterNoteLock";
+    juce::String harmonicID = "filterHarmonicLock";
+
+    if (filterIndex == 1 && safeGetParam("modFilter1LinkToMaster") <= 0.5f)
+    {
+        keyTrackID = "modFilter1KeyTrack";
+        noteLockID = "modFilter1NoteLock";
+        harmonicID = "modFilter1HarmonicLock";
+    }
+    else if (filterIndex == 2 && safeGetParam("modFilter2LinkToMaster") <= 0.5f)
+    {
+        keyTrackID = "modFilter2KeyTrack";
+        noteLockID = "modFilter2NoteLock";
+        harmonicID = "modFilter2HarmonicLock";
+    }
+    // A linked mod filter falls through to the master IDs above, which is exactly how
+    // its knobs and its Key Tracking toggle already behave.
+
+    if (safeGetParam(keyTrackID) <= 0.5f || safeGetParam(noteLockID) <= 0.5f)
+        return std::nullopt;
+
+    return safeGetParam(harmonicID) > 0.5f ? NoteLock::Grid::Harmonics
+                                           : NoteLock::Grid::Semitones;
+}
+
+void SpaceDustAudioProcessorEditor::snapCutoffToNoteLock(int filterIndex)
+{
+    const auto grid = activeNoteLockGrid(filterIndex);
+    if (!grid)
+        return;
+
+    // A linked mod filter shares the master's cutoff parameter, so snap that one --
+    // writing to the filter's own (currently detached) param would change nothing.
+    juce::String cutoffID = "filterCutoff";
+    if (filterIndex == 1 && safeGetParam("modFilter1LinkToMaster") <= 0.5f)
+        cutoffID = "modFilter1Cutoff";
+    else if (filterIndex == 2 && safeGetParam("modFilter2LinkToMaster") <= 0.5f)
+        cutoffID = "modFilter2Cutoff";
+
+    auto* param = dynamic_cast<juce::AudioParameterFloat*>(
+        audioProcessor.getValueTreeState().getParameter(cutoffID));
+    if (param == nullptr)
+        return;
+
+    const auto& range = param->getNormalisableRange();
+    const float current = param->get();
+    const auto snapped = static_cast<float>(
+        NoteLock::snapHz(current, range.start, range.end, *grid));
+
+    if (std::abs(snapped - current) < 0.001f)
+        return;   // already on a detent -- do not emit a pointless automation gesture
+
+    // Wrapped in a balanced gesture: a naked setValueNotifyingHost corrupts FL
+    // Studio's "Last Tweaked" tracking, which breaks later-created automation
+    // (same reasoning as PresetManager::loadInitPreset).
+    param->beginChangeGesture();
+    param->setValueNotifyingHost(range.convertTo0to1(snapped));
+    param->endChangeGesture();
 }
 
 void SpaceDustAudioProcessorEditor::syncLinkedFilterParams(const juce::String& parameterID, float /*newValue*/)
@@ -6660,7 +6875,7 @@ void SpaceDustAudioProcessorEditor::timerCallback()
 //==============================================================================
 // -- Paint Method --
 
-// This is the whole Space Dust face — starfield, edge glow, logo, version. It used
+// This is the whole Space Dust face â€” starfield, edge glow, logo, version. It used
 // to be the editor's own paint(), back when the editor WAS the window. The editor is
 // now just a stub in the host, so this draws into the plate inside the floating shell
 // instead; `plateWidth` is the plate's width where getWidth() used to be the editor's.
@@ -6834,7 +7049,7 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
         // the logo lives in the band beneath it, sized to a fraction of the tallest
         // height that still clears every box on all tabs. In the Standalone the playable
         // keyboard occupies the bottom strip, so the band stops at the keyboard top
-        // (not the window bottom) — otherwise the keys cover the logo.
+        // (not the window bottom) â€” otherwise the keys cover the logo.
         const int kbStripH = (standaloneKeyboard != nullptr) ? standaloneKeyboardHeight : 0;
         const int contentBottom = h - kbStripH;
         const int masterBottom = (filterBoxBottomY > 0 ? filterBoxBottomY : contentBottom - 60);
@@ -6860,7 +7075,7 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
         // -- Version number (top-right) --
         // Mirrors the 63C watermark into the top-right corner: the same distance from
         // the top as the logo sits from the (content) bottom, and the same distance
-        // from the right edge — both equal to `gap`. Uses the synth's standard 12pt
+        // from the right edge â€” both equal to `gap`. Uses the synth's standard 12pt
         // body font and the same light-blue label colour as the knob labels.
         {
             const juce::String versionText = "v" JucePlugin_VersionString;

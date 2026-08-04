@@ -71,6 +71,30 @@ namespace
         return juce::String(raw);
     }
     
+    // Whole-Hz formatting for the filter cutoff parameters.
+    //
+    // Those parameters are continuous (no step interval) so Note Lock can land
+    // exactly on its semitone grid -- a 1 Hz step is worth ~43 cents down at 20 Hz,
+    // which would visibly detune a locked resonant peak. JUCE derives its default
+    // decimal-place count from that interval, though, so removing the interval also
+    // pushes the readout to 7 places ("7999.6314 Hz"). Spell the formatting out
+    // instead. This lives on the PARAMETER rather than on the slider because
+    // SliderParameterAttachment overwrites Slider::textFromValueFunction with the
+    // parameter's own getText -- and it fixes the host's automation lane too.
+    juce::AudioParameterFloatAttributes wholeHzAttributes()
+    {
+        return juce::AudioParameterFloatAttributes()
+            .withStringFromValueFunction([](float v, int maximumLength)
+            {
+                auto asText = juce::String(juce::roundToInt(v));
+                return maximumLength > 0 ? asText.substring(0, maximumLength) : asText;
+            })
+            .withValueFromStringFunction([](const juce::String& text)
+            {
+                return text.getFloatValue();
+            });
+    }
+
     // Helper to log parameter creation with exception handling
     template<typename ParamType>
     void addParameterWithLogging(std::vector<std::unique_ptr<juce::RangedAudioParameter>>& params,
@@ -3241,10 +3265,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         safeString("filterMode"));
     
     // Filter cutoff (log scale: 20 Hz to 20 kHz)
+    // Continuous (no step interval) so Note Lock can land exactly on its grid; see
+    // wholeHzAttributes() above for why, and for why the readout is spelled out.
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"filterCutoff", 1}, "Filter Cutoff",
-            juce::NormalisableRange<float>(20.0f, 20000.0f, 1.0f, 0.3f), 8000.0f),
+            juce::NormalisableRange<float>(20.0f, 20000.0f, 0.0f, 0.3f), 8000.0f,
+            wholeHzAttributes()),
         "filterCutoff");
     
     // Filter resonance (normalized 0.0-1.0, maps to Q 0.1-20.0 internally)
@@ -3274,6 +3301,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{"filterKeyTrack", 1}, "Filter Key Track", false),
         "filterKeyTrack");
+
+    // Note Lock: quantises the cutoff KNOB to semitone-spaced frequencies (see the
+    // NoteLock namespace in PluginEditor.h). Purely a UI-side snap -- the audio path
+    // never reads this -- but it is a real parameter so the state saves with a preset
+    // and the toggle survives a reload. Only meaningful with Key Tracking on, which is
+    // what makes the cutoff a ratio to the played note rather than an absolute Hz.
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"filterNoteLock", 1}, "Filter Note Lock", false),
+        "filterNoteLock");
+
+    // Harmonic Series: switches Note Lock's grid from 12-TET semitones to the played
+    // note's real overtone series (k * root up, root / k down). Only meaningful while
+    // Note Lock is on, which is why the toggle only appears then. Like Note Lock this
+    // is a UI-side snap the audio path never reads.
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"filterHarmonicLock", 1}, "Filter Harmonic Series", false),
+        "filterHarmonicLock");
 
     //==============================================================================
     // -- Filter Envelope Parameters (ADSR) --
@@ -3659,7 +3705,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"modFilter1Cutoff", 1}, "Mod Filter 1 Cutoff",
-            juce::NormalisableRange<float>(20.0f, 20000.0f, 1.0f, 0.3f), 8000.0f),
+            juce::NormalisableRange<float>(20.0f, 20000.0f, 0.0f, 0.3f), 8000.0f,
+            wholeHzAttributes()),
         "modFilter1Cutoff");
     
     ADD_PARAM_WITH_LOG(params,
@@ -3679,6 +3726,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         "modFilter1KeyTrack");
 
     addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"modFilter1NoteLock", 1}, "Mod 1 Note Lock", false),
+        "modFilter1NoteLock");
+
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"modFilter1HarmonicLock", 1}, "Mod 1 Harmonic Series", false),
+        "modFilter1HarmonicLock");
+
+    addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"modFilter2Mode", 1}, "Mod Filter 2 Mode",
             juce::StringArray(safeString("Low Pass"), safeString("Band Pass"), safeString("High Pass")), 0),
@@ -3687,7 +3744,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"modFilter2Cutoff", 1}, "Mod Filter 2 Cutoff",
-            juce::NormalisableRange<float>(20.0f, 20000.0f, 1.0f, 0.3f), 8000.0f),
+            juce::NormalisableRange<float>(20.0f, 20000.0f, 0.0f, 0.3f), 8000.0f,
+            wholeHzAttributes()),
         "modFilter2Cutoff");
     
     ADD_PARAM_WITH_LOG(params,
@@ -3705,6 +3763,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{"modFilter2KeyTrack", 1}, "Mod 2 Key Track", false),
         "modFilter2KeyTrack");
+
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"modFilter2NoteLock", 1}, "Mod 2 Note Lock", false),
+        "modFilter2NoteLock");
+
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"modFilter2HarmonicLock", 1}, "Mod 2 Harmonic Series", false),
+        "modFilter2HarmonicLock");
 
     //==============================================================================
     // -- Delay Effect Parameters --

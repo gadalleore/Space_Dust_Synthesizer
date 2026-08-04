@@ -107,8 +107,17 @@ installer/macos/Distribution.xml
 # Scratch files
 Untitled
 
-# QA tooling downloads (pluginval is fetched by download-pluginval.ps1)
-tools/
+# QA tooling downloads (pluginval is fetched by download-pluginval.ps1).
+# Scoped to the download dirs, NOT all of tools/: the tool SOURCES next to them
+# (hotreload, stress, vst3host, transienttest, notelocktest) are part of the repo
+# and a blanket tools/ rule silently kept new ones out of every commit.
+tools/pluginval/
+tools/tools/
+
+# MCP tool-definition dumps. These were already untracked, but only as a side
+# effect of the blanket tools/ rule above matching mcps/grok_com_github/tools/.
+# Named explicitly so narrowing that rule did not silently pull 90 JSON files in.
+mcps/
 
 # QA monitor outputs (CSV samples, soak baselines, pluginval logs)
 runtime-monitor.csv

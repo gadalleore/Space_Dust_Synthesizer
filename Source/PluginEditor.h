@@ -1,10 +1,12 @@
-#pragma once
+﻿#pragma once
 
 #include <atomic>
+#include <optional>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_audio_utils/juce_audio_utils.h>   // juce::MidiKeyboardComponent (Standalone keyboard)
 #include <juce_gui_basics/juce_gui_basics.h>
 #include "PluginProcessor.h"
+#include "NoteLockGrid.h"
 #include "SpaceDustLookAndFeel.h"
 #include "OscilloscopeComponent.h"
 #include "SpectrumAnalyserComponent.h"
@@ -16,7 +18,7 @@
 
 // Glow overlays are defined in PluginEditor.cpp; forward-declare them here so the
 // unique_ptr members below resolve under ordinary name lookup. (A `friend class`
-// declaration alone is not visible to ordinary lookup — MSVC tolerates it, Clang
+// declaration alone is not visible to ordinary lookup â€” MSVC tolerates it, Clang
 // does not, which previously broke the macOS/Xcode build.)
 class TabGlowOverlayComponent;
 class BottomTabGlowOverlayComponent;
@@ -103,8 +105,11 @@ public:
     void paint(juce::Graphics& g) override;
     void resized() override;
     void parameterChanged(const juce::String& parameterID, float newValue) override;
-    
+
 private:
+    /** Params this page subscribes to; every one of them means "re-run resized()". */
+    static juce::StringArray relayoutTriggerParams();
+
     SpaceDustAudioProcessorEditor& parentEditor;
 };
 
@@ -299,6 +304,39 @@ private:
 };
 
 //==============================================================================
+// -- Note Lock grid --
+// The grid itself is pure arithmetic with no JUCE or editor dependency, so it
+// lives in Source/NoteLockGrid.h where tools/notelocktest can exercise it
+// directly. Only the KNOB snaps to it: juce::Slider::snapValue is called on drag
+// and wheel but never by setValue, so preset recall and host automation pass
+// through untouched and nothing retroactively rewrites a saved patch.
+
+//==============================================================================
+/** A cutoff knob that clicks into the Note Lock grid while dragged or scrolled.
+
+    Behaves as a stock juce::Slider whenever activeGrid is unset or returns nullopt,
+    so the knob is untouched with the feature off. */
+class NoteLockSlider : public juce::Slider
+{
+public:
+    /** Set by the editor. Returns the grid THIS knob should click into, or nullopt
+        when Note Lock is off for it. One callback rather than an on/off flag plus a
+        separate mode, so the two can never disagree -- and a callback rather than
+        stored state because a mod filter follows the master's setting while
+        "Link to Master" is engaged. */
+    std::function<std::optional<NoteLock::Grid>()> activeGrid;
+
+    double snapValue(double attemptedValue, DragMode dragMode) override
+    {
+        if (activeGrid != nullptr)
+            if (const auto grid = activeGrid())
+                return NoteLock::snapHz(attemptedValue, getMinimum(), getMaximum(), *grid);
+
+        return juce::Slider::snapValue(attemptedValue, dragMode);
+    }
+};
+
+//==============================================================================
 // -- Easter Egg Slider: detects rapid clicks on the master knob --
 class EasterEggSlider : public juce::Slider
 {
@@ -391,7 +429,7 @@ private:
 
       - Click-through. A press on empty background has to reach the shell for
         window-dragging to work, and it can only get there if the plate declines it.
-        Controls inside mainView still take their own clicks exactly as before —
+        Controls inside mainView still take their own clicks exactly as before â€”
         this only forwards presses that nothing else wanted. */
 class SpaceDustPlateComponent final : public juce::Component
 {
@@ -493,6 +531,16 @@ private:
     void syncLinkedFilterParams(const juce::String& parameterID, float newValue);
     void rebuildLinkedFilterAttachments();
 
+    // Note Lock. isNoteLockActive answers "is this filter's cutoff knob currently
+    // quantised", following Link to Master the same way Key Tracking does: a linked
+    // mod filter shares the master's lock param, an unlinked one has its own.
+    // snapCutoffToNoteLock pulls a cutoff onto the grid immediately when the toggle
+    // is switched on, so engaging it locks what you are already hearing rather than
+    // waiting for the next knob move.
+    // 0 = master, 1 = mod 1, 2 = mod 2.
+    std::optional<NoteLock::Grid> activeNoteLockGrid(int filterIndex) const;
+    void snapCutoffToNoteLock(int filterIndex);
+
     // Pitch bend snap-back: poll processor ramp and sync display
     bool pitchBendSnapActive{false};
 
@@ -529,7 +577,7 @@ private:
     // is expensive: it re-lays-out every label/knob each tick. Since the ENTIRE painted look
     // is a pure function of glowMeterLevel_ + clippingHoldTicks (no time-based animation), we
     // only repaint when one of those actually changes. At silence the output level sits at 0
-    // and stops changing, so repaints stop and CPU drops to idle (was pegged ~130% before —
+    // and stops changing, so repaints stop and CPU drops to idle (was pegged ~130% before â€”
     // the Standalone, with nothing to throttle its UI, appeared to hang on launch). Playing
     // notes moves the level every tick, so the glow animates exactly as before.
     float lastPaintedGlowLevel_ = -1.0f;   // force a paint on the very first tick
@@ -792,10 +840,12 @@ private:
     juce::GroupComponent filterGroup;
     
     juce::ComboBox filterModeCombo;
-    juce::Slider filterCutoffSlider;
+    NoteLockSlider filterCutoffSlider;
     juce::Slider filterResonanceSlider;
     juce::ToggleButton warmSaturationMasterButton;
     juce::ToggleButton filterKeyTrackButton;
+    juce::ToggleButton filterNoteLockButton;    // Shown only while Key Tracking is on
+    juce::ToggleButton filterHarmonicLockButton; // Shown only while Note Lock is on
 
     // Filter Envelope controls
     juce::GroupComponent filterEnvGroup;
@@ -948,10 +998,12 @@ private:
     juce::GroupComponent modFilter1Group;
     juce::ToggleButton modFilter1LinkButton;
     juce::ComboBox modFilter1ModeCombo;
-    juce::Slider modFilter1CutoffSlider;
+    NoteLockSlider modFilter1CutoffSlider;
     juce::Slider modFilter1ResonanceSlider;
     juce::ToggleButton warmSaturationMod1Button;
     juce::ToggleButton modFilter1KeyTrackButton;
+    juce::ToggleButton modFilter1NoteLockButton;
+    juce::ToggleButton modFilter1HarmonicLockButton;
     juce::Label modFilter1ModeLabel;
     juce::Label modFilter1CutoffLabel;
     juce::Label modFilter1ResonanceLabel;
@@ -1009,10 +1061,12 @@ private:
     juce::Label delayDryWetLabel;
     juce::Label delayPingPongLabel;
     juce::ComboBox modFilter2ModeCombo;
-    juce::Slider modFilter2CutoffSlider;
+    NoteLockSlider modFilter2CutoffSlider;
     juce::Slider modFilter2ResonanceSlider;
     juce::ToggleButton warmSaturationMod2Button;
     juce::ToggleButton modFilter2KeyTrackButton;
+    juce::ToggleButton modFilter2NoteLockButton;
+    juce::ToggleButton modFilter2HarmonicLockButton;
     juce::Label modFilter2ModeLabel;
     juce::Label modFilter2CutoffLabel;
     juce::Label modFilter2ResonanceLabel;
@@ -1236,6 +1290,8 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> filterResonanceAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> warmSaturationMasterAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> filterKeyTrackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> filterNoteLockAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> filterHarmonicLockAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> filterEnvAttackAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> filterEnvDecayAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> filterEnvSustainAttachment;
@@ -1290,13 +1346,17 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> modFilter1ResonanceAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> warmSaturationMod1Attachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter1KeyTrackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter1NoteLockAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter1HarmonicLockAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter2LinkAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modFilter2ModeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> modFilter2CutoffAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> modFilter2ResonanceAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> warmSaturationMod2Attachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter2KeyTrackAttachment;
-    
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter2NoteLockAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter2HarmonicLockAttachment;
+
     // Listeners for sync rate combos (must be destroyed before components)
     std::unique_ptr<SyncRateComboListener> lfo1SyncRateListener;
     std::unique_ptr<SyncRateComboListener> lfo2SyncRateListener;

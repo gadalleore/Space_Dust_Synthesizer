@@ -113,6 +113,8 @@ target_sources(SpaceDust PRIVATE
     Source/PluginProcessor.h
     Source/PluginEditor.cpp
     Source/PluginEditor.h
+    Source/NoteLockGrid.cpp
+    Source/NoteLockGrid.h
     Source/Goniometer.cpp
     Source/Goniometer.h
     Source/OscilloscopeComponent.cpp
@@ -320,6 +322,25 @@ else()
         JUCE_LOG_ASSERTIONS=0)
     message(STATUS "MemorySafetyLogger DISABLED (logging compiled out).")
 endif()
+
+#==============================================================================
+# notelock-test — standalone check of the Note Lock / Harmonic Series grid.
+# The grid is the one part of that feature with a provably right answer, and it
+# has no JUCE dependency, so it builds in seconds on its own and is brute-force
+# verified against an independently generated table of legal frequencies.
+# Usage: cmake --build build --config Release --target notelock-test
+#==============================================================================
+add_executable(notelock_test
+    tools/notelocktest/notelock_test.cpp
+    Source/NoteLockGrid.cpp)
+set_target_properties(notelock_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/notelock_test")
+target_compile_features(notelock_test PRIVATE cxx_std_17)
+
+add_custom_target(notelock-test
+    COMMAND $<TARGET_FILE:notelock_test>
+    DEPENDS notelock_test
+    COMMENT "Running Note Lock grid tests")
 
 #==============================================================================
 # qa-test custom target — runs the full QA suite via run-full-qa.ps1.
