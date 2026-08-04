@@ -604,6 +604,41 @@ private:
         from under them every time the host moved its own. */
     void placeShellNearStub();
 
+    /** Raises the shell above whichever DAW window the user just activated -- the
+        host's document window or our own plugin frame -- so clicking the plugin
+        anywhere in the DAW brings the interface back rather than only the stub.
+        Polled from timerCallback; see the definition for the window layout it is
+        built on and why it is not always-on-top. */
+    void followHostWindowToFront();
+
+    /** The foreground window as of the last tick, so the raise happens on the CHANGE
+        and not continuously. Kept as a raw handle rather than a peer because the
+        window in question belongs to the DAW, not to us. */
+    void* lastForegroundWindow_ = nullptr;
+
+    /** Shows and hides the shell with the DAW's plugin frame, so the interface appears
+        and disappears with the channel the way an ordinary plugin's window does.
+        Windows only; polled from timerCallback. */
+    void followHostFrameVisibility();
+
+    /** Whether the DAW's frame was showing last tick -- the edge this acts on. Starts
+        true because the frame is on screen when the editor is created. */
+    bool hostFrameWasShown_ = true;
+
+    /** True when the shell was taken off the desktop BY US following the frame, which
+        is what distinguishes a window to restore from one the user closed. */
+    bool shellHiddenWithFrame_ = false;
+
+    /** True once the close X has been used, until the stub is clicked again. Stops a
+        channel switch from resurrecting a window the user deliberately dismissed. */
+    bool userDismissedShell_ = false;
+
+    /** Previous answer from hostWindowIsFrontmost(), so only the transition INTO the
+        host raises the shell. Starts false: if the host window is already frontmost
+        when the editor opens, the first tick counts as an arrival and raises once,
+        which is what we want anyway -- the window has just appeared. */
+    bool hostWindowWasFrontmost_ = false;
+
     //==============================================================================
     // -- Shake --
     // The window is thrown around by whatever is coming out of the synth. This is Sol

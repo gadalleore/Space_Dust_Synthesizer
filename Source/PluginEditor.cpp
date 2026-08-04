@@ -3270,6 +3270,7 @@ namespace
     extern "C" __declspec(dllimport) void*         __stdcall GetForegroundWindow();
     extern "C" __declspec(dllimport) unsigned long __stdcall GetWindowThreadProcessId(void*, unsigned long*);
     extern "C" __declspec(dllimport) unsigned long __stdcall GetCurrentProcessId();
+    extern "C" __declspec(dllimport) void*         __stdcall GetAncestor(void*, unsigned int);
 
     bool thisAppIsFrontmost()
     {
@@ -3277,10 +3278,94 @@ namespace
         GetWindowThreadProcessId(GetForegroundWindow(), &pid);
         return pid == GetCurrentProcessId();
     }
+
+    extern "C" __declspec(dllimport) int   __stdcall GetClassNameW(void*, wchar_t*, int);
+    extern "C" __declspec(dllimport) void* __stdcall GetWindow(void*, unsigned int);
+    extern "C" __declspec(dllimport) int   __stdcall IsWindowVisible(void*);
+    extern "C" __declspec(dllimport) int   __stdcall IsIconic(void*);
+
+    //==========================================================================
+    // -- Finding the DAW's main window --
+    // Live 10 gives a plugin GUI its own unowned top-level window ('Vst3PlugWindow'),
+    // a SIBLING of the Live application window rather than a child or an owned window
+    // of it (established from a runtime window dump, 2026-08-04). Two consequences,
+    // and both of them broke an earlier attempt at this:
+    //
+    //   - GA_ROOTOWNER from the editor's peer stops at that plugin window and never
+    //     reaches Live itself, so it cannot be used to find the application;
+    //   - clicking the Live window puts it above the plugin window as readily as
+    //     above ours, which is why watching only OUR window for activation saw
+    //     nothing happen.
+    //
+    // So the application window has to be identified by looking for it: the biggest
+    // visible, unowned, top-level window this process has that is not one of ours.
+    // Live's document window dwarfs every plugin frame, so "biggest" picks it out.
+    // Owned windows are skipped because those are the dialogs and palettes hanging off
+    // it, never the application itself.
+    struct WinRect { long left, top, right, bottom; };
+
+    extern "C" __declspec(dllimport) int __stdcall GetWindowRect(void*, WinRect*);
+    extern "C" __declspec(dllimport) int __stdcall EnumWindows(int (__stdcall*)(void*, void*), void*);
+
+    struct MainWindowSearch
+    {
+        void*     best     = nullptr;
+        long long bestArea = 0;
+    };
+
+    int __stdcall mainWindowEnumProc(void* window, void* userData)
+    {
+        auto& search = *static_cast<MainWindowSearch*>(userData);
+
+        unsigned long pid = 0;
+        GetWindowThreadProcessId(window, &pid);
+
+        if (pid != GetCurrentProcessId()          // another application entirely
+             || ! IsWindowVisible(window)
+             || GetWindow(window, 4 /* GW_OWNER */) != nullptr)   // a dialog or palette
+            return 1;
+
+        wchar_t cls[128] = {};
+        GetClassNameW(window, cls, 128);
+
+        // Every window JUCE makes shares one generated class name beginning "JUCE_",
+        // which is how our own shell is kept out of the running.
+        if (juce::String(juce::CharPointer_UTF16(cls)).startsWith("JUCE"))
+            return 1;
+
+        WinRect r {};
+        GetWindowRect(window, &r);
+
+        const long long area = (long long) (r.right - r.left) * (long long) (r.bottom - r.top);
+
+        if (area > search.bestArea)
+        {
+            search.bestArea = area;
+            search.best     = window;
+        }
+
+        return 1;   // keep enumerating
+    }
+
+    void* findHostMainWindow()
+    {
+        MainWindowSearch search;
+        EnumWindows(mainWindowEnumProc, &search);
+        return search.best;
+    }
    #else
     bool thisAppIsFrontmost()
     {
         return juce::Process::isForegroundProcess();   // genuinely implemented on macOS
+    }
+
+    /** macOS/Linux fallback: no cheap way to ask which top-level window a child view
+        belongs to without platform headers, so this is process-level. Coarser -- any
+        window of the host counts, not just the plugin's -- but it still only fires on
+        the transition into the host, which is the case that matters. */
+    bool hostWindowIsFrontmost(void*)
+    {
+        return thisAppIsFrontmost();
     }
    #endif
 }
@@ -5571,6 +5656,13 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         // Plugin: a plugin cannot close the host's window, so the nearest equivalent is
         // to dismiss the UI. Clicking the host's stub brings it back (see mouseUp), and
         // repaint() brightens the stub's mark to advertise that.
+        //
+        // Latched so that following the host's frame cannot undo it: without this, the
+        // next channel switch would show the window again as though the X had never been
+        // pressed (see followHostFrameVisibility).
+        userDismissedShell_   = true;
+        shellHiddenWithFrame_ = false;
+
         shell.hideFromDesktop();
         repaint();
     };
@@ -6275,6 +6367,13 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     if (isBeingDestroyed.load())
         return;
 
+    // Before anything that can bail out early (the pitch-bend branch below returns):
+    // the floating window has to appear, vanish and rise with the host's own window
+    // whatever else the UI is doing this tick. Visibility first -- there is no point
+    // raising a window that is about to be hidden.
+    followHostFrameVisibility();
+    followHostWindowToFront();
+
     // Remember the active tab so closing/reopening the editor returns here, not Main.
     if (tabbedComponent.getNumTabs() > 0)
         audioProcessor.lastActiveTabIndex = tabbedComponent.getCurrentTabIndex();
@@ -6827,6 +6926,10 @@ void SpaceDustAudioProcessorEditor::mouseUp(const juce::MouseEvent&)
     if (isBeingDestroyed.load())
         return;
 
+    // Clicking the stub is how a dismissed window is asked for again, so it clears the
+    // latch the close X set -- from here on the window follows the channel once more.
+    userDismissedShell_ = false;
+
     if (! shell.isOnDesktop())
     {
         shell.showOnDesktop();
@@ -6838,6 +6941,185 @@ void SpaceDustAudioProcessorEditor::mouseUp(const juce::MouseEvent&)
     // that is the way back to a window that has gone behind something.
     shell.toFront(false);   // false: do not steal keyboard focus from the host
     repaint();
+}
+
+// -- Appearing and disappearing with the channel, the way Serum does --
+// Asked for by name (Giuseppe, 2026-08-04): "it only shows up when you click on the
+// channel, and if you click out of the channel, it disappears... the same behavior as
+// Xfer Serum".
+//
+// Serum gets that for free and we do not, for one reason: Serum's interface IS the frame
+// Live puts it in, so when Live shows or hides that frame -- selecting another track,
+// Live's own "Auto-Hide Plug-In Windows" preference, closing the device view -- Serum
+// follows automatically. Space Dust's face lives in a desktop window of its own that Live
+// has never heard of, so Live hides its frame and our window stays hanging in the air.
+//
+// The fix is to watch the frame and copy it. Note this has to be asked of WINDOWS, not of
+// JUCE: Component::isVisible() reports the flag on our own component, and Live hides the
+// frame ABOVE us without touching it -- the diagnostic log has the editor reporting
+// "visible=1 showing=1" throughout a session where Live's frame was repeatedly hidden.
+// IsWindowVisible() answers for the whole parent chain, which is the actual question.
+//
+// Deliberately NOT reacting to the frame merely being covered or sent behind: Serum stays
+// open when you click another window, and so does this. Only genuine hide/minimise counts.
+//
+// A shell the USER dismissed with the close X is left alone -- it stays gone until the
+// stub is clicked, rather than reappearing on the next channel switch as though the X had
+// not been pressed.
+void SpaceDustAudioProcessorEditor::followHostFrameVisibility()
+{
+   #if JUCE_WINDOWS
+    if (isBeingDestroyed.load() || ! shellReady_)
+        return;
+
+    // Standalone has no frame to follow; hiding on this rule would hide the whole app.
+    if (audioProcessor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+        return;
+
+    auto* peer = getPeer();
+
+    if (peer == nullptr)
+        return;
+
+    auto* frame = GetAncestor(peer->getNativeHandle(), 2 /* GA_ROOT */);
+
+    if (frame == nullptr)
+        return;
+
+    // Minimising counts as gone as well as hiding. A minimised window keeps WS_VISIBLE,
+    // so IsWindowVisible alone would leave the panel floating over the desktop after the
+    // DAW had been minimised out of the way.
+    auto* main = findHostMainWindow();
+
+    const bool frameShown = IsWindowVisible(frame) != 0
+                         && IsIconic(frame) == 0
+                         && (main == nullptr || IsIconic(main) == 0);
+
+    if (frameShown == hostFrameWasShown_)
+        return;   // edge-triggered: only the moment it changes
+
+    hostFrameWasShown_ = frameShown;
+
+    if (! frameShown)
+    {
+        if (shell.isOnDesktop())
+        {
+            shell.hideFromDesktop();
+            shellHiddenWithFrame_ = true;
+        }
+    }
+    else
+    {
+        // Only bring back what WE took away, and only if the user has not dismissed it
+        // themselves in the meantime.
+        if (shellHiddenWithFrame_ && ! userDismissedShell_ && ! shell.isOnDesktop())
+        {
+            shell.showOnDesktop();
+
+            // Its own position is kept -- deliberately NOT placeShellNearStub(), which
+            // would drag the window back beside the stub every time you changed track and
+            // undo wherever the user had put it.
+            shell.toFront(false);
+        }
+
+        shellHiddenWithFrame_ = false;
+    }
+   #endif
+}
+
+// -- Coming back to the plugin from elsewhere in the DAW --
+// Without always-on-top the floating window gets buried behind the DAW, and the only way
+// back was the stub -- a 170x36 rectangle inside the host's plugin frame (Giuseppe,
+// 2026-08-04: "the window is stuck behind ableton", with a screenshot of exactly that).
+//
+// Two attempts failed before the plugin was made to log its own window tree, and the dump
+// (2026-08-04, Live 10.1.43) is what this is built on rather than on assumption:
+//
+//     stub   class='JUCE_...'        child of the frame below
+//     frame  class='Vst3PlugWindow'  owner=null   z=62    <- top-level, unowned
+//     Live   class='Ableton Live Window Class'  owner=null  z=59
+//     shell  class='JUCE_...'        z=63
+//
+// The two things that killed the earlier attempts are both in those four lines:
+//
+//   - The plugin frame is a SIBLING of the Live window, not a child and not owned by it.
+//     So GA_ROOTOWNER from our peer stops at the frame and never reaches Live, and the
+//     first fix's ownership went onto the wrong window entirely.
+//   - Clicking Live puts it above the frame as readily as above us (59 vs 62). Watching
+//     only OUR window for activation therefore never fired once -- the window being
+//     clicked was Live's, a handle we were not looking at.
+//
+// So the rule is drawn around the APPLICATION, not around our own window: when a window
+// belonging to the DAW is activated, put the interface above it. Both windows that matter
+// are covered -- Live's document window and our own plugin frame -- and nothing else is,
+// which is what keeps this from being the always-on-top that was rejected on 2026-08-01:
+//
+//   - Another application activated? Not our process, so nothing happens and the shell
+//     goes behind it exactly as an ordinary window does. Alt-tab away and it is gone from
+//     view; come back to Live and it returns.
+//   - ANOTHER PLUGIN's window activated? Deliberately not raised. Clicking Serum should
+//     not throw Space Dust's face over the top of it.
+//   - It only raises a shell that is already on the desktop; one dismissed with the close
+//     X stays dismissed until the stub is clicked.
+//
+// The cost, and it is the direct price of what was asked for: the shell can no longer be
+// pushed behind the Live window by clicking it. Moving it, or the close X, are the ways
+// to get it out of the way now.
+//
+// Polled from the 50ms UI timer because none of this generates a callback a plugin can
+// see: our editor is a child window that is never itself activated, and the shell answers
+// WM_MOUSEACTIVATE with MA_NOACTIVATE so the DAW keeps the transport keys.
+void SpaceDustAudioProcessorEditor::followHostWindowToFront()
+{
+    if (isBeingDestroyed.load() || ! shellReady_)
+        return;
+
+    // Standalone has no host window to follow -- the shell IS the application.
+    if (audioProcessor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
+        return;
+
+    auto* peer = getPeer();
+
+   #if JUCE_WINDOWS
+    if (shell.isOnDesktop() && peer != nullptr)
+    {
+        auto* fg = GetForegroundWindow();
+
+        // Only act the moment the foreground window CHANGES. Re-raising on every tick
+        // while it stays put would fight anything the user does with the z-order and
+        // would burn a z-order call 20 times a second for nothing.
+        if (fg != lastForegroundWindow_)
+        {
+            lastForegroundWindow_ = fg;
+
+            if (fg != nullptr)
+            {
+                unsigned long pid = 0;
+                GetWindowThreadProcessId(fg, &pid);
+
+                // Our own plugin frame, or the DAW's document window. Anything else in
+                // the DAW's process -- another plugin's window, a dialog -- is left alone.
+                const bool isOurFrame = fg == GetAncestor(peer->getNativeHandle(), 2 /* GA_ROOT */);
+                const bool isHostMain = fg == findHostMainWindow();
+
+                if (pid == GetCurrentProcessId() && (isOurFrame || isHostMain))
+                    shell.toFront(false);   // false: the DAW keeps the keyboard, transport included
+            }
+        }
+    }
+
+   #else
+    // Elsewhere there is no cheap window-level answer, so fall back to the process-level
+    // one: coming back to the host application at all raises the interface.
+    const bool isFront = peer != nullptr
+                      && shell.isOnDesktop()
+                      && hostWindowIsFrontmost(peer->getNativeHandle());
+
+    if (isFront && ! hostWindowWasFrontmost_)
+        shell.toFront(false);
+
+    hostWindowWasFrontmost_ = isFront;
+   #endif
 }
 
 void SpaceDustAudioProcessorEditor::placeShellNearStub()
