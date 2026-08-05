@@ -974,7 +974,7 @@ private:
     juce::ToggleButton lfo1SyncButton;
     juce::ToggleButton lfo1TripletButton;  // Triplet timing toggle (only visible when sync is on)
     juce::ToggleButton lfo1TripletStraightButton;  // Triplet/Straight toggle (only visible when triplet is enabled)
-    juce::Slider lfo1FreeRateSlider;  // Free rate slider (0.01 Hz - 2 kHz)
+    juce::Slider lfo1FreeRateSlider;  // Free rate slider (0.01-200 Hz)
     juce::ComboBox lfo1SyncRateCombo;  // Sync rate combo (1/32 to 8)
     juce::Slider lfo1DepthSlider;
     juce::Slider lfo1PhaseSlider;
@@ -996,7 +996,7 @@ private:
     juce::ToggleButton lfo2SyncButton;
     juce::ToggleButton lfo2TripletButton;  // Triplet timing toggle (only visible when sync is on)
     juce::ToggleButton lfo2TripletStraightButton;  // Triplet/Straight toggle (only visible when triplet is enabled)
-    juce::Slider lfo2FreeRateSlider;  // Free rate slider (0.01 Hz - 2 kHz)
+    juce::Slider lfo2FreeRateSlider;  // Free rate slider (0.01-200 Hz)
     juce::ComboBox lfo2SyncRateCombo;  // Sync rate combo (1/32 to 8)
     juce::Slider lfo2DepthSlider;
     juce::Slider lfo2PhaseSlider;

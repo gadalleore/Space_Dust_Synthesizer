@@ -4419,7 +4419,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // LFO1 Rate: NoTextBox - only lfo1RateValueLabel shows Hz/sync; no raw value display
     lfo1FreeRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     lfo1FreeRateSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-    lfo1FreeRateSlider.setRange(0.0, 12.0, 0.01);  // Maps to 0.01 Hz - 2 kHz logarithmically (free mode)
+    lfo1FreeRateSlider.setRange(0.0, 12.0, 0.01);  // Maps to 0.01-200 Hz logarithmically (free mode)
     lfo1FreeRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "lfo1Rate", lfo1FreeRateSlider);
     lfo1RateLabel.setText(safeString("Rate"), juce::dontSendNotification);
@@ -6668,7 +6668,7 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     }
     else
     {
-        // Free mode: 0.01 Hz - 2 kHz logarithmic. Shares the processor's mapping so the
+        // Free mode: 0.01-200 Hz logarithmic. Shares the processor's mapping so the
         // readout cannot drift from the rate actually being rendered.
         const juce::String rateText = juce::String::formatted("%.2f Hz",
             SpaceDustAudioProcessor::lfoKnobToHz(static_cast<double>(lfo1Rate)));

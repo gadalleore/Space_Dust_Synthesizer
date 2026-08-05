@@ -357,14 +357,16 @@ private:
     // Tunable: lower = safer (oversample more often), higher = bigger CPU savings.
     static constexpr float kOversampleResThreshold = 0.35f;
 
-    // LFO rate (Hz) at/above which modulating a filter's cutoff needs oversampling on
-    // its own account, whatever the resonance. Sweeping a cutoff at audio rate is a
-    // time-varying system: it produces sidebands that fold back even through a
-    // perfectly linear filter, which resonance and warm saturation say nothing about.
-    // 200 Hz sits far above any vibrato or tremolo use, so ordinary patches pay
-    // nothing; it only engages for the deliberately fast rates the widened LFO range
-    // made reachable.
-    static constexpr double kOversampleLfoHzThreshold = 200.0;
+    // LFO rate (Hz) at/above which modulating a filter cutoff or a pitch needs
+    // oversampling on its own account, whatever the resonance. Sweeping either that
+    // fast is a time-varying system: it produces sidebands that fold back even through
+    // a perfectly linear filter, which resonance and warm saturation say nothing about.
+    //
+    // 100 Hz, which is half the LFO's 200 Hz top. It was 200 while the LFO range
+    // briefly reached 2 kHz; leaving it there once the range came back down would have
+    // meant the latch only ever fired at the exact maximum, i.e. never in practice.
+    // Still far above any vibrato or tremolo, so ordinary patches pay nothing.
+    static constexpr double kOversampleLfoHzThreshold = 100.0;
     double lfo1RateHz = 0.0;
     double lfo2RateHz = 0.0;
 

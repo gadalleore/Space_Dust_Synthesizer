@@ -1593,17 +1593,17 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     static constexpr float kLfoSmoothAlpha = 0.25f;
 
     //==========================================================================
-    // 0.01 Hz - 2 kHz, logarithmic. Presets from before the top was raised are
-    // rescaled on load by migrateLfoRatesIfOld, so they keep their original speed.
+    // 0.01-200 Hz, logarithmic. Anything saved while the top was briefly 2 kHz is
+    // rescaled on load by migrateLfoRatesIfOld, so it keeps its original speed.
     auto lfoBaseHz = [] (float rate0to12) -> double
     {
         return lfoKnobToHz(static_cast<double>(rate0to12));
     };
 
-    // The output smoother is a one-pole whose knee sits near 2.2 kHz at 48 kHz. That
-    // was harmless while the LFO stopped at 200 Hz, but the range now reaches 2 kHz,
-    // where a fixed coefficient would audibly attenuate the very oscillation being
-    // asked for -- the LFO would quietly fail to reach the rate on the knob.
+    // The output smoother is a one-pole whose knee sits near 2.2 kHz at 48 kHz, so a
+    // fixed coefficient is harmless across the 200 Hz range. It is left rate-dependent
+    // anyway: it costs nothing, and it means the smoother can never quietly attenuate
+    // the oscillation being asked for if the range is ever widened again.
     //
     // So the coefficient opens up with the rate: the knee is kept at least an order of
     // magnitude above the LFO's own frequency, and never tighter than the original
@@ -2977,14 +2977,20 @@ double SpaceDustAudioProcessor::lfoKnobToHz(double knob0to12)
 
 void SpaceDustAudioProcessor::migrateLfoRatesIfOld(juce::ValueTree& state, int stateVersion)
 {
-    if (stateVersion >= 2 || !state.isValid())
-        return;   // already speaks the current range
+    // Only version 2 speaks a different range. Version 1 (or a missing attribute)
+    // predates the 2 kHz experiment and already means what the current range means,
+    // and version 3 onwards is current by definition.
+    if (stateVersion != 2 || !state.isValid())
+        return;
 
     // Both ranges are logarithmic from the same 0.01 Hz floor, so preserving the
     // frequency is a single scale factor on the knob position:
-    //   knobNew = knobOld * log(200/0.01) / log(2000/0.01)
-    const double scale = std::log(lfoFreeRateLegacyMaxHz / lfoFreeRateMinHz)
-                       / std::log(lfoFreeRateMaxHz      / lfoFreeRateMinHz);
+    //   knobNew = knobOld * log(2000/0.01) / log(200/0.01)
+    //
+    // Rates above 200 Hz cannot be represented any more and clamp to the top. That
+    // only affects patches saved during the window when the range was 2 kHz.
+    const double scale = std::log(lfoFreeRateV2MaxHz / lfoFreeRateMinHz)
+                       / std::log(lfoFreeRateMaxHz   / lfoFreeRateMinHz);
 
     for (auto child : state)
     {
@@ -3028,7 +3034,7 @@ void SpaceDustAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
             xml->setAttribute("cheezeGuyActivated", cheezeGuyActivated);
             xml->setAttribute("lastActiveTabIndex", lastActiveTabIndex);
             // Marks which meaning the stored values carry. Anything without it predates
-            // the 2000 Hz LFO range and gets its rates rescaled on load.
+            // a different LFO rate range and gets its rates rescaled on load.
             xml->setAttribute("stateVersion", currentStateVersion);
             copyXmlToBinary(*xml, destData);
         }
@@ -3584,9 +3590,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"lfo1Sync", 1}, "LFO1 Sync", false),
         "lfo1Sync");
     
-    // LFO1 Rate (0-12: maps to 0.01 Hz - 2 kHz when sync off, or tempo divisions when sync on)
-    // When sync is off: 0-12 maps logarithmically to 0.01-2000 Hz. Raised from a 200 Hz
-    // top after v2.0.0; migrateLfoRatesIfOld rescales older presets so they keep their speed.
+    // LFO1 Rate (0-12: maps to 0.01-200 Hz when sync off, or tempo divisions when sync on)
+    // When sync is off: 0-12 maps logarithmically to 0.01-200 Hz. The top was briefly
+    // 2 kHz; migrateLfoRatesIfOld rescales anything saved then so it keeps its speed.
     // When sync is on: 0-12 maps to tempo divisions (0=1/32, 6=1/4, 12=8)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -3652,7 +3658,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"lfo2Sync", 1}, "LFO2 Sync", false),
         "lfo2Sync");
     
-    // LFO2 Rate (0-12: maps to 0.01 Hz - 2 kHz when sync off, or tempo divisions when sync on)
+    // LFO2 Rate (0-12: maps to 0.01-200 Hz when sync off, or tempo divisions when sync on)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"lfo2Rate", 1}, "LFO2 Rate",

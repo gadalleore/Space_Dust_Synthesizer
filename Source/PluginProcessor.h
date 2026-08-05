@@ -109,25 +109,31 @@ public:
     // Free-running LFO rate range, in one place because the DSP, the knob's snap
     // grid and the readout must all agree.
     //
-    // The top was 200 Hz through v2.0.0. Raising it changes what a stored lfo1Rate /
-    // lfo2Rate KNOB POSITION means, which would silently speed up every free-running
-    // LFO in every existing preset -- 20 of the 52 factory ones. migrateLfoRatesIfOld()
-    // below rescales them on load so they keep sounding the same.
+    // The top is 200 Hz. It was briefly raised to 2 kHz chasing audio-rate LFO
+    // modulation, then put back: at 2 kHz an LFO has about 24 samples per cycle, too
+    // few for its waveform to have a shape, so it stops being a modulator and becomes
+    // a poor oscillator. Nothing musical lives up there, which is why other synths cap
+    // their LFOs well below it too.
     static constexpr double lfoFreeRateMinHz = 0.01;
-    static constexpr double lfoFreeRateMaxHz = 2000.0;
-    static constexpr double lfoFreeRateLegacyMaxHz = 200.0;
+    static constexpr double lfoFreeRateMaxHz = 200.0;
+
+    // The 2 kHz top that state version 2 was written against.
+    static constexpr double lfoFreeRateV2MaxHz = 2000.0;
 
     /** Knob position (0-12) -> Hz, using the current range. */
     static double lfoKnobToHz(double knob0to12);
 
-    /** Rescales lfo1Rate / lfo2Rate in a state tree saved before the range was
-        widened, so the LFO keeps its original frequency. Detected by the absence of
-        the stateVersion attribute that getStateInformation now writes; a no-op on
-        anything already carrying one. */
+    /** Rescales lfo1Rate / lfo2Rate when a state tree was saved against a different
+        rate range, so the LFO keeps the frequency it was saved with.
+
+        A stored rate is a KNOB POSITION, so its meaning moves with the range. Only
+        version 2 is affected: it is the one written while the top was 2 kHz. Version 1
+        (or a missing attribute) predates that and already means what it says. */
     static void migrateLfoRatesIfOld(juce::ValueTree& state, int stateVersion);
 
-    /** Bumped whenever a stored value changes meaning. 1 (or absent) = pre-2000 Hz LFO. */
-    static constexpr int currentStateVersion = 2;
+    /** Bumped whenever a stored value changes meaning.
+        1 (or absent) = 200 Hz LFO top. 2 = 2 kHz top. 3 = 200 Hz again. */
+    static constexpr int currentStateVersion = 3;
 
     // LFO current phases (public for voice access)
     double lfo1CurrentPhase{0.0};         // Current LFO1 phase (0.0 to 1.0)
