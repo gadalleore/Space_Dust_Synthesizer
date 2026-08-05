@@ -75,6 +75,17 @@ public:
     // Max currentPitch across all voices (for Poly glide when the new note uses a different voice).
     double getMaxCurrentPitch() const;
 
+    /** The MIDI note currently sounding in Mono/Legato, or -1 when nothing is held.
+
+        This is what lets the LFOs key-track. The LFOs are rendered once per block at
+        processor level and shared by every voice, so in Poly there is no single note
+        for them to follow -- but Mono and Legato guarantee exactly one, which is why
+        LFO key tracking is only offered in those modes.
+
+        Mirrors the back of noteStack. Written from the note callbacks and read from
+        processBlock, both on the audio thread. */
+    int getCurrentMonoNote() const { return currentNote; }
+
     //==============================================================================
     // MPE: replacement for juce::Synthesiser::noteOn override.
     //

@@ -44,6 +44,7 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "NoteLockGrid.h"      // LFO key tracking shares the filter's snap grid
 #include "SpaceDustSynthesiser.h"
 #include "SpaceDustReverb.h"
 #include "SpaceDustGrainDelay.h"
@@ -1637,7 +1638,71 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
     // Smoothing coefficient: ~5 samples to soften retrigger/phase jumps (prevents clicks)
     constexpr float kLfoSmoothAlpha = 0.25f;
-    
+
+    //==========================================================================
+    // -- LFO key tracking (Mono/Legato, free-run only) --
+    //
+    // With key tracking ON the Rate knob stops being an absolute frequency and
+    // becomes a RATIO to the note being played -- the way an FM operator's
+    // frequency is specified. The LFO then holds that interval against the
+    // keyboard, and once the rate reaches audio frequencies that is FM.
+    //
+    // Only in Mono/Legato: the LFOs are rendered once per block at processor
+    // level and shared by every voice, so Poly has no single note to follow.
+    // Only with Sync off: a tempo-locked LFO is by definition not tracking keys.
+    //
+    // The ratio spans 1/16 to 16 (eight octaves centred on 1:1), which covers the
+    // usual FM operator range. Note Lock / Harmonic Series quantise it using the
+    // same tested grid the filter uses: NoteLock::snapHz is anchored at
+    // referenceHz, so snapping (ratio * referenceHz) and dividing back out yields
+    // exactly 2^(n/12) for semitones or a whole number k for harmonics.
+    // static so the lambda below can use them without an explicit capture.
+    static constexpr double kLfoRatioMin = 1.0 / 16.0;
+    static constexpr double kLfoRatioMax = 16.0;
+
+    auto keyTrackedLfoHz = [this] (float rate0to12, int midiNote,
+                                   bool noteLock, bool harmonics) -> double
+    {
+        const double norm  = juce::jlimit(0.0, 1.0, static_cast<double>(rate0to12) / 12.0);
+        const double logMin = std::log(kLfoRatioMin);
+        const double logMax = std::log(kLfoRatioMax);
+        double ratio = std::exp(logMin + norm * (logMax - logMin));
+
+        if (noteLock)
+        {
+            const auto grid = harmonics ? NoteLock::Grid::Harmonics
+                                        : NoteLock::Grid::Semitones;
+            ratio = NoteLock::snapHz(ratio * NoteLock::referenceHz,
+                                     kLfoRatioMin * NoteLock::referenceHz,
+                                     kLfoRatioMax * NoteLock::referenceHz,
+                                     grid) / NoteLock::referenceHz;
+        }
+
+        return juce::MidiMessage::getMidiNoteInHertz(midiNote) * ratio;
+    };
+
+    // Whether each LFO should key-track this block, and to which note. Resolved once
+    // here so the two render branches below stay readable.
+    const int  voiceModeIdx   = synth.getVoiceModeIndex();          // 0=Poly, 1=Mono, 2=Legato
+    const int  monoNote       = synth.getCurrentMonoNote();         // -1 when nothing is held
+    const bool monoOrLegato   = (voiceModeIdx == 1 || voiceModeIdx == 2);
+    const bool lfoKeyTrackable = monoOrLegato && monoNote >= 0;
+
+    const bool lfo1KeyTrack = lfoKeyTrackable && safeGetParam(apvts, "lfo1KeyTrack") > 0.5f;
+    const bool lfo2KeyTrack = lfoKeyTrackable && safeGetParam(apvts, "lfo2KeyTrack") > 0.5f;
+    const bool lfo1NoteLock = safeGetParam(apvts, "lfo1NoteLock") > 0.5f;
+    const bool lfo2NoteLock = safeGetParam(apvts, "lfo2NoteLock") > 0.5f;
+    const bool lfo1Harmonic = safeGetParam(apvts, "lfo1HarmonicLock") > 0.5f;
+    const bool lfo2Harmonic = safeGetParam(apvts, "lfo2HarmonicLock") > 0.5f;
+
+    // The output smoother is a one-pole with its knee near 2.2 kHz at 48 kHz. That is
+    // inaudible at LFO rates but would progressively eat the modulator as a key-tracked
+    // LFO climbs into the audio band, making FM depth fall off with pitch. Bypass it
+    // there; the waveform is generated per sample anyway, so there is nothing to zip.
+    const float lfo1Alpha = lfo1KeyTrack ? 1.0f : kLfoSmoothAlpha;
+    const float lfo2Alpha = lfo2KeyTrack ? 1.0f : kLfoSmoothAlpha;
+
+
     // Process LFO1
     if (lfo1Sync)
     {
@@ -1761,17 +1826,29 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     }
     else
     {
-        // Free mode: 0.01-200 Hz logarithmic (clamping prevents wraparound/slowdown bug)
-        float rateClamped = juce::jlimit(0.0f, 12.0f, lfo1Rate);
-        float normalizedRate = juce::jlimit(0.0f, 1.0f, rateClamped / 12.0f);
-        float logMin = std::log(0.01f);
-        float logMax = std::log(200.0f);
-        float logFreq = logMin + normalizedRate * (logMax - logMin);
-        float hz = std::exp(logFreq);
-        hz = juce::jlimit(0.01f, 200.0f, hz);
-        
-        double delta = (currentSampleRate > 0.0) ? (static_cast<double>(hz) / currentSampleRate) : 0.0;
-        
+        // Free mode. Key-tracked: the rate is a ratio to the held note (see
+        // keyTrackedLfoHz above). Otherwise the original 0.01-200 Hz log mapping,
+        // untouched, so every existing preset behaves exactly as before.
+        double hz;
+        if (lfo1KeyTrack)
+        {
+            hz = keyTrackedLfoHz(lfo1Rate, monoNote, lfo1NoteLock, lfo1Harmonic);
+            // Nyquist guard: a key-tracked LFO can genuinely reach audio rates, and a
+            // ratio of 16 on the top of the keyboard would otherwise alias badly.
+            hz = juce::jlimit(0.01, currentSampleRate > 0.0 ? currentSampleRate * 0.45 : 20000.0, hz);
+        }
+        else
+        {
+            float rateClamped = juce::jlimit(0.0f, 12.0f, lfo1Rate);
+            float normalizedRate = juce::jlimit(0.0f, 1.0f, rateClamped / 12.0f);
+            float logMin = std::log(0.01f);
+            float logMax = std::log(200.0f);
+            float logFreq = logMin + normalizedRate * (logMax - logMin);
+            hz = juce::jlimit(0.01f, 200.0f, std::exp(logFreq));
+        }
+
+        double delta = (currentSampleRate > 0.0) ? (hz / currentSampleRate) : 0.0;
+
         // Fill per-sample buffer
         double phase = lfo1CurrentPhase;
         float phaseOffset = lfo1PhaseParam / 360.0f;
@@ -1784,7 +1861,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             phase = std::fmod(phaseNext, 1.0);
             float raw = (lfo1Waveform == 5) ? (lfo1SampleHoldValue * lfo1Depth)
                 : (generateLfoValue(phase + phaseOffset, lfo1Waveform) * lfo1Depth);
-            lfo1SmoothedValue += kLfoSmoothAlpha * (raw - lfo1SmoothedValue);
+            lfo1SmoothedValue += lfo1Alpha * (raw - lfo1SmoothedValue);
             lfo1Buffer.setSample(0, s, lfo1SmoothedValue);
         }
         lfo1CurrentPhase = phase;
@@ -1912,17 +1989,25 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     }
     else
     {
-        // Free mode: 0.01-200 Hz logarithmic (clamping prevents wraparound/slowdown bug)
-        float rateClamped = juce::jlimit(0.0f, 12.0f, lfo2Rate);
-        float normalizedRate = juce::jlimit(0.0f, 1.0f, rateClamped / 12.0f);
-        float logMin = std::log(0.01f);
-        float logMax = std::log(200.0f);
-        float logFreq = logMin + normalizedRate * (logMax - logMin);
-        float hz = std::exp(logFreq);
-        hz = juce::jlimit(0.01f, 200.0f, hz);
-        
-        double delta = (currentSampleRate > 0.0) ? (static_cast<double>(hz) / currentSampleRate) : 0.0;
-        
+        // Free mode -- see the LFO1 branch above for the key-tracked path.
+        double hz;
+        if (lfo2KeyTrack)
+        {
+            hz = keyTrackedLfoHz(lfo2Rate, monoNote, lfo2NoteLock, lfo2Harmonic);
+            hz = juce::jlimit(0.01, currentSampleRate > 0.0 ? currentSampleRate * 0.45 : 20000.0, hz);
+        }
+        else
+        {
+            float rateClamped = juce::jlimit(0.0f, 12.0f, lfo2Rate);
+            float normalizedRate = juce::jlimit(0.0f, 1.0f, rateClamped / 12.0f);
+            float logMin = std::log(0.01f);
+            float logMax = std::log(200.0f);
+            float logFreq = logMin + normalizedRate * (logMax - logMin);
+            hz = juce::jlimit(0.01f, 200.0f, std::exp(logFreq));
+        }
+
+        double delta = (currentSampleRate > 0.0) ? (hz / currentSampleRate) : 0.0;
+
         // Fill per-sample buffer
         double phase = lfo2CurrentPhase;
         float phaseOffset = lfo2PhaseParam / 360.0f;
@@ -1935,7 +2020,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             phase = std::fmod(phaseNext, 1.0);
             float raw = (lfo2Waveform == 5) ? (lfo2SampleHoldValue * lfo2Depth)
                 : (generateLfoValue(phase + phaseOffset, lfo2Waveform) * lfo2Depth);
-            lfo2SmoothedValue += kLfoSmoothAlpha * (raw - lfo2SmoothedValue);
+            lfo2SmoothedValue += lfo2Alpha * (raw - lfo2SmoothedValue);
             lfo2Buffer.setSample(0, s, lfo2SmoothedValue);
         }
         lfo2CurrentPhase = phase;
@@ -3573,6 +3658,26 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::NormalisableRange<float>(0.0f, 12.0f, 0.01f), 6.0f),
         "lfo1Rate");
     
+    // LFO1 key tracking. When ON the Rate knob stops meaning "Hz" and starts meaning
+    // a RATIO to the played note, exactly the way an FM operator's frequency is
+    // specified -- so a rate of 2:1 stays two octaves above whatever you play, and at
+    // audio rates that is FM. Only available in Mono/Legato (the LFO is global, so
+    // Poly has no single note to follow) and only with Sync off (a tempo-locked LFO
+    // is by definition not following the keyboard). Note Lock quantises the ratio to
+    // semitones; Harmonic Series quantises it to whole-number ratios.
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo1KeyTrack", 1}, "LFO1 Key Track", false),
+        "lfo1KeyTrack");
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo1NoteLock", 1}, "LFO1 Note Lock", false),
+        "lfo1NoteLock");
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo1HarmonicLock", 1}, "LFO1 Harmonic Series", false),
+        "lfo1HarmonicLock");
+
     // LFO1 Target (what to modulate)
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
@@ -3638,6 +3743,20 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"lfo2Rate", 1}, "LFO2 Rate",
             juce::NormalisableRange<float>(0.0f, 12.0f, 0.01f), 6.0f),
         "lfo2Rate");
+
+    // See the lfo1KeyTrack block above for what these do.
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo2KeyTrack", 1}, "LFO2 Key Track", false),
+        "lfo2KeyTrack");
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo2NoteLock", 1}, "LFO2 Note Lock", false),
+        "lfo2NoteLock");
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo2HarmonicLock", 1}, "LFO2 Harmonic Series", false),
+        "lfo2HarmonicLock");
     
     // LFO2 Target (what to modulate)
     addParameterWithLogging(params,

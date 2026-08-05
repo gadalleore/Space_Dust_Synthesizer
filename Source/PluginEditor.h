@@ -326,11 +326,30 @@ public:
         "Link to Master" is engaged. */
     std::function<std::optional<NoteLock::Grid>()> activeGrid;
 
+    /** Optional mapping between this slider's own units and the Hz the grid works in.
+
+        Unset means the slider already IS in Hz -- the filter cutoff knobs. The LFO
+        Rate knob is a 0-12 abstract control that means a RATIO to the played note, so
+        it supplies a pair of converters and snaps on the same grid regardless. Both
+        must be set, and toGridHz must be increasing, or neither is used. */
+    std::function<double(double)> toGridHz;
+    std::function<double(double)> fromGridHz;
+
     double snapValue(double attemptedValue, DragMode dragMode) override
     {
         if (activeGrid != nullptr)
+        {
             if (const auto grid = activeGrid())
-                return NoteLock::snapHz(attemptedValue, getMinimum(), getMaximum(), *grid);
+            {
+                const bool mapped = (toGridHz != nullptr && fromGridHz != nullptr);
+                const double hz = mapped ? toGridHz(attemptedValue) : attemptedValue;
+                const double lo = mapped ? toGridHz(getMinimum())    : getMinimum();
+                const double hi = mapped ? toGridHz(getMaximum())    : getMaximum();
+
+                const double snapped = NoteLock::snapHz(hz, lo, hi, *grid);
+                return mapped ? fromGridHz(snapped) : snapped;
+            }
+        }
 
         return juce::Slider::snapValue(attemptedValue, dragMode);
     }
@@ -540,6 +559,42 @@ private:
     // 0 = master, 1 = mod 1, 2 = mod 2.
     std::optional<NoteLock::Grid> activeNoteLockGrid(int filterIndex) const;
     void snapCutoffToNoteLock(int filterIndex);
+
+    //==========================================================================
+    // LFO key tracking (lfoIndex is 1 or 2). With it on, the Rate knob means a
+    // RATIO to the played note rather than absolute Hz -- an FM operator ratio --
+    // so Note Lock and Harmonic Series quantise it on the same grid the filter
+    // uses. Offered only in Mono/Legato (the LFOs are global, so Poly has no one
+    // note to follow) and only with Sync off.
+    static constexpr double lfoRatioMin = 1.0 / 16.0;
+    static constexpr double lfoRatioMax = 16.0;
+
+    bool isLfoKeyTrackAvailable() const;                          // Mono/Legato only
+
+    /** Text for an LFO's rate readout. Absolute Hz normally, but a ratio ("4 : 1",
+        "1 : 3", "1.26 x") while key tracking is on -- where the actual frequency
+        depends on the note being played, so printing Hz would simply be wrong. */
+    juce::String lfoRateDisplayText(int lfoIndex, float rate0to12) const;
+    std::optional<NoteLock::Grid> activeLfoGrid(int lfoIndex) const;
+    void configureLfoRateSnapping(NoteLockSlider& rateSlider, int lfoIndex);
+    void setUpLfoKeyTrackButtons(int lfoIndex);
+    void snapLfoRateToNoteLock(int lfoIndex);
+
+    /** Places (or hides) one LFO's Key Tracking / Note Lock / Harmonics toggles
+        around the Rate knob, laid out exactly like the filter's: Key Tracking to the
+        right of the knob and centred on it, Note Lock directly below that, and
+        Harmonics mirrored to the left of the knob at Note Lock's height.
+
+        Returns the Y to carry on from: nextYIfHidden when nothing is shown (so the
+        box closes back up), otherwise whichever is lower, that or the bottom of the
+        toggles -- they hang below the knob and would collide with the Depth label.
+        Public to the page components that lay out the Modulation tab. */
+public:
+    int layoutLfoKeyTrackRow(int lfoIndex,
+                             juce::Rectangle<int> rateKnobBounds,
+                             juce::Rectangle<int> contentBounds,
+                             int buttonHeight, int rowSpacing, int nextYIfHidden);
+private:
 
     // Pitch bend snap-back: poll processor ramp and sync display
     bool pitchBendSnapActive{false};
@@ -955,7 +1010,12 @@ private:
     juce::ToggleButton lfo1SyncButton;
     juce::ToggleButton lfo1TripletButton;  // Triplet timing toggle (only visible when sync is on)
     juce::ToggleButton lfo1TripletStraightButton;  // Triplet/Straight toggle (only visible when triplet is enabled)
-    juce::Slider lfo1FreeRateSlider;  // Free rate slider (0.01-200 Hz)
+    // Free rate: 0.01-200 Hz normally, or a RATIO to the played note when LFO key
+    // tracking is on (Mono/Legato + Sync off), which is what makes audio-rate FM.
+    NoteLockSlider lfo1FreeRateSlider;
+    juce::ToggleButton lfo1KeyTrackButton;      // Shown only in Mono/Legato with Sync off
+    juce::ToggleButton lfo1NoteLockButton;      // Shown only while LFO Key Tracking is on
+    juce::ToggleButton lfo1HarmonicLockButton;  // Shown only while LFO Note Lock is on
     juce::ComboBox lfo1SyncRateCombo;  // Sync rate combo (1/32 to 8)
     juce::Slider lfo1DepthSlider;
     juce::Slider lfo1PhaseSlider;
@@ -977,7 +1037,10 @@ private:
     juce::ToggleButton lfo2SyncButton;
     juce::ToggleButton lfo2TripletButton;  // Triplet timing toggle (only visible when sync is on)
     juce::ToggleButton lfo2TripletStraightButton;  // Triplet/Straight toggle (only visible when triplet is enabled)
-    juce::Slider lfo2FreeRateSlider;  // Free rate slider (0.01-200 Hz)
+    NoteLockSlider lfo2FreeRateSlider;
+    juce::ToggleButton lfo2KeyTrackButton;
+    juce::ToggleButton lfo2NoteLockButton;
+    juce::ToggleButton lfo2HarmonicLockButton;
     juce::ComboBox lfo2SyncRateCombo;  // Sync rate combo (1/32 to 8)
     juce::Slider lfo2DepthSlider;
     juce::Slider lfo2PhaseSlider;
@@ -1324,6 +1387,12 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo1TripletStraightAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo1RetriggerAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfo1FreeRateAttachment;  // Attached to lfo1Rate parameter
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo1KeyTrackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo1NoteLockAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo1HarmonicLockAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo2KeyTrackAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo2NoteLockAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo2HarmonicLockAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfo1DepthAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfo1PhaseAttachment;
     
