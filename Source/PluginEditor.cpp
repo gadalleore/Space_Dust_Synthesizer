@@ -1,4 +1,4 @@
-﻿#include "PluginEditor.h"
+#include "PluginEditor.h"
 #include "BinaryData.h"
 
 #include <cmath>
@@ -1432,9 +1432,6 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     addAndMakeVisible(parentEditor.lfo1TripletButton);
     addAndMakeVisible(parentEditor.lfo1TripletStraightButton);
     addAndMakeVisible(parentEditor.lfo1FreeRateSlider);
-    addChildComponent(parentEditor.lfo1KeyTrackButton);      // shown by resized(): Sync off + Mono/Legato
-    addChildComponent(parentEditor.lfo1NoteLockButton);
-    addChildComponent(parentEditor.lfo1HarmonicLockButton);
     addAndMakeVisible(parentEditor.lfo1SyncRateCombo);
     addAndMakeVisible(parentEditor.lfo1RateLabel);
     addAndMakeVisible(parentEditor.lfo1RateValueLabel);
@@ -1455,9 +1452,6 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     addAndMakeVisible(parentEditor.lfo2TripletButton);
     addAndMakeVisible(parentEditor.lfo2TripletStraightButton);
     addAndMakeVisible(parentEditor.lfo2FreeRateSlider);
-    addChildComponent(parentEditor.lfo2KeyTrackButton);      // shown by resized(): Sync off + Mono/Legato
-    addChildComponent(parentEditor.lfo2NoteLockButton);
-    addChildComponent(parentEditor.lfo2HarmonicLockButton);
     addAndMakeVisible(parentEditor.lfo2SyncRateCombo);
     addAndMakeVisible(parentEditor.lfo2RateLabel);
     addAndMakeVisible(parentEditor.lfo2RateValueLabel);
@@ -1529,9 +1523,7 @@ juce::StringArray ModulationPageComponent::relayoutTriggerParams()
              "modFilter1NoteLock",     "modFilter2NoteLock",
              "modFilter1LinkToMaster", "modFilter2LinkToMaster",
              "voiceMode",
-             "lfo1Sync",               "lfo2Sync",
-             "lfo1KeyTrack",           "lfo2KeyTrack",
-             "lfo1NoteLock",           "lfo2NoteLock" };
+             "lfo1Sync",               "lfo2Sync" };
 }
 
 void ModulationPageComponent::parameterChanged(const juce::String& parameterID, float newValue)
@@ -1766,8 +1758,6 @@ void ModulationPageComponent::resized()
     // LFO1 Key Tracking / Note Lock / Harmonics, arranged around the Rate knob the
     // same way the filter arranges its three. Only exists with Sync off and in
     // Mono/Legato; Note Lock nests inside Key Tracking, Harmonics inside Note Lock.
-    lfo1CurrentY = parentEditor.layoutLfoKeyTrackRow(1, lfo1RateKnobBounds, lfo1Content,
-                                                     modButtonHeight, modRowSpacing, lfo1CurrentY);
     
     // LFO1 Depth
     const int modRotaryTextBoxTotalH = modRateKnobSize + gapKnobToValue + modTextBoxH;
@@ -1938,8 +1928,6 @@ void ModulationPageComponent::resized()
     lfo2CurrentY += modRateSliderTotalH + gapValueToNextLabel;
 
     // LFO2 key-tracking row -- see the LFO1 block above.
-    lfo2CurrentY = parentEditor.layoutLfoKeyTrackRow(2, lfo2RateKnobBounds, lfo2Content,
-                                                     modButtonHeight, modRowSpacing, lfo2CurrentY);
     
     // LFO2 Depth
     parentEditor.lfo2DepthLabel.setBounds(lfo2CentreX - modRateKnobSize / 2, lfo2CurrentY, modRateKnobSize, modLabelHeight);
@@ -4434,8 +4422,6 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo1FreeRateSlider.setRange(0.0, 12.0, 0.01);  // Maps to 0.01 Hz - 2 kHz logarithmically (free mode)
     lfo1FreeRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "lfo1Rate", lfo1FreeRateSlider);
-    configureLfoRateSnapping(lfo1FreeRateSlider, 1);
-    setUpLfoKeyTrackButtons(1);
     lfo1RateLabel.setText(safeString("Rate"), juce::dontSendNotification);
     lfo1RateLabel.setJustificationType(juce::Justification::centred);
     lfo1RateLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
@@ -4553,8 +4539,6 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo2FreeRateSlider.setRange(0.0, 12.0, 0.01);
     lfo2FreeRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "lfo2Rate", lfo2FreeRateSlider);
-    configureLfoRateSnapping(lfo2FreeRateSlider, 2);
-    setUpLfoKeyTrackButtons(2);
     lfo2RateLabel.setText(safeString("Rate"), juce::dontSendNotification);
     lfo2RateLabel.setJustificationType(juce::Justification::centred);
     lfo2RateLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
@@ -6453,208 +6437,6 @@ std::optional<NoteLock::Grid> SpaceDustAudioProcessorEditor::activeNoteLockGrid(
                                            : NoteLock::Grid::Semitones;
 }
 
-bool SpaceDustAudioProcessorEditor::isLfoKeyTrackAvailable() const
-{
-    // The LFOs are rendered once per block at processor level and shared by every
-    // voice, so there is no single note for them to follow in Poly. Mono and Legato
-    // guarantee exactly one -- that is the anchor the whole feature needs.
-    const int voiceMode = static_cast<int>(safeGetParam("voiceMode"));
-    return voiceMode == 1 || voiceMode == 2;   // 0=Poly, 1=Mono, 2=Legato
-}
-
-std::optional<NoteLock::Grid> SpaceDustAudioProcessorEditor::activeLfoGrid(int lfoIndex) const
-{
-    const juce::String prefix = (lfoIndex == 2) ? "lfo2" : "lfo1";
-
-    // Sync on means the LFO is locked to the transport, which is by definition not
-    // following the keyboard -- so key tracking does not apply there.
-    if (safeGetParam(prefix + "Sync") > 0.5f)          return std::nullopt;
-    if (!isLfoKeyTrackAvailable())                     return std::nullopt;
-    if (safeGetParam(prefix + "KeyTrack") <= 0.5f)     return std::nullopt;
-    if (safeGetParam(prefix + "NoteLock") <= 0.5f)     return std::nullopt;
-
-    return safeGetParam(prefix + "HarmonicLock") > 0.5f ? NoteLock::Grid::Harmonics
-                                                        : NoteLock::Grid::Semitones;
-}
-
-juce::String SpaceDustAudioProcessorEditor::lfoRateDisplayText(int lfoIndex, float rate0to12) const
-{
-    const juce::String prefix = (lfoIndex == 2) ? "lfo2" : "lfo1";
-    const bool keyTracked = safeGetParam(prefix + "Sync") <= 0.5f
-                         && isLfoKeyTrackAvailable()
-                         && safeGetParam(prefix + "KeyTrack") > 0.5f;
-
-    // The knob is Hz in both cases. Key-tracked it is the rate at MIDDLE C, with the
-    // played note scaling it from there -- so Hz stays the honest unit either way.
-    const double norm = juce::jlimit(0.0, 1.0, static_cast<double>(rate0to12) / 12.0);
-    double hz = juce::jlimit(lfoRateMinHz, lfoRateMaxHz,
-                             std::exp(std::log(lfoRateMinHz)
-                                      + norm * (std::log(lfoRateMaxHz) - std::log(lfoRateMinHz))));
-
-    // Mirror the snapping the slider and processBlock both apply, so the readout can
-    // never disagree with what is actually sounding.
-    if (keyTracked)
-        if (const auto grid = activeLfoGrid(lfoIndex))
-            hz = NoteLock::snapHz(hz, lfoRateMinHz, lfoRateMaxHz, *grid);
-
-    return juce::String::formatted("%.2f Hz", hz);
-}
-
-void SpaceDustAudioProcessorEditor::configureLfoRateSnapping(NoteLockSlider& rateSlider, int lfoIndex)
-{
-    rateSlider.activeGrid = [this, lfoIndex] { return activeLfoGrid(lfoIndex); };
-
-    // The Rate knob is a 0-12 abstract control, not Hz, so it hands the grid a pair
-    // of converters. 0-12 maps logarithmically onto the ratio range, and the grid is
-    // anchored at referenceHz -- so snapping (ratio * referenceHz) and dividing back
-    // out lands on exactly 2^(n/12) for semitones or a whole number k for harmonics.
-    // This is the same maths processBlock uses, so knob and audio agree.
-    rateSlider.toGridHz = [] (double rate0to12)
-    {
-        const double norm = juce::jlimit(0.0, 1.0, rate0to12 / 12.0);
-        return juce::jlimit(lfoRateMinHz, lfoRateMaxHz,
-                            std::exp(std::log(lfoRateMinHz)
-                                     + norm * (std::log(lfoRateMaxHz) - std::log(lfoRateMinHz))));
-    };
-    rateSlider.fromGridHz = [] (double hz)
-    {
-        const double clamped = juce::jlimit(lfoRateMinHz, lfoRateMaxHz, hz);
-        return 12.0 * (std::log(clamped) - std::log(lfoRateMinHz))
-                    / (std::log(lfoRateMaxHz) - std::log(lfoRateMinHz));
-    };
-}
-
-void SpaceDustAudioProcessorEditor::setUpLfoKeyTrackButtons(int lfoIndex)
-{
-    auto& vts = audioProcessor.getValueTreeState();
-    const juce::String prefix = (lfoIndex == 2) ? "lfo2" : "lfo1";
-
-    auto& keyTrack = (lfoIndex == 2) ? lfo2KeyTrackButton     : lfo1KeyTrackButton;
-    auto& noteLock = (lfoIndex == 2) ? lfo2NoteLockButton     : lfo1NoteLockButton;
-    auto& harmonic = (lfoIndex == 2) ? lfo2HarmonicLockButton : lfo1HarmonicLockButton;
-    auto& ktAtt    = (lfoIndex == 2) ? lfo2KeyTrackAttachment     : lfo1KeyTrackAttachment;
-    auto& nlAtt    = (lfoIndex == 2) ? lfo2NoteLockAttachment     : lfo1NoteLockAttachment;
-    auto& hsAtt    = (lfoIndex == 2) ? lfo2HarmonicLockAttachment : lfo1HarmonicLockAttachment;
-
-    using ButtonAtt = juce::AudioProcessorValueTreeState::ButtonAttachment;
-
-    keyTrack.setButtonText(safeString("Key Tracking"));
-    keyTrack.setTooltip(safeString(
-        "LFO Key Tracking: the Rate knob becomes the rate at MIDDLE C, and the LFO speeds up "
-        "or slows down with the note you play -- one octave of rate per octave of keyboard, "
-        "limited to an octave either way so it stays predictable. "
-        "Mono/Legato only: the LFO is shared by every voice, so Poly has no single note to follow."));
-    ktAtt = std::make_unique<ButtonAtt>(vts, prefix + "KeyTrack", keyTrack);
-    keyTrack.onClick = [this, lfoIndex] { snapLfoRateToNoteLock(lfoIndex); };
-
-    noteLock.setButtonText(safeString("Note Lock"));
-    noteLock.setTooltip(safeString(
-        "Note Lock: the Rate knob clicks into semitone steps, measured down from middle C, "
-        "so the rate sits on an exact musical interval instead of between two of them."));
-    nlAtt = std::make_unique<ButtonAtt>(vts, prefix + "NoteLock", noteLock);
-    noteLock.onClick = [this, lfoIndex] { snapLfoRateToNoteLock(lfoIndex); };
-
-    harmonic.setButtonText(safeString("Harmonics"));
-    harmonic.setTooltip(safeString(
-        "Harmonic Series: the Rate knob clicks into whole-number divisions of middle C -- "
-        "half of it, a third, a quarter and so on down. Note that these bunch up at slow "
-        "rates and spread out at fast ones, which is the shape of the series itself."));
-    hsAtt = std::make_unique<ButtonAtt>(vts, prefix + "HarmonicLock", harmonic);
-    harmonic.onClick = [this, lfoIndex] { snapLfoRateToNoteLock(lfoIndex); };
-}
-
-int SpaceDustAudioProcessorEditor::layoutLfoKeyTrackRow(int lfoIndex,
-                                                        juce::Rectangle<int> rateKnobBounds,
-                                                        juce::Rectangle<int> contentBounds,
-                                                        int buttonHeight, int rowSpacing,
-                                                        int nextYIfHidden)
-{
-    const juce::String prefix = (lfoIndex == 2) ? "lfo2" : "lfo1";
-    auto& keyTrack = (lfoIndex == 2) ? lfo2KeyTrackButton     : lfo1KeyTrackButton;
-    auto& noteLock = (lfoIndex == 2) ? lfo2NoteLockButton     : lfo1NoteLockButton;
-    auto& harmonic = (lfoIndex == 2) ? lfo2HarmonicLockButton : lfo1HarmonicLockButton;
-
-    // Sync on = locked to the transport, not to the keyboard. Poly = no single note
-    // for a shared LFO to follow. Either way the whole group is meaningless.
-    const bool showKeyTrack = safeGetParam(prefix + "Sync") <= 0.5f && isLfoKeyTrackAvailable();
-    const bool showNoteLock = showKeyTrack && safeGetParam(prefix + "KeyTrack") > 0.5f;
-    const bool showHarmonic = showNoteLock && safeGetParam(prefix + "NoteLock") > 0.5f;
-
-    keyTrack.setVisible(showKeyTrack);
-    noteLock.setVisible(showNoteLock);
-    harmonic.setVisible(showHarmonic);
-
-    if (!showKeyTrack)
-        return nextYIfHidden;   // claim no extra space, so the box below closes up
-
-    const int gapToKnob = 8;
-    const int stackGap  = 12;
-
-    // These flank the FILTER's knob-pair span, not the Rate knob's own edges. Both are
-    // centred on the LFO column, but the pair is 104 px wide against the Rate knob's
-    // 38, so measuring 8 px from each would put the LFO's toggles 30-odd px inboard of
-    // the filter's and break the vertical column running down the panel. Flanking the
-    // same span puts every Key Tracking / Note Lock / Harmonics button in the box on
-    // one of two clean edges. Y still comes from the Rate knob.
-    const int flankLeft  = rateKnobBounds.getCentreX() - filterKnobPairWidth / 2;
-    const int flankRight = flankLeft + filterKnobPairWidth;
-
-    // Key Tracking: right of the pair, its centre level with the Rate knob's centre.
-    int ktX = flankRight + gapToKnob;
-    int ktW = juce::jmin(84, contentBounds.getRight() - ktX);
-    int ktY = rateKnobBounds.getY() + (rateKnobBounds.getHeight() - buttonHeight) / 2;
-    keyTrack.setBounds(ktX, ktY, ktW, buttonHeight);
-
-    // Note Lock directly below it.
-    const int noteLockY = ktY + buttonHeight + stackGap;
-    noteLock.setBounds(ktX, noteLockY, ktW, buttonHeight);
-
-    // Harmonics mirrored to the left of the pair, level with Note Lock. Clamped to the
-    // box so a narrow LFO column shrinks it rather than letting it escape.
-    int hsX = juce::jmax(contentBounds.getX(), flankLeft - gapToKnob - ktW);
-    int hsW = juce::jmin(ktW, flankLeft - gapToKnob - hsX);
-    harmonic.setBounds(hsX, noteLockY, hsW, buttonHeight);
-
-    // Deliberately returns the untouched Y even though Note Lock and Harmonics hang
-    // below the knob: they sit in the empty flanks either side of it, while the Rate
-    // value and everything under it (Depth, Phase, ...) is a narrow centred column.
-    // Nothing collides, and toggling Key Tracking therefore does not shove the rest
-    // of the LFO box downwards.
-    juce::ignoreUnused(rowSpacing);
-    return nextYIfHidden;
-}
-
-void SpaceDustAudioProcessorEditor::snapLfoRateToNoteLock(int lfoIndex)
-{
-    const auto grid = activeLfoGrid(lfoIndex);
-    if (!grid)
-        return;
-
-    const juce::String rateID = (lfoIndex == 2) ? "lfo2Rate" : "lfo1Rate";
-    auto* param = dynamic_cast<juce::AudioParameterFloat*>(
-        audioProcessor.getValueTreeState().getParameter(rateID));
-    if (param == nullptr)
-        return;
-
-    auto& slider = (lfoIndex == 2) ? lfo2FreeRateSlider : lfo1FreeRateSlider;
-    if (slider.toGridHz == nullptr || slider.fromGridHz == nullptr)
-        return;
-
-    const auto& range = param->getNormalisableRange();
-    const float current = param->get();
-    const auto snapped = static_cast<float>(slider.fromGridHz(
-        NoteLock::snapHz(slider.toGridHz(current),
-                         slider.toGridHz(range.start),
-                         slider.toGridHz(range.end), *grid)));
-
-    if (std::abs(snapped - current) < 0.0001f)
-        return;   // already on a detent -- do not emit a pointless automation gesture
-
-    param->beginChangeGesture();
-    param->setValueNotifyingHost(range.convertTo0to1(juce::jlimit(range.start, range.end, snapped)));
-    param->endChangeGesture();
-}
-
 void SpaceDustAudioProcessorEditor::snapCutoffToNoteLock(int filterIndex)
 {
     const auto grid = activeNoteLockGrid(filterIndex);
@@ -6886,10 +6668,10 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     }
     else
     {
-        // Free mode: 0.01 Hz - 2 kHz logarithmic; key tracking scales it from middle C when
-        // tracking is on -- in which case "Hz" would be an outright lie, since the
-        // actual frequency depends on the note.
-        const juce::String rateText = lfoRateDisplayText(1, static_cast<float>(lfo1Rate));
+        // Free mode: 0.01 Hz - 2 kHz logarithmic. Shares the processor's mapping so the
+        // readout cannot drift from the rate actually being rendered.
+        const juce::String rateText = juce::String::formatted("%.2f Hz",
+            SpaceDustAudioProcessor::lfoKnobToHz(static_cast<double>(lfo1Rate)));
         if (!isBeingDestroyed.load())
         {
             lfo1RateValueLabel.setText(rateText, juce::dontSendNotification);
@@ -6939,8 +6721,9 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     }
     else
     {
-        // Free mode -- Hz, or a ratio to the played note when key tracking is on.
-        const juce::String rateText = lfoRateDisplayText(2, static_cast<float>(lfo2Rate));
+        // Free mode -- see the LFO1 branch above.
+        const juce::String rateText = juce::String::formatted("%.2f Hz",
+            SpaceDustAudioProcessor::lfoKnobToHz(static_cast<double>(lfo2Rate)));
         if (!isBeingDestroyed.load())
         {
             lfo2RateValueLabel.setText(rateText, juce::dontSendNotification);

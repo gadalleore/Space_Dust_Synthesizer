@@ -96,10 +96,6 @@ public:
     // LFO retrigger flags (public for voice access)
     std::atomic<bool> lfo1Retrigger{true};
     std::atomic<bool> lfo2Retrigger{true};
-    
-    // Last note the LFOs key-tracked to. Held past key-up so the rate does not jump
-    // back to free-run while the voice is still releasing. -1 until the first note.
-    int lastKeyTrackNote{-1};
 
     // Realised free-run rate of each LFO, published to the voices so their oversample
     // latch can tell that a cutoff is being swept at audio rate. Written during the

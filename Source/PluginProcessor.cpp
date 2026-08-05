@@ -1593,72 +1593,12 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     static constexpr float kLfoSmoothAlpha = 0.25f;
 
     //==========================================================================
-    // -- LFO key tracking (Mono/Legato, free-run only) --
-    //
-    // The Rate knob keeps meaning Hz. Middle C is the anchor: the knob IS the rate
-    // you get when playing middle C, and other notes scale it by one octave of LFO
-    // per octave of keyboard -- exactly the model the filter's Key Tracking uses.
-    //
-    // Tracking is clamped to one octave either way, so the rate stays predictable
-    // rather than running away at the ends of the keyboard. That caps the effective
-    // rate at 400 Hz (200 Hz knob maximum x 2), which is key-following wobble rather
-    // than full FM -- a deliberate choice for musical control.
-    //
-    // Only in Mono/Legato: the LFOs are rendered once per block at processor level
-    // and shared by every voice, so Poly has no single note to follow. Only with
-    // Sync off: a tempo-locked LFO is by definition not tracking keys.
-    static constexpr int kLfoKeyTrackClampSemis = 12;   // +/- one octave
-
     // 0.01 Hz - 2 kHz, logarithmic. Presets from before the top was raised are
     // rescaled on load by migrateLfoRatesIfOld, so they keep their original speed.
     auto lfoBaseHz = [] (float rate0to12) -> double
     {
         return lfoKnobToHz(static_cast<double>(rate0to12));
     };
-
-    // One octave of LFO per octave of keyboard, clamped, neutral at middle C.
-    auto lfoKeyTrackFactor = [] (int midiNote) -> double
-    {
-        const int offset = juce::jlimit(-kLfoKeyTrackClampSemis, kLfoKeyTrackClampSemis,
-                                        midiNote - 60);
-        return std::pow(2.0, offset / 12.0);
-    };
-
-    // Note Lock / Harmonic Series quantise the BASE rate (the middle-C value), using
-    // the same tested grid the filter uses and the same middle-C anchor, so the knob
-    // readout and the sounding rate always agree.
-    auto snapLfoHz = [] (double hz, bool noteLock, bool harmonics) -> double
-    {
-        if (!noteLock)
-            return hz;
-
-        return NoteLock::snapHz(hz, lfoFreeRateMinHz, lfoFreeRateMaxHz,
-                                harmonics ? NoteLock::Grid::Harmonics
-                                          : NoteLock::Grid::Semitones);
-    };
-
-    // Whether each LFO should key-track this block, and to which note. Resolved once
-    // here so the two render branches below stay readable.
-    const int  voiceModeIdx   = synth.getVoiceModeIndex();          // 0=Poly, 1=Mono, 2=Legato
-    const bool monoOrLegato   = (voiceModeIdx == 1 || voiceModeIdx == 2);
-
-    // currentNote drops to -1 the instant the key is lifted, but the voice is still
-    // sounding all the way through its release. Reading it directly made the LFO
-    // slam back to its free-run rate mid-release -- audible as the LFO suddenly
-    // slowing down as the note tailed off. Latch the last note instead, so the rate
-    // the note was played at holds until a new note replaces it.
-    if (const int held = synth.getCurrentMonoNote(); held >= 0)
-        lastKeyTrackNote = held;
-
-    const int  monoNote        = lastKeyTrackNote;
-    const bool lfoKeyTrackable = monoOrLegato && monoNote >= 0;
-
-    const bool lfo1KeyTrack = lfoKeyTrackable && safeGetParam(apvts, "lfo1KeyTrack") > 0.5f;
-    const bool lfo2KeyTrack = lfoKeyTrackable && safeGetParam(apvts, "lfo2KeyTrack") > 0.5f;
-    const bool lfo1NoteLock = safeGetParam(apvts, "lfo1NoteLock") > 0.5f;
-    const bool lfo2NoteLock = safeGetParam(apvts, "lfo2NoteLock") > 0.5f;
-    const bool lfo1Harmonic = safeGetParam(apvts, "lfo1HarmonicLock") > 0.5f;
-    const bool lfo2Harmonic = safeGetParam(apvts, "lfo2HarmonicLock") > 0.5f;
 
     // The output smoother is a one-pole whose knee sits near 2.2 kHz at 48 kHz. That
     // was harmless while the LFO stopped at 200 Hz, but the range now reaches 2 kHz,
@@ -1802,15 +1742,8 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     }
     else
     {
-        // Free mode. The knob is Hz either way; key tracking snaps that base rate and
-        // then scales it by the played note, anchored at middle C. With key tracking
-        // off nothing here differs from before, so existing presets are unaffected.
-        double hz = lfoBaseHz(lfo1Rate);
-        if (lfo1KeyTrack)
-        {
-            hz = snapLfoHz(hz, lfo1NoteLock, lfo1Harmonic) * lfoKeyTrackFactor(monoNote);
-            hz = juce::jlimit(0.01, currentSampleRate > 0.0 ? currentSampleRate * 0.45 : 20000.0, hz);
-        }
+        // Free mode: the knob is Hz, straight through the shared mapping.
+        const double hz = lfoBaseHz(lfo1Rate);
 
         double delta = (currentSampleRate > 0.0) ? (hz / currentSampleRate) : 0.0;
         lastLfo1Hz = hz;   // for the voices' oversample latch
@@ -1955,13 +1888,8 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     }
     else
     {
-        // Free mode -- see the LFO1 branch above for the key-tracked path.
-        double hz = lfoBaseHz(lfo2Rate);
-        if (lfo2KeyTrack)
-        {
-            hz = snapLfoHz(hz, lfo2NoteLock, lfo2Harmonic) * lfoKeyTrackFactor(monoNote);
-            hz = juce::jlimit(0.01, currentSampleRate > 0.0 ? currentSampleRate * 0.45 : 20000.0, hz);
-        }
+        // Free mode -- see the LFO1 branch above.
+        const double hz = lfoBaseHz(lfo2Rate);
 
         double delta = (currentSampleRate > 0.0) ? (hz / currentSampleRate) : 0.0;
         lastLfo2Hz = hz;   // for the voices' oversample latch
@@ -3665,27 +3593,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"lfo1Rate", 1}, "LFO1 Rate",
             juce::NormalisableRange<float>(0.0f, 12.0f, 0.01f), 6.0f),
         "lfo1Rate");
-    
-    // LFO1 key tracking. When ON the Rate knob stops meaning "Hz" and starts meaning
-    // a RATIO to the played note, exactly the way an FM operator's frequency is
-    // specified -- so a rate of 2:1 stays two octaves above whatever you play, and at
-    // audio rates that is FM. Only available in Mono/Legato (the LFO is global, so
-    // Poly has no single note to follow) and only with Sync off (a tempo-locked LFO
-    // is by definition not following the keyboard). Note Lock quantises the ratio to
-    // semitones; Harmonic Series quantises it to whole-number ratios.
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"lfo1KeyTrack", 1}, "LFO1 Key Track", false),
-        "lfo1KeyTrack");
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"lfo1NoteLock", 1}, "LFO1 Note Lock", false),
-        "lfo1NoteLock");
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"lfo1HarmonicLock", 1}, "LFO1 Harmonic Series", false),
-        "lfo1HarmonicLock");
-
     // LFO1 Target (what to modulate)
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
@@ -3752,19 +3659,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::NormalisableRange<float>(0.0f, 12.0f, 0.01f), 6.0f),
         "lfo2Rate");
 
-    // See the lfo1KeyTrack block above for what these do.
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"lfo2KeyTrack", 1}, "LFO2 Key Track", false),
-        "lfo2KeyTrack");
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"lfo2NoteLock", 1}, "LFO2 Note Lock", false),
-        "lfo2NoteLock");
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"lfo2HarmonicLock", 1}, "LFO2 Harmonic Series", false),
-        "lfo2HarmonicLock");
     
     // LFO2 Target (what to modulate)
     addParameterWithLogging(params,
