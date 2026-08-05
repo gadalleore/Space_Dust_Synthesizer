@@ -561,13 +561,23 @@ private:
     void snapCutoffToNoteLock(int filterIndex);
 
     //==========================================================================
-    // LFO key tracking (lfoIndex is 1 or 2). With it on, the Rate knob means a
-    // RATIO to the played note rather than absolute Hz -- an FM operator ratio --
-    // so Note Lock and Harmonic Series quantise it on the same grid the filter
+    // LFO key tracking (lfoIndex is 1 or 2). The Rate knob keeps meaning Hz --
+    // that is the rate at MIDDLE C, and other notes scale it an octave of LFO per
+    // octave of keyboard, clamped to one octave either way. Note Lock and Harmonic
+    // Series quantise that base Hz on the same middle-C-anchored grid the filter
     // uses. Offered only in Mono/Legato (the LFOs are global, so Poly has no one
     // note to follow) and only with Sync off.
-    static constexpr double lfoRatioMin = 1.0 / 16.0;
-    static constexpr double lfoRatioMax = 16.0;
+    // Aliases of the processor's range so the knob, its snap grid and the readout
+    // cannot drift from the DSP.
+    static constexpr double lfoRateMinHz = SpaceDustAudioProcessor::lfoFreeRateMinHz;
+    static constexpr double lfoRateMaxHz = SpaceDustAudioProcessor::lfoFreeRateMaxHz;
+
+    /** Width of a mod-filter Cutoff/Resonance knob pair on the Modulation tab
+        (2 knobs + the gap between them). The LFO's Key Tracking / Note Lock /
+        Harmonics toggles flank this same span so they line up in a column with the
+        filter's, rather than hugging the narrower Rate knob. Kept beside the layout
+        constants it mirrors: modRateKnobSize (38) and the 28 px pair gap. */
+    static constexpr int filterKnobPairWidth = 2 * 38 + 28;
 
     bool isLfoKeyTrackAvailable() const;                          // Mono/Legato only
 

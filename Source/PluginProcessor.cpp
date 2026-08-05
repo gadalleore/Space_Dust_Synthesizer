@@ -6,14 +6,14 @@
 //
 // Signal Path: 
 //   Osc1 (with independent detune) + Osc2 (with independent detune) 
-//   → Mix → Filter → ADSR Envelope → Master Volume → Output
+//   â†’ Mix â†’ Filter â†’ ADSR Envelope â†’ Master Volume â†’ Output
 //
 // Features:
 // - Dual oscillators with 4 waveforms each (Sine, Triangle, Saw, Square)
 // - Independent detune for each oscillator (coarse + fine) for shimmering effects
 // - Osc2 can be tuned relative to Osc1 (coarse/fine tuning for intervals)
 // - Multimode state-variable filter (Low Pass, Band Pass, High Pass)
-// - Proper 4-stage ADSR amplitude envelope (Attack → Decay → Sustain → Release)
+// - Proper 4-stage ADSR amplitude envelope (Attack â†’ Decay â†’ Sustain â†’ Release)
 //   with long cosmic tails (release up to 20 seconds)
 // - Master volume control for proper mix integration
 // - 8-voice polyphony
@@ -21,7 +21,7 @@
 //
 // ADSR Envelope Implementation:
 //   - Linear amplitude ramping for real-time safety
-//   - Proper state machine: Idle → Attack → Decay → Sustain → Release → Idle
+//   - Proper state machine: Idle â†’ Attack â†’ Decay â†’ Sustain â†’ Release â†’ Idle
 //   - Attack: ramp from 0 to 1.0
 //   - Decay: ramp from 1.0 to sustain level
 //   - Sustain: hold at sustain level (no change)
@@ -33,7 +33,7 @@
 //   - Creates shimmering, unison-like character with asymmetric movement
 //   - Default: Osc1 = 0, Osc2 = +5 coarse / -3 fine (subtle shimmer)
 //
-// Space Dust by [your name] – the cosmic sine machine
+// Space Dust by [your name] â€“ the cosmic sine machine
 //==============================================================================
 
 // VLD must be the first include for accurate call-stack capture in leak reports.
@@ -45,6 +45,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "NoteLockGrid.h"      // LFO key tracking shares the filter's snap grid
+#include "LfoWaveform.h"       // band-limited LFO shapes (see tools/lfotest)
 #include "SpaceDustSynthesiser.h"
 #include "SpaceDustReverb.h"
 #include "SpaceDustGrainDelay.h"
@@ -252,7 +253,7 @@ namespace
     // -- Crash-safety marker for state restoration --
     // setStateInformation() writes this marker on entry and deletes it on
     // successful completion. If the marker is still present on the next entry,
-    // the previous attempt crashed mid-restore — we skip the restore and load
+    // the previous attempt crashed mid-restore â€” we skip the restore and load
     // defaults so the host can at least open the project. Breaks crash-on-reload
     // loops where a corrupted saved state would otherwise kill the host every
     // time it tries to recover.
@@ -322,9 +323,9 @@ SpaceDustAudioProcessor::SpaceDustAudioProcessor()
     // The sample rate is only known when prepareToPlay() is called by the host.
     // Creating voices in the constructor means:
     //   - sampleRate = 0 (default)
-    //   - filter.prepare() called with invalid spec → assertions
-    //   - adsr.setSampleRate(0) → invalid timing calculations → assertions
-    //   - Repeated assertions during processBlock() → potential crashes
+    //   - filter.prepare() called with invalid spec â†’ assertions
+    //   - adsr.setSampleRate(0) â†’ invalid timing calculations â†’ assertions
+    //   - Repeated assertions during processBlock() â†’ potential crashes
     //
     // Common pitfalls in hosts like Ableton Live:
     //   - Constructor runs before host knows audio settings
@@ -720,7 +721,7 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
     }
     
     // Step 2: (Formerly: ensure at least one SynthesiserSound exists.)
-    // MPE: juce::MPESynthesiser does NOT use SynthesiserSound — voice/note assignment
+    // MPE: juce::MPESynthesiser does NOT use SynthesiserSound â€” voice/note assignment
     // is handled entirely by the internal MPEInstrument.  We intentionally skip the
     // addSound() call here; SynthSound.h remains in the codebase as an unused stub
     // for preset / state-file backwards compatibility but the synth no longer needs it.
@@ -1073,7 +1074,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     // Voice mode and glide. safeGetParam returns the DENORMALISED (actual) value via
     // APVTS::getRawParameterValue -> getRawDenormalisedValue, so this is already in
     // seconds. The previous code wrapped it in convertFrom0to1() which treated 0.016
-    // as a 0-1 normalised value and produced ~0.000338s — which then got snapped to 0
+    // as a 0-1 normalised value and produced ~0.000338s â€” which then got snapped to 0
     // by the parameter's 0.001 interval, silently disabling user glide and forcing
     // the 3ms anti-click branch on every note in mono/legato.
     float glideTime = juce::jlimit(0.0f, 5.0f, safeGetParam(apvts, "glideTime"));
@@ -1165,9 +1166,10 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setPitchBendAmount(pitchBendAmount);
             voice->setPitchBend(pitchBend);
             voice->setLfoTargets(lfo1Target, lfo2Target);
+            voice->setLfoRates(lastLfo1Hz, lastLfo2Hz);
             voice->setAnalogDrift(analogDrift);
 
-            // MPE expression depth (0-100% → 0.0-1.0)
+            // MPE expression depth (0-100% â†’ 0.0-1.0)
             voice->setMpePressureDepth(safeGetParam(apvts, "mpePressureDepth") / 100.0f);
             voice->setMpeTimbreDepth(safeGetParam(apvts, "mpeTimbreDepth") / 100.0f);
         }
@@ -1267,8 +1269,8 @@ void SpaceDustAudioProcessor::handleAsyncUpdate()
 
 //==============================================================================
 // Applies a pending MPE zone-layout change on the AUDIO THREAD (called from the top
-// of processBlock). Doing the reconfig here — rather than in the message-thread
-// parameterChanged — keeps it serialised with renderNextBlock, since setZoneLayout()/
+// of processBlock). Doing the reconfig here â€” rather than in the message-thread
+// parameterChanged â€” keeps it serialised with renderNextBlock, since setZoneLayout()/
 // enableLegacyMode() release notes and mutate the MPE note array (not thread-safe
 // against rendering; JUCE's noteStateLock is private). Reads the current parameter
 // values atomically, so it always applies the latest mpeMode / bend range.
@@ -1291,9 +1293,9 @@ void SpaceDustAudioProcessor::releaseResources()
     
     //==============================================================================
     // -- CRITICAL: Force All Notes Off Before Cleanup --
-    // MPE: juce::MPESynthesiser uses turnOffAllVoices(allowTailOff) — the
+    // MPE: juce::MPESynthesiser uses turnOffAllVoices(allowTailOff) â€” the
     // equivalent of juce::Synthesiser::allNotesOff(0, allowTailOff).
-    synth.turnOffAllVoices(true);  // allowTailOff=true → graceful release
+    synth.turnOffAllVoices(true);  // allowTailOff=true â†’ graceful release
     synth.resetNoteState();        // clear mono/legato note stack so it can't survive a reload
 
     // Reset transport-edge tracking so the next prepareToPlay starts clean.
@@ -1332,7 +1334,7 @@ void SpaceDustAudioProcessor::releaseResources()
     {
         if (auto* voice = synth.getVoice(i))
         {
-            voice->noteStopped(false);  // allowTailOff=false → immediate hard stop
+            voice->noteStopped(false);  // allowTailOff=false â†’ immediate hard stop
         }
     }
     DBG("Space Dust: All voices stopped");
@@ -1549,7 +1551,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // SAFETY: a host may call processBlock with MORE samples than it declared to
     // prepareToPlay (Ableton does this during freeze/bounce/render). The LFO fill
     // loops below write `numSamples` entries via setSample(), which is unchecked in
-    // Release — an oversized block would write past the end and corrupt the heap
+    // Release â€” an oversized block would write past the end and corrupt the heap
     // (ASan-confirmed heap-buffer-overflow). Grow the buffers if the block exceeds
     // their current capacity. Allocates only on growth (rare), then stays grown.
     if (lfo1Buffer.getNumSamples() < numSamples)
@@ -1575,59 +1577,9 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     bool lfo2All = safeGetParam(apvts, "lfo2TripletStraightToggle") > 0.5f;
     float lfo2PhaseParam = safeGetParam(apvts, "lfo2Phase");
     int lfo2Waveform = (int)safeGetParam(apvts, "lfo2Waveform");
-    
-    // Helper: generate LFO waveform with rounded saw transitions (prevents discontinuity clicks)
-    auto generateLfoValue = [](double phase, int waveform) -> float {
-        double p = std::fmod(phase, 1.0);
-        if (p < 0.0) p += 1.0;
-
-        switch (waveform)
-        {
-            case 0: // Sine
-                return static_cast<float>(std::sin(p * juce::MathConstants<double>::twoPi));
-            case 1: // Triangle
-            {
-                if (p < 0.25)
-                    return static_cast<float>(p * 4.0);
-                else if (p < 0.75)
-                    return static_cast<float>(2.0 - p * 4.0);
-                else
-                    return static_cast<float>(p * 4.0 - 4.0);
-            }
-            case 2: // Saw Up - rounded at wrap (last 8% eases into -1)
-            {
-                const double kTransition = 0.08;
-                if (p < 1.0 - kTransition)
-                    return static_cast<float>(p * 2.0 - 1.0);
-                double t = (p - (1.0 - kTransition)) / kTransition;
-                double ease = (1.0 - std::cos(t * juce::MathConstants<double>::pi)) * 0.5;
-                double linearEnd = (1.0 - kTransition) * 2.0 - 1.0;
-                return static_cast<float>(linearEnd + ease * (-1.0 - linearEnd));
-            }
-            case 3: // Saw Down - rounded at wrap (first 8% eases from 1)
-            {
-                const double kTransition = 0.08;
-                if (p > kTransition)
-                    return static_cast<float>(1.0 - p * 2.0);
-                double t = p / kTransition;
-                double ease = (1.0 - std::cos(t * juce::MathConstants<double>::pi)) * 0.5;
-                double linearStart = 1.0 - kTransition * 2.0;
-                return static_cast<float>(1.0 + ease * (linearStart - 1.0));
-            }
-            case 4: // Square - soft transition (~3% of cycle) to avoid clicks
-            {
-                const double kTransition = 0.03;
-                if (p < 0.5 - kTransition) return 1.0f;
-                if (p > 0.5 + kTransition) return -1.0f;
-                double t = (p - (0.5 - kTransition)) / (2.0 * kTransition);
-                return static_cast<float>(1.0 - 2.0 * t);  // linear crossfade
-            }
-            case 5: // S&H - not used here; handled via wrap detection in loop
-                return 0.0f;
-            default:
-                return static_cast<float>(std::sin(p * juce::MathConstants<double>::twoPi));
-        }
-    };
+    // LFO waveform generation lives in Source/LfoWaveform.cpp so its fold-back can be
+    // measured directly (tools/lfotest). It takes the per-sample phase advance so the
+    // eased edges cannot collapse into steps once cycles get short at audio rates.
 
     // Sample & Hold: generate next random value in [-1, 1] using LCG (real-time safe)
     auto nextSampleHoldValue = [](uint32_t& state, float& held) {
@@ -1636,56 +1588,69 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         held = r * 2.0f - 1.0f;
     };
 
-    // Smoothing coefficient: ~5 samples to soften retrigger/phase jumps (prevents clicks)
-    constexpr float kLfoSmoothAlpha = 0.25f;
+    // Smoothing coefficient: ~5 samples to soften retrigger/phase jumps (prevents
+    // clicks). static so the lambda below can use it without an explicit capture.
+    static constexpr float kLfoSmoothAlpha = 0.25f;
 
     //==========================================================================
     // -- LFO key tracking (Mono/Legato, free-run only) --
     //
-    // With key tracking ON the Rate knob stops being an absolute frequency and
-    // becomes a RATIO to the note being played -- the way an FM operator's
-    // frequency is specified. The LFO then holds that interval against the
-    // keyboard, and once the rate reaches audio frequencies that is FM.
+    // The Rate knob keeps meaning Hz. Middle C is the anchor: the knob IS the rate
+    // you get when playing middle C, and other notes scale it by one octave of LFO
+    // per octave of keyboard -- exactly the model the filter's Key Tracking uses.
     //
-    // Only in Mono/Legato: the LFOs are rendered once per block at processor
-    // level and shared by every voice, so Poly has no single note to follow.
-    // Only with Sync off: a tempo-locked LFO is by definition not tracking keys.
+    // Tracking is clamped to one octave either way, so the rate stays predictable
+    // rather than running away at the ends of the keyboard. That caps the effective
+    // rate at 400 Hz (200 Hz knob maximum x 2), which is key-following wobble rather
+    // than full FM -- a deliberate choice for musical control.
     //
-    // The ratio spans 1/16 to 16 (eight octaves centred on 1:1), which covers the
-    // usual FM operator range. Note Lock / Harmonic Series quantise it using the
-    // same tested grid the filter uses: NoteLock::snapHz is anchored at
-    // referenceHz, so snapping (ratio * referenceHz) and dividing back out yields
-    // exactly 2^(n/12) for semitones or a whole number k for harmonics.
-    // static so the lambda below can use them without an explicit capture.
-    static constexpr double kLfoRatioMin = 1.0 / 16.0;
-    static constexpr double kLfoRatioMax = 16.0;
+    // Only in Mono/Legato: the LFOs are rendered once per block at processor level
+    // and shared by every voice, so Poly has no single note to follow. Only with
+    // Sync off: a tempo-locked LFO is by definition not tracking keys.
+    static constexpr int kLfoKeyTrackClampSemis = 12;   // +/- one octave
 
-    auto keyTrackedLfoHz = [this] (float rate0to12, int midiNote,
-                                   bool noteLock, bool harmonics) -> double
+    // 0.01 Hz - 2 kHz, logarithmic. Presets from before the top was raised are
+    // rescaled on load by migrateLfoRatesIfOld, so they keep their original speed.
+    auto lfoBaseHz = [] (float rate0to12) -> double
     {
-        const double norm  = juce::jlimit(0.0, 1.0, static_cast<double>(rate0to12) / 12.0);
-        const double logMin = std::log(kLfoRatioMin);
-        const double logMax = std::log(kLfoRatioMax);
-        double ratio = std::exp(logMin + norm * (logMax - logMin));
+        return lfoKnobToHz(static_cast<double>(rate0to12));
+    };
 
-        if (noteLock)
-        {
-            const auto grid = harmonics ? NoteLock::Grid::Harmonics
-                                        : NoteLock::Grid::Semitones;
-            ratio = NoteLock::snapHz(ratio * NoteLock::referenceHz,
-                                     kLfoRatioMin * NoteLock::referenceHz,
-                                     kLfoRatioMax * NoteLock::referenceHz,
-                                     grid) / NoteLock::referenceHz;
-        }
+    // One octave of LFO per octave of keyboard, clamped, neutral at middle C.
+    auto lfoKeyTrackFactor = [] (int midiNote) -> double
+    {
+        const int offset = juce::jlimit(-kLfoKeyTrackClampSemis, kLfoKeyTrackClampSemis,
+                                        midiNote - 60);
+        return std::pow(2.0, offset / 12.0);
+    };
 
-        return juce::MidiMessage::getMidiNoteInHertz(midiNote) * ratio;
+    // Note Lock / Harmonic Series quantise the BASE rate (the middle-C value), using
+    // the same tested grid the filter uses and the same middle-C anchor, so the knob
+    // readout and the sounding rate always agree.
+    auto snapLfoHz = [] (double hz, bool noteLock, bool harmonics) -> double
+    {
+        if (!noteLock)
+            return hz;
+
+        return NoteLock::snapHz(hz, lfoFreeRateMinHz, lfoFreeRateMaxHz,
+                                harmonics ? NoteLock::Grid::Harmonics
+                                          : NoteLock::Grid::Semitones);
     };
 
     // Whether each LFO should key-track this block, and to which note. Resolved once
     // here so the two render branches below stay readable.
     const int  voiceModeIdx   = synth.getVoiceModeIndex();          // 0=Poly, 1=Mono, 2=Legato
-    const int  monoNote       = synth.getCurrentMonoNote();         // -1 when nothing is held
     const bool monoOrLegato   = (voiceModeIdx == 1 || voiceModeIdx == 2);
+
+    // currentNote drops to -1 the instant the key is lifted, but the voice is still
+    // sounding all the way through its release. Reading it directly made the LFO
+    // slam back to its free-run rate mid-release -- audible as the LFO suddenly
+    // slowing down as the note tailed off. Latch the last note instead, so the rate
+    // the note was played at holds until a new note replaces it.
+    if (const int held = synth.getCurrentMonoNote(); held >= 0)
+        lastKeyTrackNote = held;
+
+    const int  monoNote        = lastKeyTrackNote;
     const bool lfoKeyTrackable = monoOrLegato && monoNote >= 0;
 
     const bool lfo1KeyTrack = lfoKeyTrackable && safeGetParam(apvts, "lfo1KeyTrack") > 0.5f;
@@ -1695,12 +1660,23 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     const bool lfo1Harmonic = safeGetParam(apvts, "lfo1HarmonicLock") > 0.5f;
     const bool lfo2Harmonic = safeGetParam(apvts, "lfo2HarmonicLock") > 0.5f;
 
-    // The output smoother is a one-pole with its knee near 2.2 kHz at 48 kHz. That is
-    // inaudible at LFO rates but would progressively eat the modulator as a key-tracked
-    // LFO climbs into the audio band, making FM depth fall off with pitch. Bypass it
-    // there; the waveform is generated per sample anyway, so there is nothing to zip.
-    const float lfo1Alpha = lfo1KeyTrack ? 1.0f : kLfoSmoothAlpha;
-    const float lfo2Alpha = lfo2KeyTrack ? 1.0f : kLfoSmoothAlpha;
+    // The output smoother is a one-pole whose knee sits near 2.2 kHz at 48 kHz. That
+    // was harmless while the LFO stopped at 200 Hz, but the range now reaches 2 kHz,
+    // where a fixed coefficient would audibly attenuate the very oscillation being
+    // asked for -- the LFO would quietly fail to reach the rate on the knob.
+    //
+    // So the coefficient opens up with the rate: the knee is kept at least an order of
+    // magnitude above the LFO's own frequency, and never tighter than the original
+    // 0.25. Slow LFOs therefore behave exactly as before (0.25 wins by miles), while a
+    // fast one passes through essentially untouched. Band-limiting is LfoWaveform's
+    // job now, not this filter's.
+    // Takes the phase advance per sample, which makes it sample-rate independent:
+    // knee = 10 x rate  =>  alpha = 1 - exp(-20 * pi * delta).
+    auto smoothingAlphaFor = [] (double delta) -> float
+    {
+        const double a = 1.0 - std::exp(-20.0 * juce::MathConstants<double>::pi * std::abs(delta));
+        return static_cast<float>(juce::jlimit(static_cast<double>(kLfoSmoothAlpha), 1.0, a));
+    };
 
 
     // Process LFO1
@@ -1798,9 +1774,9 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 }
                 else
                 {
-                    raw = generateLfoValue(phase + phaseOffset, lfo1Waveform) * lfo1Depth;
+                    raw = LfoWaveform::generate(phase + phaseOffset, lfo1Waveform, delta) * lfo1Depth;
                 }
-                lfo1SmoothedValue += kLfoSmoothAlpha * (raw - lfo1SmoothedValue);
+                lfo1SmoothedValue += smoothingAlphaFor(delta) * (raw - lfo1SmoothedValue);
                 lfo1Buffer.setSample(0, s, lfo1SmoothedValue);
             }
             lfo1PrevPhase = prevPhase;
@@ -1817,8 +1793,8 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                     nextSampleHoldValue(lfo1ShState, lfo1SampleHoldValue);
                 phase = std::fmod(phaseNext, 1.0);
                 float raw = (lfo1Waveform == 5) ? (lfo1SampleHoldValue * lfo1Depth)
-                    : (generateLfoValue(phase + phaseOffset, lfo1Waveform) * lfo1Depth);
-                lfo1SmoothedValue += kLfoSmoothAlpha * (raw - lfo1SmoothedValue);
+                    : (LfoWaveform::generate(phase + phaseOffset, lfo1Waveform, delta) * lfo1Depth);
+                lfo1SmoothedValue += smoothingAlphaFor(delta) * (raw - lfo1SmoothedValue);
                 lfo1Buffer.setSample(0, s, lfo1SmoothedValue);
             }
             lfo1CurrentPhase = phase;
@@ -1826,28 +1802,18 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     }
     else
     {
-        // Free mode. Key-tracked: the rate is a ratio to the held note (see
-        // keyTrackedLfoHz above). Otherwise the original 0.01-200 Hz log mapping,
-        // untouched, so every existing preset behaves exactly as before.
-        double hz;
+        // Free mode. The knob is Hz either way; key tracking snaps that base rate and
+        // then scales it by the played note, anchored at middle C. With key tracking
+        // off nothing here differs from before, so existing presets are unaffected.
+        double hz = lfoBaseHz(lfo1Rate);
         if (lfo1KeyTrack)
         {
-            hz = keyTrackedLfoHz(lfo1Rate, monoNote, lfo1NoteLock, lfo1Harmonic);
-            // Nyquist guard: a key-tracked LFO can genuinely reach audio rates, and a
-            // ratio of 16 on the top of the keyboard would otherwise alias badly.
+            hz = snapLfoHz(hz, lfo1NoteLock, lfo1Harmonic) * lfoKeyTrackFactor(monoNote);
             hz = juce::jlimit(0.01, currentSampleRate > 0.0 ? currentSampleRate * 0.45 : 20000.0, hz);
-        }
-        else
-        {
-            float rateClamped = juce::jlimit(0.0f, 12.0f, lfo1Rate);
-            float normalizedRate = juce::jlimit(0.0f, 1.0f, rateClamped / 12.0f);
-            float logMin = std::log(0.01f);
-            float logMax = std::log(200.0f);
-            float logFreq = logMin + normalizedRate * (logMax - logMin);
-            hz = juce::jlimit(0.01f, 200.0f, std::exp(logFreq));
         }
 
         double delta = (currentSampleRate > 0.0) ? (hz / currentSampleRate) : 0.0;
+        lastLfo1Hz = hz;   // for the voices' oversample latch
 
         // Fill per-sample buffer
         double phase = lfo1CurrentPhase;
@@ -1860,8 +1826,8 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 nextSampleHoldValue(lfo1ShState, lfo1SampleHoldValue);
             phase = std::fmod(phaseNext, 1.0);
             float raw = (lfo1Waveform == 5) ? (lfo1SampleHoldValue * lfo1Depth)
-                : (generateLfoValue(phase + phaseOffset, lfo1Waveform) * lfo1Depth);
-            lfo1SmoothedValue += lfo1Alpha * (raw - lfo1SmoothedValue);
+                : (LfoWaveform::generate(phase + phaseOffset, lfo1Waveform, delta) * lfo1Depth);
+            lfo1SmoothedValue += smoothingAlphaFor(delta) * (raw - lfo1SmoothedValue);
             lfo1Buffer.setSample(0, s, lfo1SmoothedValue);
         }
         lfo1CurrentPhase = phase;
@@ -1961,9 +1927,9 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 }
                 else
                 {
-                    raw = generateLfoValue(phase + phaseOffset, lfo2Waveform) * lfo2Depth;
+                    raw = LfoWaveform::generate(phase + phaseOffset, lfo2Waveform, delta) * lfo2Depth;
                 }
-                lfo2SmoothedValue += kLfoSmoothAlpha * (raw - lfo2SmoothedValue);
+                lfo2SmoothedValue += smoothingAlphaFor(delta) * (raw - lfo2SmoothedValue);
                 lfo2Buffer.setSample(0, s, lfo2SmoothedValue);
             }
             lfo2PrevPhase = prevPhase;
@@ -1980,8 +1946,8 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                     nextSampleHoldValue(lfo2ShState, lfo2SampleHoldValue);
                 phase = std::fmod(phaseNext, 1.0);
                 float raw = (lfo2Waveform == 5) ? (lfo2SampleHoldValue * lfo2Depth)
-                    : (generateLfoValue(phase + phaseOffset, lfo2Waveform) * lfo2Depth);
-                lfo2SmoothedValue += kLfoSmoothAlpha * (raw - lfo2SmoothedValue);
+                    : (LfoWaveform::generate(phase + phaseOffset, lfo2Waveform, delta) * lfo2Depth);
+                lfo2SmoothedValue += smoothingAlphaFor(delta) * (raw - lfo2SmoothedValue);
                 lfo2Buffer.setSample(0, s, lfo2SmoothedValue);
             }
             lfo2CurrentPhase = phase;
@@ -1990,23 +1956,15 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     else
     {
         // Free mode -- see the LFO1 branch above for the key-tracked path.
-        double hz;
+        double hz = lfoBaseHz(lfo2Rate);
         if (lfo2KeyTrack)
         {
-            hz = keyTrackedLfoHz(lfo2Rate, monoNote, lfo2NoteLock, lfo2Harmonic);
+            hz = snapLfoHz(hz, lfo2NoteLock, lfo2Harmonic) * lfoKeyTrackFactor(monoNote);
             hz = juce::jlimit(0.01, currentSampleRate > 0.0 ? currentSampleRate * 0.45 : 20000.0, hz);
-        }
-        else
-        {
-            float rateClamped = juce::jlimit(0.0f, 12.0f, lfo2Rate);
-            float normalizedRate = juce::jlimit(0.0f, 1.0f, rateClamped / 12.0f);
-            float logMin = std::log(0.01f);
-            float logMax = std::log(200.0f);
-            float logFreq = logMin + normalizedRate * (logMax - logMin);
-            hz = juce::jlimit(0.01f, 200.0f, std::exp(logFreq));
         }
 
         double delta = (currentSampleRate > 0.0) ? (hz / currentSampleRate) : 0.0;
+        lastLfo2Hz = hz;   // for the voices' oversample latch
 
         // Fill per-sample buffer
         double phase = lfo2CurrentPhase;
@@ -2019,8 +1977,8 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 nextSampleHoldValue(lfo2ShState, lfo2SampleHoldValue);
             phase = std::fmod(phaseNext, 1.0);
             float raw = (lfo2Waveform == 5) ? (lfo2SampleHoldValue * lfo2Depth)
-                : (generateLfoValue(phase + phaseOffset, lfo2Waveform) * lfo2Depth);
-            lfo2SmoothedValue += lfo2Alpha * (raw - lfo2SmoothedValue);
+                : (LfoWaveform::generate(phase + phaseOffset, lfo2Waveform, delta) * lfo2Depth);
+            lfo2SmoothedValue += smoothingAlphaFor(delta) * (raw - lfo2SmoothedValue);
             lfo2Buffer.setSample(0, s, lfo2SmoothedValue);
         }
         lfo2CurrentPhase = phase;
@@ -2068,7 +2026,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // "which keys the host thinks are held".  On a transport stop or a playhead jump
     // (loop wrap / rewind / seek) the host stops sending the note-offs we are tracking,
     // so the stack desyncs and processMidiBuffer() starts rewriting the stream with
-    // phantom note-on/note-off pairs → wrong notes, stuck notes, voice-steal thrashing.
+    // phantom note-on/note-off pairs â†’ wrong notes, stuck notes, voice-steal thrashing.
     //
     // Detect those edges here and flush.  Only act in Mono/Legato (mode != 0): Poly
     // mode keeps no stack and must NOT have voices cut at a loop boundary (would chop
@@ -2090,7 +2048,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         const bool stopped    = (wasPlayingState && ! nowPlaying);
         // Transport START (not-playing -> playing). Without this, the FIRST loop runs
         // on whatever stale note-stack/voice state was left from preview notes, the
-        // prior session, or a note held across the loop point — so the first pass has
+        // prior session, or a note held across the loop point â€” so the first pass has
         // wrong note timing, then "corrects" once the loop-wrap flush below fires.
         // Treating start like a wrap makes loop 1 behave identically to loop 2+.
         const bool started    = (! wasPlayingState && nowPlaying);
@@ -2100,14 +2058,14 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
         // A note the host HOLDS CONTINUOUSLY across the loop boundary (Cubase does
         // exactly this for a note that spans the cycle) emits NO note-on/note-off at
-        // the wrap — the voice must keep sustaining straight through. Re-articulating
+        // the wrap â€” the voice must keep sustaining straight through. Re-articulating
         // hosts (and the FL loop-restart-pop case) instead carry a fresh note-on/off
         // in the wrap block. So a loop wrap is only a state-flush edge when the block
         // actually carries note articulation; otherwise turnOffAllVoices() below would
         // force the still-held note into its release and it would decay away mid-loop
         // (the Cubase "sustained note plays for a second then cuts out on the loop"
         // bug). Skipping the flush here also leaves the note in the stack, so the
-        // host's eventual real note-off still releases it — no stuck note.
+        // host's eventual real note-off still releases it â€” no stuck note.
         //
         // Stop and Start always flush regardless of note events: a transport stop must
         // never leave a note hanging, and a fresh start wants a clean baseline.
@@ -2124,7 +2082,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
 #if SPACEDUST_LOOP_DEBUG
         // Capture state BEFORE the flush (lastPpqPosition still holds the prev block's
-        // ppq here — it's updated at the end of this scope), so the log shows the
+        // ppq here â€” it's updated at the end of this scope), so the log shows the
         // pre-wrap note-stack desync that manufactures the phantom note.
         dbgLogThisBlock = (stopped || started || jumpedBack || blockHasNoteEvent);
         if (dbgLogThisBlock)
@@ -2147,15 +2105,15 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             // note then REUSES the voice that is ringing out the previous note's
             // release (a smooth mono retrigger, exactly like normal Mono play) instead
             // of being allocated a fresh voice while cutStrayVoices() hard-fades the old
-            // one — that fresh-alloc + hard-fade of a still-loud tail was the POP on
+            // one â€” that fresh-alloc + hard-fade of a still-loud tail was the POP on
             // loop restart (worst in FL's tiny buffers, milder in Ableton's larger ones).
             synth.resetNoteState(/*keepMonoVoiceIndex*/ true);
             // GRACEFUL release, not a hard stop. allowTailOff=false chopped any still-
-            // ringing release tail at the loop boundary over the 1.5 ms voiceFade ramp —
+            // ringing release tail at the loop boundary over the 1.5 ms voiceFade ramp â€”
             // a clearly audible POP on loop restart (worst in FL's tiny buffers, milder in
             // Ableton), especially with resonance / a long release. allowTailOff=true lets
             // held notes enter their normal release (envelope value stays continuous, only
-            // the slope changes → declicked) and leaves an already-decaying tail to finish.
+            // the slope changes â†’ declicked) and leaves an already-decaying tail to finish.
             // Stuck notes are still prevented: every voice is driven into its release stage
             // here, and the new loop's first note re-asserts the mono single-voice guarantee
             // via cutStrayVoices().
@@ -2234,7 +2192,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     //==============================================================================
     // -- Transient: trigger from MIDI after mono/legato rewrite --
     // Legato mode sets nextNoteIsLegato for overlapping note-ons (and return-to-held
-    // note); transient should match envelope retrigger — only on true new notes.
+    // note); transient should match envelope retrigger â€” only on true new notes.
     if (transientEnabled)
     {
         const bool inLegatoVoiceMode = (synth.getVoiceModeIndex() == 2);
@@ -2265,7 +2223,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     }
 
     // Voice params after mono/legato MIDI rewrite so coarse/detune retune uses currentPitch
-    // (see SynthVoice::setOsc* — must align with renderNextBlock base Hz, not stale MIDI note).
+    // (see SynthVoice::setOsc* â€” must align with renderNextBlock base Hz, not stale MIDI note).
     updateVoicesWithParameters(0.0f, 0.0f);
 
     //==============================================================================
@@ -2311,9 +2269,9 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // The transient must be coloured by the synth filter in this mode. The real
     // filters are per-voice (inside the synth, already run), so we render the
     // transient into a private scratch buffer and pass it through a SERIES of linear
-    // SVF mirrors — one for the MASTER (Main-tab) filter, then one for each Mod-tab
-    // filter that is Shown AND unlinked — then sum it into the mix. This mirrors the
-    // per-voice order (master → mod1 → mod2 in series, mod stages active only when
+    // SVF mirrors â€” one for the MASTER (Main-tab) filter, then one for each Mod-tab
+    // filter that is Shown AND unlinked â€” then sum it into the mix. This mirrors the
+    // per-voice order (master â†’ mod1 â†’ mod2 in series, mod stages active only when
     // Shown && unlinked), so the unlinked Mod filters cut the transient exactly like
     // the Main filter does. Post mode (below) stays end-of-chain and unfiltered. This
     // is confined to the master chain; SynthVoice is untouched.
@@ -2353,7 +2311,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 f.setResonance(juce::jlimit(0.1f, 16.0f, resQ));
             };
 
-            // Master mirror (always present — it is the only filter when no Mod
+            // Master mirror (always present â€” it is the only filter when no Mod
             // filter is active, so the master-only sound is unchanged).
             configureMirror(transientPreFilter_,
                             static_cast<int>(safeGetParam(apvts, "filterMode")),
@@ -2361,7 +2319,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                             safeGetParam(apvts, "filterResonance"));
 
             // Mod mirrors: active only when Shown AND unlinked, matching the per-voice
-            // chain. A linked Mod filter is NOT mirrored — the master already covers it
+            // chain. A linked Mod filter is NOT mirrored â€” the master already covers it
             // (the per-voice synth skips it for the same reason).
             const bool mod1Active = safeGetParam(apvts, "modFilter1Show") > 0.5f
                                  && safeGetParam(apvts, "modFilter1LinkToMaster") <= 0.5f;
@@ -2487,7 +2445,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         double curved = std::pow(normalized, 2.5);
         // Sample directly into the 18-entry table. Previously this mapped 0..12 -> 0..17
         // via round(musicalIndex/12*17), which skipped indices 2 (1/16), 5 (1/8.), 12 (2)
-        // and 15 (5) — so those divisions were unreachable.
+        // and 15 (5) â€” so those divisions were unreachable.
         int musicalIndex = static_cast<int>(std::round(curved * 17.0));
         musicalIndex = juce::jlimit(0, 17, musicalIndex);
         static const double delayMultipliers[18] = {
@@ -2513,7 +2471,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     }
     delayTimeSamples = juce::jlimit(1.0f, static_cast<float>(maxDelaySamples), delayTimeSamples);
     
-    // Feedback at or below ~0.1% (knob 0–0.1): clear delay state and bypass — no echo tail.
+    // Feedback at or below ~0.1% (knob 0â€“0.1): clear delay state and bypass â€” no echo tail.
     if (delayEnabled && delayDecay <= 0.001f && numSamples > 0 && buffer.getNumChannels() >= 2)
     {
         delayLineL.reset();
@@ -2581,12 +2539,12 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         };
         // Feedback shaper. With warm saturation ON it tanh-saturates (the intended
         // "warm" colour, baked into each echo). With it OFF the feedback must stay
-        // CLEAN — tanh was being applied unconditionally, so a low-level single note
+        // CLEAN â€” tanh was being applied unconditionally, so a low-level single note
         // passed through tanh's linear region untouched, but a louder CHORD got
         // compressed/distorted (the amplitude-dependent "nasty" colour the user heard).
-        // When clean we only clamp as a runaway safety net, at a ceiling (±4 ≈ +12 dBFS)
-        // high enough to stay transparent for musical levels — including a chord boosted
-        // by the +3 dB delay drive plus feedback accumulation. A ±2 ceiling was still low
+        // When clean we only clamp as a runaway safety net, at a ceiling (Â±4 â‰ˆ +12 dBFS)
+        // high enough to stay transparent for musical levels â€” including a chord boosted
+        // by the +3 dB delay drive plus feedback accumulation. A Â±2 ceiling was still low
         // enough that loud chords clipped against it (the residual colour). fbDecay <= 0.99
         // keeps the loop stable; this just caps a pathological build-up.
         auto saturateFeedback = [&](float raw) -> float {
@@ -2737,7 +2695,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         gp.grainSizeMs = juce::jlimit(10.0f, 500.0f, safeGetParam(apvts, "grainDelaySize"));
         gp.pitchSemitones = juce::jlimit(-12.0f, 12.0f, safeGetParam(apvts, "grainDelayPitch"));
         gp.mix = grainMix;
-        // Decay is 0–150% in the APVTS; getRawParameterValue is normalized — must use get() for real percent.
+        // Decay is 0â€“150% in the APVTS; getRawParameterValue is normalized â€” must use get() for real percent.
         float grainDecayPct = 0.0f;
         if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("grainDelayDecay")))
             grainDecayPct = p->get();
@@ -3081,6 +3039,50 @@ juce::AudioProcessorEditor* SpaceDustAudioProcessor::createEditor()
 }
 
 //==============================================================================
+double SpaceDustAudioProcessor::lfoKnobToHz(double knob0to12)
+{
+    const double norm = juce::jlimit(0.0, 1.0, knob0to12 / 12.0);
+    return juce::jlimit(lfoFreeRateMinHz, lfoFreeRateMaxHz,
+                        std::exp(std::log(lfoFreeRateMinHz)
+                                 + norm * (std::log(lfoFreeRateMaxHz) - std::log(lfoFreeRateMinHz))));
+}
+
+void SpaceDustAudioProcessor::migrateLfoRatesIfOld(juce::ValueTree& state, int stateVersion)
+{
+    if (stateVersion >= 2 || !state.isValid())
+        return;   // already speaks the current range
+
+    // Both ranges are logarithmic from the same 0.01 Hz floor, so preserving the
+    // frequency is a single scale factor on the knob position:
+    //   knobNew = knobOld * log(200/0.01) / log(2000/0.01)
+    const double scale = std::log(lfoFreeRateLegacyMaxHz / lfoFreeRateMinHz)
+                       / std::log(lfoFreeRateMaxHz      / lfoFreeRateMinHz);
+
+    for (auto child : state)
+    {
+        if (!child.hasProperty("id"))
+            continue;
+
+        const auto id = child.getProperty("id").toString();
+        if (id != "lfo1Rate" && id != "lfo2Rate")
+            continue;
+
+        // Sync mode reads this same parameter as a tempo-division index, so rescaling
+        // it would retune synced LFOs instead. Only touch a genuinely free-running one.
+        const auto syncID = (id == "lfo1Rate") ? "lfo1Sync" : "lfo2Sync";
+        bool isSynced = false;
+        for (auto sibling : state)
+            if (sibling.hasProperty("id") && sibling.getProperty("id").toString() == syncID)
+                isSynced = static_cast<double>(sibling.getProperty("value")) > 0.5;
+
+        if (isSynced)
+            continue;
+
+        const double oldKnob = static_cast<double>(child.getProperty("value"));
+        child.setProperty("value", juce::jlimit(0.0, 12.0, oldKnob * scale), nullptr);
+    }
+}
+
 void SpaceDustAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     //==============================================================================
@@ -3097,6 +3099,9 @@ void SpaceDustAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
             xml->setAttribute("presetName", currentPresetName);
             xml->setAttribute("cheezeGuyActivated", cheezeGuyActivated);
             xml->setAttribute("lastActiveTabIndex", lastActiveTabIndex);
+            // Marks which meaning the stored values carry. Anything without it predates
+            // the 2000 Hz LFO range and gets its rates rescaled on load.
+            xml->setAttribute("stateVersion", currentStateVersion);
             copyXmlToBinary(*xml, destData);
         }
     }
@@ -3138,12 +3143,14 @@ void SpaceDustAudioProcessor::setStateInformation(const void* data, int sizeInBy
             cheezeGuyActivated = xmlState->getBoolAttribute("cheezeGuyActivated", false);
             lastActiveTabIndex = xmlState->getIntAttribute("lastActiveTabIndex", 0);
 
-            apvts.replaceState(juce::ValueTree::fromXml(*xmlState));
+            auto restored = juce::ValueTree::fromXml(*xmlState);
+            migrateLfoRatesIfOld(restored, xmlState->getIntAttribute("stateVersion", 1));
+            apvts.replaceState(restored);
             updateVoicesWithParameters();
         }
     }
 
-    // Successful completion — clear marker so next load attempts state restore normally.
+    // Successful completion â€” clear marker so next load attempts state restore normally.
     marker.deleteFile();
 }
 
@@ -3245,7 +3252,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     
     //==============================================================================
     // -- Oscillator Pitch Tuning --
-    // Each oscillator has independent coarse tuning (±24 semitones) and fine detuning (±50 cents)
+    // Each oscillator has independent coarse tuning (Â±24 semitones) and fine detuning (Â±50 cents)
     // Simple, intuitive system: Coarse for intervals, Detune for shimmer
     // Both default to 0 (perfectly in tune) - double-click any knob to reset
     
@@ -3318,7 +3325,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f),
         "noiseLevel");
 
-    // Noise type (White / Pink) — a real parameter so it can be automated and saved.
+    // Noise type (White / Pink) â€” a real parameter so it can be automated and saved.
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"noiseType", 1}, "Noise Type",
@@ -3374,7 +3381,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
 
     // Filter anti-aliasing: 4x-oversample the filter stages (master always; mod
     // filters when active) so audio-rate LFO modulation no longer folds back into
-    // the audible band. ON by default — cleaner high-rate filter-FM everywhere.
+    // the audible band. ON by default â€” cleaner high-rate filter-FM everywhere.
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{"filterOversample", 1}, "Filter Anti-Alias", true),
@@ -3412,7 +3419,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     
     // Filter envelope attack time (skewed: 0.01s to 20.0s, midpoint at 2.0s)
     // Fine 0.0001s step (vs 0.001s) so the heavily-skewed low end moves smoothly
-    // instead of feeling "sticky" — the curve is near-flat near 0.01s, so a coarse
+    // instead of feeling "sticky" â€” the curve is near-flat near 0.01s, so a coarse
     // 1ms step there required a noticeable drag before the value would tick over.
     juce::NormalisableRange<float> filterAttackRange(0.01f, 20.0f, 0.0001f);
     filterAttackRange.setSkewForCentre(2.0f);
@@ -3465,9 +3472,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     // Musical skewed mapping for expressive control:
     // - Fine resolution at short times (snappy attacks, quick decays)
     // - Accelerating curve toward long cosmic tails
-    // - 0% knob → 0.01s (10ms minimum for stability)
-    // - 50% knob → 2.0s (musical midpoint)
-    // - 100% knob → 20.0s (maximum cosmic tails)
+    // - 0% knob â†’ 0.01s (10ms minimum for stability)
+    // - 50% knob â†’ 2.0s (musical midpoint)
+    // - 100% knob â†’ 20.0s (maximum cosmic tails)
     // 
     // Uses setSkewForCentre(2.0f) to place the midpoint at exactly 2.0 seconds.
     // This gives exponential-like feel: most knob travel controls short-to-medium times,
@@ -3564,7 +3571,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     //   Legato: one note; on overlapping note-on, no envelope retrigger (smooth glide only).
     // 
     // Glide Time: 0.0 to 5.0 seconds, skewed for fine control at low end
-    //              Uses setSkewForCentre(1.0f) so 12 o'clock ≈ 0.5-1s
+    //              Uses setSkewForCentre(1.0f) so 12 o'clock â‰ˆ 0.5-1s
     //              Fine control at low end, up to 5s max for cosmic slides
     //              Works in BOTH poly and mono modes for expressive gliding pads and leads
     
@@ -3577,7 +3584,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     
     // Glide Time (0.0 to 5.0 seconds, skewed with midpoint at 1.0s)
     juce::NormalisableRange<float> glideRange(0.0f, 5.0f, 0.001f);
-    glideRange.setSkewForCentre(1.0f); // 50% knob position ≈ 0.5-1.0 seconds
+    glideRange.setSkewForCentre(1.0f); // 50% knob position â‰ˆ 0.5-1.0 seconds
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"glideTime", 1}, "Glide Time",
@@ -3649,8 +3656,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"lfo1Sync", 1}, "LFO1 Sync", false),
         "lfo1Sync");
     
-    // LFO1 Rate (0-12: maps to 0.01-20 Hz when sync off, or tempo divisions when sync on)
-    // When sync is off: 0-12 maps logarithmically to 0.01-20 Hz
+    // LFO1 Rate (0-12: maps to 0.01 Hz - 2 kHz when sync off, or tempo divisions when sync on)
+    // When sync is off: 0-12 maps logarithmically to 0.01-2000 Hz. Raised from a 200 Hz
+    // top after v2.0.0; migrateLfoRatesIfOld rescales older presets so they keep their speed.
     // When sync is on: 0-12 maps to tempo divisions (0=1/32, 6=1/4, 12=8)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -3686,7 +3694,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
                 safeString("Master Vol"), safeString("Osc1 Vol"), safeString("Osc2 Vol"), safeString("Noise Vol")), 1),
         safeString("lfo1Target"));
     
-    // LFO1 Phase (0-360°)
+    // LFO1 Phase (0-360Â°)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"lfo1Phase", 1}, "LFO1 Phase",
@@ -3737,7 +3745,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"lfo2Sync", 1}, "LFO2 Sync", false),
         "lfo2Sync");
     
-    // LFO2 Rate (0-12: maps to 0.01-20 Hz when sync off, or tempo divisions when sync on)
+    // LFO2 Rate (0-12: maps to 0.01 Hz - 2 kHz when sync off, or tempo divisions when sync on)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"lfo2Rate", 1}, "LFO2 Rate",
@@ -3766,7 +3774,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
                 safeString("Master Vol"), safeString("Osc1 Vol"), safeString("Osc2 Vol"), safeString("Noise Vol")), 0),
         safeString("lfo2Target"));
     
-    // LFO2 Phase (0-360°)
+    // LFO2 Phase (0-360Â°)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"lfo2Phase", 1}, "LFO2 Phase",
@@ -4376,7 +4384,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{"finalEQEnabled", 1}, "Final EQ On", false),
         "finalEQEnabled");
-    // Band 1 – Low Shelf (default 80 Hz)
+    // Band 1 â€“ Low Shelf (default 80 Hz)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"finalEQB1Freq", 1}, "EQ B1 Freq",
@@ -4392,7 +4400,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"finalEQB1Q", 1}, "EQ B1 Q",
             juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.3f), 0.707f),
         "finalEQB1Q");
-    // Band 2 – Low Mid Peak (default 250 Hz)
+    // Band 2 â€“ Low Mid Peak (default 250 Hz)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"finalEQB2Freq", 1}, "EQ B2 Freq",
@@ -4408,7 +4416,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"finalEQB2Q", 1}, "EQ B2 Q",
             juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.3f), 1.0f),
         "finalEQB2Q");
-    // Band 3 – Mid Peak (default 1000 Hz)
+    // Band 3 â€“ Mid Peak (default 1000 Hz)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"finalEQB3Freq", 1}, "EQ B3 Freq",
@@ -4424,7 +4432,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"finalEQB3Q", 1}, "EQ B3 Q",
             juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.3f), 1.0f),
         "finalEQB3Q");
-    // Band 4 – High Mid Peak (default 4000 Hz)
+    // Band 4 â€“ High Mid Peak (default 4000 Hz)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"finalEQB4Freq", 1}, "EQ B4 Freq",
@@ -4440,7 +4448,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"finalEQB4Q", 1}, "EQ B4 Q",
             juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.3f), 1.0f),
         "finalEQB4Q");
-    // Band 5 – High Shelf (default 10000 Hz)
+    // Band 5 â€“ High Shelf (default 10000 Hz)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"finalEQB5Freq", 1}, "EQ B5 Freq",
@@ -4566,15 +4574,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     // These controls let the user configure MPE behaviour from the UI.
     // Default values provide full backward compatibility with non-MPE keyboards.
 
-    // MPE Mode: 0 = Legacy (all channels, single bend range — works with everything),
-    //           1 = Lower Zone (ch1 master + ch2-15 members — proper MPE spec).
+    // MPE Mode: 0 = Legacy (all channels, single bend range â€” works with everything),
+    //           1 = Lower Zone (ch1 master + ch2-15 members â€” proper MPE spec).
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"mpeMode", 1}, "MPE Mode",
             juce::StringArray{"Legacy", "Lower Zone"}, 0),
         "mpeMode");
 
-    // MPE Pitch Bend Range (semitones). Only affects Legacy mode — Lower Zone
+    // MPE Pitch Bend Range (semitones). Only affects Legacy mode â€” Lower Zone
     // always uses 48 per-note / 2 master per the MPE spec.
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -4582,16 +4590,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::NormalisableRange<float>(1.0f, 96.0f, 1.0f), 48.0f),
         "mpePitchBendRange");
 
-    // MPE Pressure Depth (0-100%). Scales the per-note pressure → amplitude
-    // modulation.  0% = pressure has no effect, 100% = full ±100% amplitude boost.
+    // MPE Pressure Depth (0-100%). Scales the per-note pressure â†’ amplitude
+    // modulation.  0% = pressure has no effect, 100% = full Â±100% amplitude boost.
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"mpePressureDepth", 1}, "MPE Pressure Depth",
             juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f),
         "mpePressureDepth");
 
-    // MPE Timbre Depth (0-100%). Scales the per-note timbre (CC74 / slide) →
-    // filter cutoff modulation.  0% = slide has no effect, 100% = full ±2 octaves.
+    // MPE Timbre Depth (0-100%). Scales the per-note timbre (CC74 / slide) â†’
+    // filter cutoff modulation.  0% = slide has no effect, 100% = full Â±2 octaves.
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"mpeTimbreDepth", 1}, "MPE Timbre Depth",

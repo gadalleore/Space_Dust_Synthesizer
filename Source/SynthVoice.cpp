@@ -434,6 +434,7 @@ void SynthVoice::noteStarted()
         // a step from 0 to ±0.1+ at note-start while the amp envelope is still 0 (the
         // "Sunset Beach" snap; loudest on fast playing, which leaves big residue in the FIR).
         masterFilterOS.reset();
+        oscOsc12OS.reset(); oscSubOS.reset();
         modFilter1OS.reset();
         modFilter2OS.reset();
         // Clean start: latch which filters actually need oversampling for THIS note
@@ -516,6 +517,7 @@ void SynthVoice::noteStarted()
                 // Clear the oversampler FIR history too (see fresh-voice path above) so a
                 // clean mono start can't dump the previous note's stale tail samples.
                 masterFilterOS.reset();
+                oscOsc12OS.reset(); oscSubOS.reset();
                 modFilter1OS.reset();
                 modFilter2OS.reset();
                 // Clean mono start: re-latch oversampling for this note (see fresh path).
@@ -1351,9 +1353,65 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         }
         
         // Step 1-2: Generate oscillator waveforms
-        float osc1Sample = generateWaveform(osc1Angle, osc1Waveform);
-        float osc2Sample = generateWaveform(osc2Angle, osc2Waveform);
-        float subOscSample = subOscOn ? generateWaveform(subOscAngle, subOscWaveform) * subOscLevel : 0.0f;
+        float osc1Sample, osc2Sample, subOscSample;
+
+        if (!oscOSActive)
+        {
+            // Base rate. Phases are advanced at the bottom of the loop, as always.
+            osc1Sample = generateWaveform(osc1Angle, osc1Waveform);
+            osc2Sample = generateWaveform(osc2Angle, osc2Waveform);
+            subOscSample = subOscOn ? generateWaveform(subOscAngle, subOscWaveform) * subOscLevel : 0.0f;
+        }
+        else
+        {
+            // 4x. Each sub-step advances its own phase by a quarter of the base-rate
+            // delta and generates there; the stage's FIR decimates back to one sample.
+            // The angle deltas already carry this sample's pitch modulation, and it is
+            // held across the four sub-steps -- the LFO buffer only exists at base rate.
+            //
+            // The phases are fully advanced by one base-rate period here, so the usual
+            // advance at the bottom of the loop is skipped (see oscOSActive there).
+            const double d1 = osc1AngleDelta / kOscOSFactor;
+            const double d2 = osc2AngleDelta / kOscOSFactor;
+            const double ds = subOscAngleDelta / kOscOSFactor;
+            const double twoPi = 2.0 * juce::MathConstants<double>::pi;
+
+            auto wrap = [twoPi] (double& a)
+            {
+                if (a >= twoPi) a -= twoPi;
+                if (a < 0.0)    a += twoPi;
+            };
+
+            // x is ignored: there is no input signal, only generation. The stage's
+            // upsampler still runs on zeros, which costs a little and changes nothing.
+            osc1Sample = oscOsc12OS.process(0, 0.0f, [&] (float) -> float
+            {
+                const float v = generateWaveform(osc1Angle, osc1Waveform);
+                osc1Angle += d1; wrap(osc1Angle);
+                return v;
+            });
+
+            osc2Sample = oscOsc12OS.process(1, 0.0f, [&] (float) -> float
+            {
+                const float v = generateWaveform(osc2Angle, osc2Waveform);
+                osc2Angle += d2; wrap(osc2Angle);
+                return v;
+            });
+
+            if (subOscOn)
+            {
+                subOscSample = oscSubOS.process(0, 0.0f, [&] (float) -> float
+                {
+                    const float v = generateWaveform(subOscAngle, subOscWaveform);
+                    subOscAngle += ds; wrap(subOscAngle);
+                    return v;
+                }) * subOscLevel;
+            }
+            else
+            {
+                subOscSample = 0.0f;
+            }
+        }
         
         // Step 3: Generate noise (white or pink)
         float noiseSample = 0.0f;
@@ -1711,6 +1769,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                 modFilter1.reset();
                 modFilter2.reset();
                 masterFilterOS.reset();
+                oscOsc12OS.reset(); oscSubOS.reset();
                 modFilter1OS.reset();
                 modFilter2OS.reset();
                 inReleasePhase = false;
@@ -1846,7 +1905,11 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         prevSmoothedR = outputSmootherR;
         
         // Update oscillator phases for next sample using current angle deltas
-        // (deltas are updated per-sample to support per-sample LFO modulation)
+        // (deltas are updated per-sample to support per-sample LFO modulation).
+        // Skipped when oversampling: the sub-step loop up at generation already
+        // advanced each phase by a full base-rate period, a quarter at a time.
+        if (!oscOSActive)
+        {
         osc1Angle += osc1AngleDelta;
         if (osc1Angle >= 2.0 * juce::MathConstants<double>::pi)
             osc1Angle -= 2.0 * juce::MathConstants<double>::pi;
@@ -1867,6 +1930,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             if (subOscAngle < 0.0)
                 subOscAngle += 2.0 * juce::MathConstants<double>::pi;
         }
+        }   // end !oscOSActive
 
         // Advance glide after audio for this sample (see comment at loop top)
         if (glideDelta != 0.0)
@@ -1956,6 +2020,7 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
     // matches after a sample-rate change.
     {
         masterFilterOS.prepare();
+        oscOsc12OS.prepare(); oscSubOS.prepare();
         modFilter1OS.prepare();
         modFilter2OS.prepare();
         // Derive each stage's factor + scale from current params (keeps the latch
@@ -2077,6 +2142,7 @@ void SynthVoice::setCurrentSampleRate(double newRate)
         modFilter2.prepare({ newRate, maxBlockSize, 2 });
         {
             masterFilterOS.prepare();
+            oscOsc12OS.prepare(); oscSubOS.prepare();
             modFilter1OS.prepare();
             modFilter2OS.prepare();
             updateOversampleLatch();  // derive factor + scale per stage (keeps INVARIANT)
@@ -2273,20 +2339,50 @@ void SynthVoice::setWarmSaturationMaster(bool enabled)
 
 void SynthVoice::updateOversampleLatch() noexcept
 {
-    // A filter needs oversampling only when its nonlinear stage is engaged: warm
+    // A filter needs oversampling when its nonlinear stage is engaged: warm
     // saturation, or resonance high enough to clip/ring. Mod stages additionally
     // must be shown AND unlinked (linked mods aren't processed — the master covers
     // them). When the global oversample param is off, nothing oversamples.
+    //
+    // It ALSO needs oversampling when an LFO is sweeping its cutoff at audio rate,
+    // whatever the resonance. That is the case this parameter was added for in the
+    // first place, but the test was only ever nonlinearity — so a fast LFO on a
+    // clean, low-resonance filter folded back with oversampling sitting switched
+    // off. Audible as soon as the LFO range was widened past a few hundred Hz.
+    const bool lfo1FastFilter = lfo1TargetCached == 1 && lfo1RateHz >= kOversampleLfoHzThreshold;
+    const bool lfo2FastFilter = lfo2TargetCached == 1 && lfo2RateHz >= kOversampleLfoHzThreshold;
+
+    // Route each fast LFO to whichever filter it actually drives (see the target
+    // dispatch in renderNextBlock: a linked mod filter feeds the master instead).
+    const bool masterFastMod = (lfo1FastFilter && modFilter1Linked)
+                            || (lfo2FastFilter && modFilter2Linked);
+    const bool mod1FastMod = lfo1FastFilter && modFilter1Show && !modFilter1Linked;
+    const bool mod2FastMod = lfo2FastFilter && modFilter2Show && !modFilter2Linked;
+
     const bool masterWant = oversampleFilter
-        && (warmSaturationMaster || filterResonance >= kOversampleResThreshold);
+        && (warmSaturationMaster || filterResonance >= kOversampleResThreshold || masterFastMod);
     const bool mod1Want = oversampleFilter && modFilter1Show && !modFilter1Linked
-        && (warmSaturationMod1 || modFilter1Resonance >= kOversampleResThreshold);
+        && (warmSaturationMod1 || modFilter1Resonance >= kOversampleResThreshold || mod1FastMod);
     const bool mod2Want = oversampleFilter && modFilter2Show && !modFilter2Linked
-        && (warmSaturationMod2 || modFilter2Resonance >= kOversampleResThreshold);
+        && (warmSaturationMod2 || modFilter2Resonance >= kOversampleResThreshold || mod2FastMod);
 
     masterOSActive = masterWant;
     mod1OSActive   = mod1Want;
     mod2OSActive   = mod2Want;
+
+    // Oscillator oversampling: only for an LFO sweeping PITCH at audio rate, which is
+    // the case that makes the naive shapes fold back audibly. Gated on the same global
+    // anti-alias parameter as the filters so one switch turns all of it off.
+    const bool lfo1FastPitch = lfo1TargetCached == 0 && lfo1RateHz >= kOversampleLfoHzThreshold;
+    const bool lfo2FastPitch = lfo2TargetCached == 0 && lfo2RateHz >= kOversampleLfoHzThreshold;
+    const bool oscWant = oversampleFilter && (lfo1FastPitch || lfo2FastPitch);
+
+    if (oscWant != oscOSActive)
+    {
+        oscOSActive = oscWant;
+        oscOsc12OS.setFactor(oscWant ? kOscOSFactor : 1);
+        oscSubOS  .setFactor(oscWant ? kOscOSFactor : 1);
+    }
 
     // Apply the matching scale to each stage (maintains the INVARIANT). setFactor
     // clears the FIR; setSampleRateScale recomputes g at the (over)sampled rate.
@@ -2296,6 +2392,16 @@ void SynthVoice::updateOversampleLatch() noexcept
     masterFilterOS.setFactor(mf); filter.setSampleRateScale(mf);
     modFilter1OS.setFactor(m1);   modFilter1.setSampleRateScale(m1);
     modFilter2OS.setFactor(m2);   modFilter2.setSampleRateScale(m2);
+}
+
+void SynthVoice::setLfoRates(double lfo1Hz, double lfo2Hz) noexcept
+{
+    // Stored, not latched: the latch itself re-reads these at note start. Changing an
+    // LFO rate mid-note therefore takes effect on the NEXT note, deliberately -- the
+    // same rule the resonance test follows, because switching a filter's sample-rate
+    // scale while it holds resonant energy re-introduces a note-onset click.
+    lfo1RateHz = lfo1Hz;
+    lfo2RateHz = lfo2Hz;
 }
 
 void SynthVoice::setFilterOversample(bool enabled)

@@ -115,6 +115,8 @@ target_sources(SpaceDust PRIVATE
     Source/PluginEditor.h
     Source/NoteLockGrid.cpp
     Source/NoteLockGrid.h
+    Source/LfoWaveform.cpp
+    Source/LfoWaveform.h
     Source/Goniometer.cpp
     Source/Goniometer.h
     Source/OscilloscopeComponent.cpp
@@ -341,6 +343,47 @@ add_custom_target(notelock-test
     COMMAND $<TARGET_FILE:notelock_test>
     DEPENDS notelock_test
     COMMENT "Running Note Lock grid tests")
+
+#==============================================================================
+# lfo-test — measures LFO fold-back (aliasing) across the rate range.
+# Pass "legacy" to the exe to evaluate the pre-band-limiting edges for comparison.
+# Usage: cmake --build build --config Release --target lfo-test
+#==============================================================================
+add_executable(lfo_test
+    tools/lfotest/lfo_test.cpp
+    Source/LfoWaveform.cpp)
+set_target_properties(lfo_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lfo_test")
+target_compile_features(lfo_test PRIVATE cxx_std_17)
+
+add_custom_target(lfo-test
+    COMMAND $<TARGET_FILE:lfo_test>
+    DEPENDS lfo_test
+    COMMENT "Running LFO fold-back tests")
+
+#==============================================================================
+# pitchmod-probe — measures fold-back from audio-rate pitch modulation, with the
+# oscillator oversampling on and off. Links juce_core because it drives the real
+# OversampledStage the voice uses, rather than a reimplementation of it.
+# Usage: cmake --build build --config Release --target pitchmod-probe
+#==============================================================================
+juce_add_console_app(pitchmod_probe PRODUCT_NAME "pitchmod_probe")
+target_sources(pitchmod_probe PRIVATE
+    tools/lfotest/pitchmod_probe.cpp
+    Source/LfoWaveform.cpp)
+target_include_directories(pitchmod_probe PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Source")
+target_link_libraries(pitchmod_probe PRIVATE
+    juce::juce_core
+    juce::juce_recommended_config_flags)
+target_compile_definitions(pitchmod_probe PRIVATE
+    JUCE_STANDALONE_APPLICATION=1
+    JUCE_USE_CURL=0
+    JUCE_WEB_BROWSER=0)
+
+add_custom_target(pitchmod-probe
+    COMMAND $<TARGET_FILE:pitchmod_probe>
+    DEPENDS pitchmod_probe
+    COMMENT "Measuring pitch-modulation fold-back")
 
 #==============================================================================
 # qa-test custom target — runs the full QA suite via run-full-qa.ps1.

@@ -97,6 +97,42 @@ public:
     std::atomic<bool> lfo1Retrigger{true};
     std::atomic<bool> lfo2Retrigger{true};
     
+    // Last note the LFOs key-tracked to. Held past key-up so the rate does not jump
+    // back to free-run while the voice is still releasing. -1 until the first note.
+    int lastKeyTrackNote{-1};
+
+    // Realised free-run rate of each LFO, published to the voices so their oversample
+    // latch can tell that a cutoff is being swept at audio rate. Written during the
+    // LFO render, read on the next block -- the latch only consults it at note start,
+    // so a block of delay is immaterial.
+    double lastLfo1Hz{0.0};
+    double lastLfo2Hz{0.0};
+
+public:
+    //==========================================================================
+    // Free-running LFO rate range, in one place because the DSP, the knob's snap
+    // grid and the readout must all agree.
+    //
+    // The top was 200 Hz through v2.0.0. Raising it changes what a stored lfo1Rate /
+    // lfo2Rate KNOB POSITION means, which would silently speed up every free-running
+    // LFO in every existing preset -- 20 of the 52 factory ones. migrateLfoRatesIfOld()
+    // below rescales them on load so they keep sounding the same.
+    static constexpr double lfoFreeRateMinHz = 0.01;
+    static constexpr double lfoFreeRateMaxHz = 2000.0;
+    static constexpr double lfoFreeRateLegacyMaxHz = 200.0;
+
+    /** Knob position (0-12) -> Hz, using the current range. */
+    static double lfoKnobToHz(double knob0to12);
+
+    /** Rescales lfo1Rate / lfo2Rate in a state tree saved before the range was
+        widened, so the LFO keeps its original frequency. Detected by the absence of
+        the stateVersion attribute that getStateInformation now writes; a no-op on
+        anything already carrying one. */
+    static void migrateLfoRatesIfOld(juce::ValueTree& state, int stateVersion);
+
+    /** Bumped whenever a stored value changes meaning. 1 (or absent) = pre-2000 Hz LFO. */
+    static constexpr int currentStateVersion = 2;
+
     // LFO current phases (public for voice access)
     double lfo1CurrentPhase{0.0};         // Current LFO1 phase (0.0 to 1.0)
     double lfo2CurrentPhase{0.0};         // Current LFO2 phase (0.0 to 1.0)

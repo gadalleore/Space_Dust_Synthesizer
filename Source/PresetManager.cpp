@@ -1,4 +1,5 @@
 #include "PresetManager.h"
+#include "PluginProcessor.h"   // migrateLfoRatesIfOld / stateVersion
 
 // The folder presets and config live under. Supplied by CMake from the product name so
 // that a side-by-side V2 build keeps its own presets and cannot write over the shipping
@@ -58,7 +59,12 @@ void PresetManager::loadPreset(const juce::File& presetFile)
     auto name = xml->getStringAttribute("presetName",
                     presetFile.getFileNameWithoutExtension());
 
-    valueTreeState.replaceState(juce::ValueTree::fromXml(*xml));
+    // Presets saved before the LFO free-rate range was widened to 2000 Hz store a knob
+    // position that meant a different frequency. Rescale so they sound as recorded.
+    auto restored = juce::ValueTree::fromXml(*xml);
+    SpaceDustAudioProcessor::migrateLfoRatesIfOld(restored, xml->getIntAttribute("stateVersion", 1));
+
+    valueTreeState.replaceState(restored);
     currentPresetName = name;
 }
 

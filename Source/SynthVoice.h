@@ -223,6 +223,14 @@ public:
     void setPitchBendAmount(float semitones);  // Range for pitch bend (0-24)
     void setPitchBend(float value);           // Manual pitch bend (-1 to 1)
     void setLfoTargets(int lfo1Target, int lfo2Target);  // 0=Pitch, 1=Filter, 2=MasterVol, 3=Osc1, 4=Osc2, 5=Noise
+
+    /** Current free-run frequency of each LFO, in Hz.
+
+        Needed by the oversample latch. Sweeping a filter's cutoff at audio rate makes
+        sidebands that fold back regardless of how linear the filter is, so resonance
+        and warm saturation alone are not enough to decide whether oversampling is
+        required -- see updateOversampleLatch(). */
+    void setLfoRates(double lfo1Hz, double lfo2Hz) noexcept;
     // Analog Drift: emulates hardware component tolerance and slow oscillator/filter drift
     void setAnalogDrift(float amount) { analogDriftAmount = juce::jlimit(0.0f, 1.0f, amount); }
 
@@ -348,6 +356,39 @@ private:
     // Resonance (0..1) at/above which a filter is treated as "needs oversampling" (~Q6).
     // Tunable: lower = safer (oversample more often), higher = bigger CPU savings.
     static constexpr float kOversampleResThreshold = 0.35f;
+
+    // LFO rate (Hz) at/above which modulating a filter's cutoff needs oversampling on
+    // its own account, whatever the resonance. Sweeping a cutoff at audio rate is a
+    // time-varying system: it produces sidebands that fold back even through a
+    // perfectly linear filter, which resonance and warm saturation say nothing about.
+    // 200 Hz sits far above any vibrato or tremolo use, so ordinary patches pay
+    // nothing; it only engages for the deliberately fast rates the widened LFO range
+    // made reachable.
+    static constexpr double kOversampleLfoHzThreshold = 200.0;
+    double lfo1RateHz = 0.0;
+    double lfo2RateHz = 0.0;
+
+    //==========================================================================
+    // -- Oscillator oversampling (audio-rate pitch modulation only) --
+    //
+    // The oscillators are deliberately naive: a saw is 2*phase and a square is a
+    // hard sign flip, and that grit is the instrument's voice. Band-limiting the
+    // shapes themselves was tried and measured -- 15 dB cleaner, but it sanded the
+    // saws down too far, so it was reverted.
+    //
+    // Oversampling gets the cleanliness without touching the tone: the same naive
+    // shapes are generated at 4x, so their harmonics have four times the room
+    // before Nyquist, and the decimation FIR removes what is left. What comes back
+    // at base rate is the same waveform with the fold-back taken out.
+    //
+    // It only earns its CPU when something is actually sweeping pitch fast enough
+    // to fold, so it engages only for an LFO on Pitch at or above the same
+    // threshold the filter path uses -- and is latched at note start for the same
+    // reason (switching mid-note would jump the decimator's FIR history).
+    OversampledStage oscOsc12OS;   // ch0 = osc1, ch1 = osc2
+    OversampledStage oscSubOS;     // ch0 = sub
+    bool oscOSActive = false;
+    static constexpr int kOscOSFactor = 4;
     // Re-derive the three latches from the current params and apply the matching
     // sample-rate scale + OS factor to every filter (keeps the INVARIANT above).
     void updateOversampleLatch() noexcept;

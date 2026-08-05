@@ -4431,7 +4431,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // LFO1 Rate: NoTextBox - only lfo1RateValueLabel shows Hz/sync; no raw value display
     lfo1FreeRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     lfo1FreeRateSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-    lfo1FreeRateSlider.setRange(0.0, 12.0, 0.01);  // Maps to 0.01-200 Hz logarithmically (free mode)
+    lfo1FreeRateSlider.setRange(0.0, 12.0, 0.01);  // Maps to 0.01 Hz - 2 kHz logarithmically (free mode)
     lfo1FreeRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "lfo1Rate", lfo1FreeRateSlider);
     configureLfoRateSnapping(lfo1FreeRateSlider, 1);
@@ -6484,35 +6484,20 @@ juce::String SpaceDustAudioProcessorEditor::lfoRateDisplayText(int lfoIndex, flo
                          && isLfoKeyTrackAvailable()
                          && safeGetParam(prefix + "KeyTrack") > 0.5f;
 
-    if (!keyTracked)
-    {
-        // Original 0.01-200 Hz log mapping, unchanged.
-        const float norm = juce::jlimit(0.0f, 1.0f, rate0to12 / 12.0f);
-        const float hz = juce::jlimit(0.01f, 200.0f,
-            std::exp(std::log(0.01f) + norm * (std::log(200.0f) - std::log(0.01f))));
-        return juce::String::formatted("%.2f Hz", hz);
-    }
-
-    // Key-tracked: the knob is a ratio to the played note. Mirror the snapping the
-    // slider and processBlock both use so the readout cannot disagree with them.
+    // The knob is Hz in both cases. Key-tracked it is the rate at MIDDLE C, with the
+    // played note scaling it from there -- so Hz stays the honest unit either way.
     const double norm = juce::jlimit(0.0, 1.0, static_cast<double>(rate0to12) / 12.0);
-    double ratio = std::exp(std::log(lfoRatioMin)
-                            + norm * (std::log(lfoRatioMax) - std::log(lfoRatioMin)));
+    double hz = juce::jlimit(lfoRateMinHz, lfoRateMaxHz,
+                             std::exp(std::log(lfoRateMinHz)
+                                      + norm * (std::log(lfoRateMaxHz) - std::log(lfoRateMinHz))));
 
-    if (const auto grid = activeLfoGrid(lfoIndex))
-        ratio = NoteLock::snapHz(ratio * NoteLock::referenceHz,
-                                 lfoRatioMin * NoteLock::referenceHz,
-                                 lfoRatioMax * NoteLock::referenceHz, *grid)
-              / NoteLock::referenceHz;
+    // Mirror the snapping the slider and processBlock both apply, so the readout can
+    // never disagree with what is actually sounding.
+    if (keyTracked)
+        if (const auto grid = activeLfoGrid(lfoIndex))
+            hz = NoteLock::snapHz(hz, lfoRateMinHz, lfoRateMaxHz, *grid);
 
-    // Read it out the way an FM synth would when it lands on a whole-number ratio.
-    const double up = ratio, down = 1.0 / ratio;
-    if (std::abs(up - std::round(up)) < 0.001 && up >= 1.0)
-        return juce::String::formatted("%d : 1", static_cast<int>(std::round(up)));
-    if (std::abs(down - std::round(down)) < 0.001 && down >= 1.0)
-        return juce::String::formatted("1 : %d", static_cast<int>(std::round(down)));
-
-    return juce::String::formatted("%.2f x", ratio);
+    return juce::String::formatted("%.2f Hz", hz);
 }
 
 void SpaceDustAudioProcessorEditor::configureLfoRateSnapping(NoteLockSlider& rateSlider, int lfoIndex)
@@ -6527,15 +6512,15 @@ void SpaceDustAudioProcessorEditor::configureLfoRateSnapping(NoteLockSlider& rat
     rateSlider.toGridHz = [] (double rate0to12)
     {
         const double norm = juce::jlimit(0.0, 1.0, rate0to12 / 12.0);
-        return NoteLock::referenceHz
-             * std::exp(std::log(lfoRatioMin)
-                        + norm * (std::log(lfoRatioMax) - std::log(lfoRatioMin)));
+        return juce::jlimit(lfoRateMinHz, lfoRateMaxHz,
+                            std::exp(std::log(lfoRateMinHz)
+                                     + norm * (std::log(lfoRateMaxHz) - std::log(lfoRateMinHz))));
     };
     rateSlider.fromGridHz = [] (double hz)
     {
-        const double ratio = juce::jlimit(lfoRatioMin, lfoRatioMax, hz / NoteLock::referenceHz);
-        return 12.0 * (std::log(ratio) - std::log(lfoRatioMin))
-                    / (std::log(lfoRatioMax) - std::log(lfoRatioMin));
+        const double clamped = juce::jlimit(lfoRateMinHz, lfoRateMaxHz, hz);
+        return 12.0 * (std::log(clamped) - std::log(lfoRateMinHz))
+                    / (std::log(lfoRateMaxHz) - std::log(lfoRateMinHz));
     };
 }
 
@@ -6555,25 +6540,25 @@ void SpaceDustAudioProcessorEditor::setUpLfoKeyTrackButtons(int lfoIndex)
 
     keyTrack.setButtonText(safeString("Key Tracking"));
     keyTrack.setTooltip(safeString(
-        "LFO Key Tracking: the Rate knob stops meaning Hz and starts meaning a ratio to the "
-        "note you play, so the LFO holds that interval against the keyboard. Push the rate up "
-        "into the audio range with Destination set to Pitch and this is FM. "
-        "Mono/Legato only -- the LFO is shared by all voices, so Poly has no single note to follow."));
+        "LFO Key Tracking: the Rate knob becomes the rate at MIDDLE C, and the LFO speeds up "
+        "or slows down with the note you play -- one octave of rate per octave of keyboard, "
+        "limited to an octave either way so it stays predictable. "
+        "Mono/Legato only: the LFO is shared by every voice, so Poly has no single note to follow."));
     ktAtt = std::make_unique<ButtonAtt>(vts, prefix + "KeyTrack", keyTrack);
     keyTrack.onClick = [this, lfoIndex] { snapLfoRateToNoteLock(lfoIndex); };
 
     noteLock.setButtonText(safeString("Note Lock"));
     noteLock.setTooltip(safeString(
-        "Note Lock: the Rate knob clicks into semitone steps of the ratio, so the LFO sits a "
-        "whole number of half steps above or below the played note instead of between them."));
+        "Note Lock: the Rate knob clicks into semitone steps, measured down from middle C, "
+        "so the rate sits on an exact musical interval instead of between two of them."));
     nlAtt = std::make_unique<ButtonAtt>(vts, prefix + "NoteLock", noteLock);
     noteLock.onClick = [this, lfoIndex] { snapLfoRateToNoteLock(lfoIndex); };
 
     harmonic.setButtonText(safeString("Harmonics"));
     harmonic.setTooltip(safeString(
-        "Harmonic Series: the Rate knob clicks into whole-number ratios -- 2:1, 3:1, 4:1 and "
-        "1/2, 1/3 downwards. These are the classic FM operator ratios, and they are what make "
-        "an FM tone come out harmonic rather than clangorous."));
+        "Harmonic Series: the Rate knob clicks into whole-number divisions of middle C -- "
+        "half of it, a third, a quarter and so on down. Note that these bunch up at slow "
+        "rates and spread out at fast ones, which is the shape of the series itself."));
     hsAtt = std::make_unique<ButtonAtt>(vts, prefix + "HarmonicLock", harmonic);
     harmonic.onClick = [this, lfoIndex] { snapLfoRateToNoteLock(lfoIndex); };
 }
@@ -6605,8 +6590,17 @@ int SpaceDustAudioProcessorEditor::layoutLfoKeyTrackRow(int lfoIndex,
     const int gapToKnob = 8;
     const int stackGap  = 12;
 
-    // Key Tracking: right of the knob, its centre level with the knob's centre.
-    int ktX = rateKnobBounds.getRight() + gapToKnob;
+    // These flank the FILTER's knob-pair span, not the Rate knob's own edges. Both are
+    // centred on the LFO column, but the pair is 104 px wide against the Rate knob's
+    // 38, so measuring 8 px from each would put the LFO's toggles 30-odd px inboard of
+    // the filter's and break the vertical column running down the panel. Flanking the
+    // same span puts every Key Tracking / Note Lock / Harmonics button in the box on
+    // one of two clean edges. Y still comes from the Rate knob.
+    const int flankLeft  = rateKnobBounds.getCentreX() - filterKnobPairWidth / 2;
+    const int flankRight = flankLeft + filterKnobPairWidth;
+
+    // Key Tracking: right of the pair, its centre level with the Rate knob's centre.
+    int ktX = flankRight + gapToKnob;
     int ktW = juce::jmin(84, contentBounds.getRight() - ktX);
     int ktY = rateKnobBounds.getY() + (rateKnobBounds.getHeight() - buttonHeight) / 2;
     keyTrack.setBounds(ktX, ktY, ktW, buttonHeight);
@@ -6615,10 +6609,10 @@ int SpaceDustAudioProcessorEditor::layoutLfoKeyTrackRow(int lfoIndex,
     const int noteLockY = ktY + buttonHeight + stackGap;
     noteLock.setBounds(ktX, noteLockY, ktW, buttonHeight);
 
-    // Harmonics mirrored to the left of the knob, level with Note Lock. Clamped to
-    // the box so a narrow LFO column shrinks it rather than letting it escape.
-    int hsX = juce::jmax(contentBounds.getX(), rateKnobBounds.getX() - gapToKnob - ktW);
-    int hsW = juce::jmin(ktW, rateKnobBounds.getX() - gapToKnob - hsX);
+    // Harmonics mirrored to the left of the pair, level with Note Lock. Clamped to the
+    // box so a narrow LFO column shrinks it rather than letting it escape.
+    int hsX = juce::jmax(contentBounds.getX(), flankLeft - gapToKnob - ktW);
+    int hsW = juce::jmin(ktW, flankLeft - gapToKnob - hsX);
     harmonic.setBounds(hsX, noteLockY, hsW, buttonHeight);
 
     // Deliberately returns the untouched Y even though Note Lock and Harmonics hang
@@ -6892,7 +6886,7 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     }
     else
     {
-        // Free mode: 0.01-200 Hz logarithmic, or a ratio to the played note when key
+        // Free mode: 0.01 Hz - 2 kHz logarithmic; key tracking scales it from middle C when
         // tracking is on -- in which case "Hz" would be an outright lie, since the
         // actual frequency depends on the note.
         const juce::String rateText = lfoRateDisplayText(1, static_cast<float>(lfo1Rate));
