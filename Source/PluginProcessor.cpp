@@ -12,7 +12,7 @@
 // - Dual oscillators with 4 waveforms each (Sine, Triangle, Saw, Square)
 // - Independent detune for each oscillator (coarse + fine) for shimmering effects
 // - Osc2 can be tuned relative to Osc1 (coarse/fine tuning for intervals)
-// - Multimode state-variable filter (Low Pass, Band Pass, High Pass)
+// - Multimode state-variable filter (Low Pass, Band Pass, High Pass, Notch, Peak)
 // - Proper 4-stage ADSR amplitude envelope (Attack â†’ Decay â†’ Sustain â†’ Release)
 //   with long cosmic tails (release up to 20 seconds)
 // - Master volume control for proper mix integration
@@ -2226,17 +2226,16 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             scratch.clear();
             transient_.process(scratch);
 
-            // Configure one mirror SVF (mode 0=LP/1=BP/2=HP; Q matches NonlinearSVF's
-            // legacy curve Q = 0.1 + res*19.9, capped below self-osc for stability).
-            auto configureMirror = [](juce::dsp::StateVariableTPTFilter<float>& f,
-                                      int mode, float cutoffHz, float res)
+            // Configure one mirror SVF (mode 0=LP/1=BP/2=HP/3=Notch/4=Peak; Q matches
+            // NonlinearSVF's legacy curve Q = 0.1 + res*19.9, capped below self-osc for
+            // stability — setResonanceQ() takes that Q as-is, so the mirror never
+            // self-oscillates and the pre-existing LP/BP/HP sound is unchanged).
+            auto configureMirror = [](NonlinearSVF& f, int mode, float cutoffHz, float res)
             {
-                f.setType(mode == 1 ? juce::dsp::StateVariableTPTFilterType::bandpass
-                        : mode == 2 ? juce::dsp::StateVariableTPTFilterType::highpass
-                                    : juce::dsp::StateVariableTPTFilterType::lowpass);
+                f.setMode(juce::jlimit(0, 4, mode));
                 f.setCutoffFrequency(juce::jlimit(20.0f, 20000.0f, cutoffHz));
                 const float resQ = 0.1f + juce::jmin(juce::jlimit(0.0f, 1.0f, res), 0.80f) * 19.9f;
-                f.setResonance(juce::jlimit(0.1f, 16.0f, resQ));
+                f.setResonanceQ(juce::jlimit(0.1f, 16.0f, resQ));
             };
 
             // Master mirror (always present â€” it is the only filter when no Mod
@@ -3147,7 +3146,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     //   - "noiseLevel" (Float: 0.0 to 1.0)
     //   - "noiseType" (Choice: White, Pink)
     // Filter:
-    //   - "filterMode" (Choice: Low Pass, Band Pass, High Pass)
+    //   - "filterMode" (Choice: Low Pass, Band Pass, High Pass, Notch, Peak)
     //   - "filterCutoff" (Float: 20.0 to 20000.0 Hz, log-scaled)
     //   - "filterResonance" (Float: 0.0 to 1.0)
     // ADSR Envelope:
@@ -3283,11 +3282,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     //==============================================================================
     // -- Filter Parameters --
     
-    // Filter mode (Low Pass, Band Pass, High Pass)
+    // Filter mode. Notch and Peak were appended AFTER High Pass so the stored
+    // indices of existing presets (0/1/2) keep meaning the same three modes.
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"filterMode", 1}, "Filter Mode",
-            juce::StringArray(safeString("Low Pass"), safeString("Band Pass"), safeString("High Pass")), 0),
+            juce::StringArray(safeString("Low Pass"), safeString("Band Pass"), safeString("High Pass"),
+                              safeString("Notch"), safeString("Peak")), 0),
         safeString("filterMode"));
     
     // Filter cutoff (log scale: 20 Hz to 20 kHz)
@@ -3726,7 +3727,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"modFilter1Mode", 1}, "Mod Filter 1 Mode",
-            juce::StringArray(safeString("Low Pass"), safeString("Band Pass"), safeString("High Pass")), 0),
+            juce::StringArray(safeString("Low Pass"), safeString("Band Pass"), safeString("High Pass"),
+                              safeString("Notch"), safeString("Peak")), 0),
         safeString("modFilter1Mode"));
     
     ADD_PARAM_WITH_LOG(params,
@@ -3765,7 +3767,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"modFilter2Mode", 1}, "Mod Filter 2 Mode",
-            juce::StringArray(safeString("Low Pass"), safeString("Band Pass"), safeString("High Pass")), 0),
+            juce::StringArray(safeString("Low Pass"), safeString("Band Pass"), safeString("High Pass"),
+                              safeString("Notch"), safeString("Peak")), 0),
         safeString("modFilter2Mode"));
     
     ADD_PARAM_WITH_LOG(params,

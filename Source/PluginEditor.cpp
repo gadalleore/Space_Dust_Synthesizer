@@ -3906,9 +3906,13 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     //==============================================================================
     // -- Filter Section Setup --
     
+    // Item IDs are 1-based; the attachment maps them onto the parameter's choice
+    // indices in order, so Notch/Peak must stay appended after High Pass.
     filterModeCombo.addItem(safeString("Low Pass"), 1);
     filterModeCombo.addItem(safeString("Band Pass"), 2);
     filterModeCombo.addItem(safeString("High Pass"), 3);
+    filterModeCombo.addItem(safeString("Notch"), 4);
+    filterModeCombo.addItem(safeString("Peak"), 5);
     filterModeCombo.setSelectedId(1);
     filterModeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
         audioProcessor.getValueTreeState(), "filterMode", filterModeCombo);
@@ -4606,6 +4610,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter1ModeCombo.addItem(safeString("Low Pass"), 1);
     modFilter1ModeCombo.addItem(safeString("Band Pass"), 2);
     modFilter1ModeCombo.addItem(safeString("High Pass"), 3);
+    modFilter1ModeCombo.addItem(safeString("Notch"), 4);
+    modFilter1ModeCombo.addItem(safeString("Peak"), 5);
     modFilter1ModeCombo.setSelectedId(1);
     modFilter1CutoffSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     modFilter1CutoffSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
@@ -4643,6 +4649,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modFilter2ModeCombo.addItem(safeString("Low Pass"), 1);
     modFilter2ModeCombo.addItem(safeString("Band Pass"), 2);
     modFilter2ModeCombo.addItem(safeString("High Pass"), 3);
+    modFilter2ModeCombo.addItem(safeString("Notch"), 4);
+    modFilter2ModeCombo.addItem(safeString("Peak"), 5);
     modFilter2ModeCombo.setSelectedId(1);
     modFilter2CutoffSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     modFilter2CutoffSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);

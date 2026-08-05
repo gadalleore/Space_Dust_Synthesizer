@@ -8,6 +8,7 @@
 
 #include "SynthVoice.h"
 #include "SynthSound.h"
+#include "NonlinearSVF.h" // transient mirror filters (same five modes as the voice filter)
 #include "SpaceDustSynthesiser.h"
 #include "SpaceDustReverb.h"
 #include "SpaceDustGrainDelay.h"
@@ -303,9 +304,14 @@ private:
     // transient exactly like the Main-tab filter does. Post mode is unchanged
     // (end-of-chain, unfiltered). This keeps the fix entirely in the master chain —
     // no change to SynthVoice.
-    juce::dsp::StateVariableTPTFilter<float> transientPreFilter_;     // mirrors Main-tab (master) filter
-    juce::dsp::StateVariableTPTFilter<float> transientPreFilterMod1_; // mirrors unlinked Mod filter 1
-    juce::dsp::StateVariableTPTFilter<float> transientPreFilterMod2_; // mirrors unlinked Mod filter 2
+    // NonlinearSVF (rather than juce::dsp::StateVariableTPTFilter) because the mirrors
+    // must offer the same five modes as the voice filter, including Notch and Peak,
+    // which JUCE's SVF does not expose. Driven through setResonanceQ() so the legacy
+    // mirror Q map — and therefore the existing LP/BP/HP sound — is unchanged: the
+    // topology and maths are the same TPT SVF.
+    NonlinearSVF transientPreFilter_;     // mirrors Main-tab (master) filter
+    NonlinearSVF transientPreFilterMod1_; // mirrors unlinked Mod filter 1
+    NonlinearSVF transientPreFilterMod2_; // mirrors unlinked Mod filter 2
     juce::AudioBuffer<float> transientScratch_;
 
     //==============================================================================

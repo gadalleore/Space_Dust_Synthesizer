@@ -43,7 +43,18 @@
 class NonlinearSVF
 {
 public:
-    enum Mode { lowpass = 0, bandpass = 1, highpass = 2 };
+    /** Output taps. lowpass/bandpass/highpass are the raw SVF outputs; notch and
+        peak are the standard linear combinations of them:
+
+          notch = LP + HP  -> flat, with a full null at the cutoff. Resonance sets
+                              the WIDTH of the notch, not its depth (the null is
+                              total at any Q).
+          peak  = LP - HP  -> flat (0 dB at DC and Nyquist) with a bell at the
+                              cutoff whose gain is 2Q. Note that Q < 0.5 (the
+                              bottom of the resonance knob) makes that bell a
+                              shallow DIP; the peak only appears once resonance is
+                              turned up. */
+    enum Mode { lowpass = 0, bandpass = 1, highpass = 2, notch = 3, peak = 4 };
 
     void prepare (const juce::dsp::ProcessSpec& spec) noexcept
     {
@@ -76,7 +87,7 @@ public:
         oscEnv[0] = oscEnv[1] = 0.0f;
     }
 
-    void setMode (int newMode) noexcept { mode = juce::jlimit (0, 2, newMode); }
+    void setMode (int newMode) noexcept { mode = juce::jlimit (0, 4, newMode); }
     int  getMode() const noexcept       { return mode; }
 
     void setCutoffFrequency (float freqHz) noexcept
@@ -118,6 +129,16 @@ public:
             t = juce::jlimit (0.0f, 1.0f, t);
             selfOscBlend = t * t * (3.0f - 2.0f * t); // smoothstep (ease-in/out)
         }
+    }
+
+    /** Set the damping directly from a Q value, bypassing the knob taper and the
+        self-oscillation region entirely. For callers that own their own resonance
+        curve (e.g. the master-chain mirror filters) and only want the plain SVF. */
+    void setResonanceQ (float Q) noexcept
+    {
+        R2 = 1.0f / juce::jmax (0.025f, Q);
+        selfOsc      = false;
+        selfOscBlend = 0.0f;
     }
 
     /** Amplitude envelope (0..1) for the current sample. Scales the self-osc target
@@ -183,7 +204,19 @@ public:
             ls2 = juce::jlimit (-kSafetyClamp, kSafetyClamp, ls2);
         }
 
-        float out = (mode == 0 ? yLP : (mode == 1 ? yBP : yHP));
+        // notch/peak are exact sums of the taps above, so they inherit the same
+        // cutoff/Q and the same self-oscillation behaviour. In the self-osc region
+        // the LP and HP components of the oscillation are equal and opposite, so
+        // notch cancels the singing (it passes the input) while peak doubles it.
+        float out;
+        switch (mode)
+        {
+            case 1:  out = yBP;         break;
+            case 2:  out = yHP;         break;
+            case 3:  out = yLP + yHP;   break; // notch
+            case 4:  out = yLP - yHP;   break; // peak (flat + resonant bell)
+            default: out = yLP;         break;
+        }
         if (! std::isfinite (out))
         {
             out = 0.0f;

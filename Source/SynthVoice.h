@@ -398,7 +398,7 @@ private:
     // Noise EQ filters: simple 1-pole shelf filters for low and high frequency shaping
     juce::dsp::IIR::Filter<float> lowShelfFilter;
     juce::dsp::IIR::Filter<float> highShelfFilter;
-    int filterMode = 0;               // 0=LowPass, 1=BandPass, 2=HighPass
+    int filterMode = 0;               // 0=LowPass, 1=BandPass, 2=HighPass, 3=Notch, 4=Peak
     float filterCutoff = 8000.0f;     // Hz (20-20000) - current modulated cutoff
     float baseFilterCutoff = 8000.0f; // Base cutoff value (unmodulated, from parameter)
     float filterResonance = 0.3f;     // Normalized (0.0-1.0, maps to Q 0.1-20.0)
@@ -408,14 +408,14 @@ private:
     // Mod tab filters (show=Filter toggle on, linkToMaster=use main filter params)
     bool modFilter1Show = false;
     bool modFilter1Linked = true;
-    int modFilter1Mode = 0;
+    int modFilter1Mode = 0;           // see filterMode above for the mode numbering
     float modFilter1Cutoff = 8000.0f;
     float modFilter1Resonance = 0.3f;
     bool warmSaturationMod1 = false;
     bool modFilter1KeyTrack = false;
     bool modFilter2Show = false;
     bool modFilter2Linked = true;
-    int modFilter2Mode = 0;
+    int modFilter2Mode = 0;           // see filterMode above for the mode numbering
     float modFilter2Cutoff = 8000.0f;
     float modFilter2Resonance = 0.3f;
     bool warmSaturationMod2 = false;
