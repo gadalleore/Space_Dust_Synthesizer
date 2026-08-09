@@ -6864,30 +6864,64 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
             // The colour comes from meterLinkedTitleGlowHue, so the title turns red on
             // clipping with the rest of the face.
             //
-            // Method: draw the artwork again, larger and behind, with
-            // fillAlphaChannelWithCurrentBrush TRUE. That uses the image's alpha as a
-            // mask and fills it with the current colour, so the halo takes the exact
-            // shape of the lettering. This is the image equivalent of glowPath's two
-            // widening passes, and it works only because the artwork is keyed -- an
-            // opaque image would mask a rectangle.
+            // Method: draw the artwork again behind itself, with
+            // fillAlphaChannelWithCurrentBrush TRUE. JUCE then uses the image's alpha
+            // as a mask and fills it with the current colour, so the light takes the
+            // exact shape of the lettering. This works only because the artwork is
+            // keyed -- an opaque image masks its rectangle.
             //
-            // The expansion is a FRACTION of the title's height, not a pixel count, so
-            // the bloom keeps its proportions when the window is resized.
+            // The copies are the SAME SIZE and are OFFSET, not enlarged. The first cut
+            // of this scaled the copy up, the way glowPath widens a stroke. That fails
+            // on a word: enlarging it moves the letters apart from each other, so no
+            // letter lands on top of itself and the result reads as a second title
+            // behind the first (Giuseppe, 2026-08-08: "almost an echo effect offset
+            // from the title"). Offsetting a same-size copy keeps every letter over
+            // itself, so the copies build light around the shape instead of a ghost of
+            // it. Widening works for a stroke and does not work for text.
+            //
+            // Two rings of eight, outer ring first. The per-copy alpha is low and they
+            // accumulate: eight copies at 0.07 give about 0.4 where they all overlap,
+            // falling off with distance from the letters, which is what a glow is.
+            //
+            // The radii are FRACTIONS of the title height, so the bloom keeps its
+            // proportions when the user resizes the window.
             if (const float glow = customLookAndFeel.getGlowAmount(); glow > 0.01f)
             {
                 const juce::Colour glowCol = meterLinkedTitleGlowHue(clippingHoldTicks > 0);
 
-                for (int pass = 0; pass < 2; ++pass)
+                constexpr int kGlowDirs = 8;
+
+                // BOTH the spread and the brightness follow the meter. Brightness alone
+                // only fades a halo of fixed size in and out; moving the radius as well
+                // makes the light reach further out of the letters as the synth gets
+                // louder, and pull back in tight as it falls away.
+                //
+                // The two multiply, so the bloom grows roughly with the square of the
+                // level. That is what makes the response dramatic rather than gentle.
+                //
+                // The 0.10 and 0.05 are the radii at FULL level, which is the state that
+                // was approved by eye, so the top of the range is unchanged and only the
+                // travel below it is new.
+                const float radius[2] { drawArea.getHeight() * 0.10f * glow,   // outer
+                                        drawArea.getHeight() * 0.05f * glow }; // inner
+                const float ringAlpha[2] { 0.045f, 0.07f };
+
+                for (int ring = 0; ring < 2; ++ring)
                 {
-                    const float spread = drawArea.getHeight() * (pass == 0 ? 0.16f : 0.08f);
-                    const float a      = glow * (pass == 0 ? 0.16f : 0.28f);
+                    for (int d = 0; d < kGlowDirs; ++d)
+                    {
+                        const float theta = juce::MathConstants<float>::twoPi
+                                          * (float) d / (float) kGlowDirs;
 
-                    const auto halo = drawArea.expanded(juce::roundToInt(spread));
+                        const auto off = drawArea.translated(
+                            juce::roundToInt(std::cos(theta) * radius[ring]),
+                            juce::roundToInt(std::sin(theta) * radius[ring]));
 
-                    g.setColour(glowCol.withAlpha(a));
-                    g.drawImageWithin(titleImage, halo.getX(), halo.getY(),
-                                      halo.getWidth(), halo.getHeight(),
-                                      juce::RectanglePlacement::centred, true);
+                        g.setColour(glowCol.withAlpha(glow * ringAlpha[ring]));
+                        g.drawImageWithin(titleImage, off.getX(), off.getY(),
+                                          off.getWidth(), off.getHeight(),
+                                          juce::RectanglePlacement::centred, true);
+                    }
                 }
             }
 
