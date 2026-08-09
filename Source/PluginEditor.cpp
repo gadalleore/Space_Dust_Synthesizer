@@ -326,25 +326,37 @@ namespace
 
         Both the reach and the brightness scale with `bloom`, so they multiply and the
         response is steep. Radii are fractions of the height, so a small mark and a
-        large one bloom in proportion rather than by a fixed pixel count. */
+        large one bloom in proportion rather than by a fixed pixel count.
+
+        `reachScale` and `alphaScale` are per-caller trims on top of that proportion.
+        They exist because proportion alone is not always what the eye wants: the 63C
+        logo is small, so a proportional halo on it is correspondingly small, and it
+        was asked to bloom harder than its size would give (Giuseppe, 2026-08-09).
+        The title passes 1.0 for both and is therefore untouched. */
     inline void bloomKeyedImage(juce::Graphics& g, const juce::Image& image,
-                                juce::Rectangle<int> area, juce::Colour colour, float bloom)
+                                juce::Rectangle<int> area, juce::Colour colour, float bloom,
+                                float reachScale = 1.0f, float alphaScale = 1.0f)
     {
         if (! image.isValid() || area.isEmpty() || bloom <= 0.0f)
             return;
 
-        constexpr int kDirs = 8;
+        // More copies when the halo is asked to reach further. Eight points spaced
+        // around a wide ring start to read as separate blobs rather than as one glow;
+        // the count rises with the reach so the ring stays smooth. Derived from
+        // reachScale and NOT from the radius, so a caller passing 1.0 gets exactly
+        // eight and the title's approved look does not shift.
+        const int dirs = juce::jlimit(8, 16, juce::roundToInt(8.0f * reachScale));
 
-        const float radius[2] { area.getHeight() * 0.16f * bloom,    // outer
-                                area.getHeight() * 0.08f * bloom };  // inner
-        const float alpha[2]  { 0.065f * bloom, 0.10f * bloom };
+        const float radius[2] { area.getHeight() * 0.16f * bloom * reachScale,    // outer
+                                area.getHeight() * 0.08f * bloom * reachScale };  // inner
+        const float alpha[2]  { 0.065f * bloom * alphaScale, 0.10f * bloom * alphaScale };
 
         for (int ring = 0; ring < 2; ++ring)
         {
-            for (int d = 0; d < kDirs; ++d)
+            for (int d = 0; d < dirs; ++d)
             {
                 const float theta = juce::MathConstants<float>::twoPi
-                                  * (float) d / (float) kDirs;
+                                  * (float) d / (float) dirs;
 
                 const auto off = area.translated(
                     juce::roundToInt(std::cos(theta) * radius[ring]),
@@ -6997,16 +7009,25 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
             const int logoY = masterBottom + gap;
 
             // Blooms with the meter, through the same call the title uses, so the two
-            // marks light up together and by the same law. The radii inside are
-            // fractions of the height, so the logo -- much smaller than the title --
-            // blooms in proportion rather than getting the title's pixel reach.
+            // marks light up together and by the same law.
+            //
+            // The trims are the departure. The radii inside are fractions of the height,
+            // and the logo is about 25px against the title's 40px, so a proportional
+            // halo on it came out small and the glow read as faint (Giuseppe,
+            // 2026-08-09). The reach is doubled and the light lifted, which is a
+            // deliberate break from proportion for this mark only -- the logo now
+            // blooms harder than its size alone would give.
             //
             // Logo63C.png is a white ghost on transparent, so the alpha mask has a
             // shape to work with. An opaque logo would bloom its bounding box.
+            constexpr float kLogoReach = 2.0f;
+            constexpr float kLogoLight = 1.15f;
+
             bloomKeyedImage(g, logoImage,
                             juce::Rectangle<int>(logoX, logoY, logoW, logoH),
                             meterLinkedTitleGlowHue(clippingHoldTicks > 0),
-                            bloomAmount(customLookAndFeel.getGlowAmount()));
+                            bloomAmount(customLookAndFeel.getGlowAmount()),
+                            kLogoReach, kLogoLight);
 
             g.setColour(juce::Colours::white.withAlpha(0.9f));
             g.drawImageWithin(logoImage, logoX, logoY, logoW, logoH,
