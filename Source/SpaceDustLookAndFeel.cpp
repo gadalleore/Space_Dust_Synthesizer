@@ -445,8 +445,19 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
         // Fewer steps than the meters use: this runs once per knob and there are a
         // lot of knobs, where the meters are two bars.
         {
-            constexpr int   kKnobTrailSteps    = 5;
-            constexpr float kKnobTrailAlpha    = 0.6f;
+            // These match StereoLevelMeterComponent's kTrailSteps / kTrailAlpha exactly
+            // (Giuseppe, 2026-08-08). They were 5 and 0.6 before, to save work: the
+            // smear runs one time for each knob, and there are approximately 50 knobs,
+            // where the meter has two bars. The result was that the arcs smeared more
+            // weakly than the meters they sit beside. Keep these two numbers equal to
+            // the meter's, or the two stop agreeing again.
+            constexpr int   kKnobTrailSteps    = 9;
+            constexpr float kKnobTrailAlpha    = 0.75f;
+
+            // NOT matched to the meter's 2.5px, and this one is deliberate. The meter
+            // bar travels the full height of the plate; an arc head travels the length
+            // of one small curve. The same threshold in pixels is a much larger part of
+            // an arc's possible travel, so it would cut off most knob smears.
             constexpr float kKnobTrailMinSmear = 1.5f;   // px of travel before drawing
 
             const float lagAngle = rotaryStartAngle
