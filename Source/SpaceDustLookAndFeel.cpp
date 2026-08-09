@@ -398,10 +398,22 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
         // the arc dims as it rises -- the pointer alone marks the value, and the arc
         // falls away behind it instead of racing it to be the brightest thing.
         //
-        // Kept well below the level fill's strength either way: this is the quiet layer
+        // The far stop is FULLY TRANSPARENT, which is what makes the arc taper out
+        // instead of stopping (Giuseppe, 2026-08-08). Ending on a visible alpha left a
+        // butt cap sitting there as a hard little edge; at zero there is nothing to cap.
+        //
+        // The intermediate stops bend the falloff so it holds its brightness through the
+        // first third and then drops away increasingly fast. A straight ramp to zero
+        // reads as a uniform wash -- the acceleration is what makes it look like it is
+        // dissolving rather than merely being dimmed.
+        //
+        // Kept well below the level fill's strength throughout: this is the quiet layer
         // and must not compete with the meter drawn over it.
-        juce::ColourGradient grad(valueArcBlue.withAlpha(0.75f), tailP,
-                                  valueArcBlue.withAlpha(0.22f), headP, false);
+        juce::ColourGradient grad(valueArcBlue.withAlpha(0.85f), tailP,
+                                  valueArcBlue.withAlpha(0.0f),  headP, false);
+        grad.addColour(0.35, valueArcBlue.withAlpha(0.55f));
+        grad.addColour(0.65, valueArcBlue.withAlpha(0.24f));
+        grad.addColour(0.85, valueArcBlue.withAlpha(0.07f));
 
         g.setGradientFill(grad);
         g.strokePath(valueArc, juce::PathStrokeType(arcThickness,
