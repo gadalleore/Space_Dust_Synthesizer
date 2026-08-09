@@ -6641,25 +6641,26 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     // label/knob, so doing it unconditionally every tick pegged the CPU even at silence (the
     // Standalone appeared to hang on launch). The painted look is a pure function of these two
     // values, so skipping unchanged frames is visually identical and lets CPU fall to idle.
+    // -- Advance the shake BEFORE deciding whether to repaint --
+    // It was originally driven from inside the repaint branch below, on the reasoning
+    // that "the level moved" and "the shake is non-zero" were the same condition. They
+    // are not: a sustained note holds the level steady, so the branch stopped firing and
+    // the face froze mid-throw exactly when the synth was loudest. The shake needs the
+    // level to be HIGH, not to be CHANGING.
+    //
+    // Driving it every tick and letting it report whether it moved keeps both cases
+    // right, and costs nothing at silence: the ballistics settle to a zero offset,
+    // driveShake returns false, and no repaint is asked for.
+    const bool shakeMoved = kShakeEnabled && driveShake(glowMeterLevel_);
+
     const bool nowClipping = (clippingHoldTicks > 0);
-    if (std::abs(glowMeterLevel_ - lastPaintedGlowLevel_) > 0.001f || nowClipping != lastPaintedClipping_)
+    const bool glowMoved   = std::abs(glowMeterLevel_ - lastPaintedGlowLevel_) > 0.001f
+                          || nowClipping != lastPaintedClipping_;
+
+    if (glowMoved || shakeMoved)
     {
         lastPaintedGlowLevel_ = glowMeterLevel_;
         lastPaintedClipping_  = nowClipping;
-
-        // -- The shake rides this repaint, and only this repaint --
-        // Sliding the plate dirties the whole face, so on any other tick it would cost
-        // a full repaint of its own. Here it costs nothing: we are inside the branch
-        // that has ALREADY decided to repaint the plate because the output level moved,
-        // and "the output level moved" is the same condition that makes the shake
-        // non-zero. Moving the plate before the repaint folds both into one pass.
-        //
-        // driveShake() must therefore be called here and nowhere else. Calling it on
-        // every tick would drive it to zero during the frames this branch skips, and
-        // the ballistics would never build.
-        if constexpr (kShakeEnabled)
-            driveShake(glowMeterLevel_);
-
         plate.repaint();
     }
 
@@ -7038,25 +7039,66 @@ void SpaceDustAudioProcessorEditor::applyShakeTransform()
                                           (float) inset.y + shakeOffset.y));
 }
 
-// -- One shake frame --
-// Sol Voice Tuner's ballistics. Called only from the branch of timerCallback that has
-// already committed to repainting the plate, so `level` is that tick's glow level and
-// the move costs nothing extra. See the note on kShakeMax in the header for why this
-// is no longer a window move.
-void SpaceDustAudioProcessorEditor::driveShake(float level)
+//==============================================================================
+// -- Linear peak -> the meter's own scale --
+// This MUST stay in step with StereoLevelMeterComponent::linearToDb/dbToHeight, because
+// matching the meter is the entire point: the shake is judged against the bar sitting
+// next to it, so it has to move on the same scale the bar does.
+//
+// Driving it from raw linear amplitude instead (as it was until 2026-08-08) put every
+// bit of the motion in the top tenth of the meter. Measured across the bar:
+//
+//     dB     meter bar    linear    shake from linear
+//     -30    50% full     0.0316    0.017 px      <- half the meter, invisible
+//     -12    80% full     0.2512    0.378 px
+//      -6    90% full     0.5012    1.064 px
+//       0    100% full    1.0000    3.000 px
+//
+// Half a meter of signal produced seventeen THOUSANDTHS of a pixel. That is what
+// "it only shakes when it is in the green" was describing (Giuseppe, 2026-08-08) --
+// there was no ramp to see because the whole ramp lived above -6 dB.
+namespace
 {
+    constexpr float kShakeMeterFloorDb = -60.0f;   // matches the meter's minDb
+
+    float meterNormalisedLevel(float linearPeak) noexcept
+    {
+        if (linearPeak <= 0.0f)
+            return 0.0f;
+
+        const float db = 20.0f * std::log10(linearPeak);
+
+        if (db <= kShakeMeterFloorDb) return 0.0f;
+        if (db >= 0.0f)               return 1.0f;
+
+        return (db - kShakeMeterFloorDb) / (0.0f - kShakeMeterFloorDb);
+    }
+}
+
+// -- One shake frame --
+// Sol Voice Tuner's ballistics. Called EVERY tick, not only when the glow level moved:
+// a sustained note holds the level steady, and gating on "the level changed" froze the
+// face mid-throw exactly when the synth was loudest. Returns true when the offset
+// actually moved, so timerCallback knows whether a repaint is owed.
+bool SpaceDustAudioProcessorEditor::driveShake(float linearPeak)
+{
+    const float level = meterNormalisedLevel(linearPeak);
+
     // Hit hard, fall away: the face should snap on a transient and drift back, not
     // wobble along behind the average level.
     shakeLevel = juce::jmax(juce::jlimit(0.0f, 1.0f, level),
                             shakeLevel * kShakeRelease);
 
-    // Curved so quiet passages barely register and loud ones actually move it. A linear
-    // map spends most of its range on a permanent low-level jitter.
+    // Curved so quiet passages barely register and loud ones actually move it. The curve
+    // now applies to the METER's scale, not to linear amplitude, so its meaning changed
+    // with it: this shapes the ramp along the visible bar rather than crushing the whole
+    // bar into the top of the range.
     //
-    // NOT rounded: this is the whole point of the sub-pixel rework. kShakeMax is 3px, so
-    // rounding to whole pixels left four steps for the entire range and flattened the
-    // green region onto one of them.
+    // NOT rounded: kShakeMax is 3px, so whole pixels would leave four steps for the
+    // entire range and flatten most of the bar onto +/-1px.
     const float amp = kShakeMax * std::pow(shakeLevel, kShakeCurve);
+
+    const auto previous = shakeOffset;
 
     if (amp < kShakeFloor)
     {
@@ -7074,7 +7116,11 @@ void SpaceDustAudioProcessorEditor::driveShake(float level)
                         std::sin(angle) * amp };
     }
 
+    if (shakeOffset == previous)
+        return false;   // silence: nothing moved, so nothing is repainted
+
     applyShakeTransform();
+    return true;
 }
 
 //==============================================================================

@@ -621,9 +621,14 @@ private:
     // The throw at full scale. Set by ear (Giuseppe, 2026-08-08): "the maximum shake it
     // has right now is that absolute maximum the synth should be shaking". Turn the
     // WHOLE effect up or down here -- everything below is a shape, not a size.
-    static constexpr float kShakeMax     = 3.0f;    // px at full level, in EDITOR pixels
+    static constexpr float kShakeMax     = 3.0f;    // px at 0 dBFS, in EDITOR pixels
     static constexpr float kShakeRelease = 0.373f;  // per frame at the 20Hz UI tick
-    static constexpr float kShakeCurve   = 1.5f;    // >1 keeps quiet passages still
+
+    // Shapes the ramp ALONG THE METER BAR (driveShake converts to the meter's dB scale
+    // first), not along linear amplitude. >1 keeps the bottom of the bar calm while
+    // still leaving it visible. Raise this if quiet passages feel too twitchy; it is the
+    // right knob for that, whereas kShakeMax would scale the whole effect.
+    static constexpr float kShakeCurve   = 1.5f;
 
     // The point at which it stops entirely. Deliberately tiny: this used to be 0.35px,
     // which with whole-pixel offsets was the level below which nothing could show anyway,
@@ -650,9 +655,13 @@ private:
         is even on all four sides. */
     juce::Point<int> plateInset() const;
 
-    /** Advances the ballistics by one frame and moves the face. Called from
-        timerCallback, immediately before the repaint that will draw it. */
-    void driveShake(float level);
+    /** Advances the ballistics by one frame and moves the face. Takes the raw LINEAR
+        peak and converts it to the meter's dB scale internally, so the shake ramps
+        along the same bar the user is looking at.
+
+        Called every tick, and returns true when the offset actually moved so
+        timerCallback knows whether a repaint is owed. */
+    bool driveShake(float linearPeak);
 
     /** Sets mainView's transform: design scale, the plate inset, and the current shake
         offset. Cheap enough to call per shake frame -- it touches one transform, unlike
