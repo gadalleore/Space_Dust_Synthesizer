@@ -352,9 +352,13 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
     // under the level fill below. Asked for as "a small arc gradient that is light blue
     // on each knob that follows the arc all the way up to the indicator".
     //
-    // It CANNOT overrun the pointer: it is drawn to `angle`, which is the pointer's own
-    // angle, so the two are the same number rather than two things kept in sync. Turn
-    // the knob down and the arc shortens with it by construction.
+    // It stops SHORT of the pointer rather than meeting it -- three quarters of the way
+    // along the sweep (Giuseppe, 2026-08-08), so there is always a gap of background
+    // between the arc's head and the pointer and the whole dial reads more quietly.
+    //
+    // It cannot overrun the pointer at any value: the reach is a fraction OF the
+    // pointer's own sweep, so the two are derived from one number rather than kept in
+    // sync. Turn the knob down and the arc shortens with it, gap and all.
     //
     // This supersedes the old "no empty track" rule (2026-08-01), which left a silent
     // dial as nothing but a pointer. The track is not empty now -- it shows the value --
@@ -364,11 +368,18 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
     //
     // The gradient runs between the two ENDS of the arc rather than across the knob's
     // bounds, so it always tracks the arc's own direction however far round it sweeps.
-    if (angle - rotaryStartAngle > kMinSweep)
+    // How far along the pointer's sweep the arc runs. 1.0 would touch the pointer; this
+    // is the one number to change if the gap wants to be wider or narrower.
+    constexpr float kValueArcReach = 0.75f;
+
+    const float valueArcEnd = rotaryStartAngle
+                            + (angle - rotaryStartAngle) * kValueArcReach;
+
+    if (valueArcEnd - rotaryStartAngle > kMinSweep)
     {
         juce::Path valueArc;
         valueArc.addCentredArc(centreX, centreY, arcRadius, arcRadius, 0.0f,
-                               rotaryStartAngle, angle, true);
+                               rotaryStartAngle, valueArcEnd, true);
 
         auto onArc = [&](float a)
         {
@@ -376,8 +387,10 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
                                       centreY - std::cos(a) * arcRadius);
         };
 
+        // The gradient ends where the ARC does, not where the pointer is, so the fade
+        // completes over the length actually drawn rather than being cut off mid-ramp.
         const auto tailP = onArc(rotaryStartAngle);
-        const auto headP = onArc(angle);
+        const auto headP = onArc(valueArcEnd);
 
         // Brightest at the tail, fading out towards the pointer (Giuseppe, 2026-08-08:
         // "dark at the top and light at the bottom"). The sweep starts at the bottom
