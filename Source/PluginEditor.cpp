@@ -6885,8 +6885,17 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
             //
             // The radii are FRACTIONS of the title height, so the bloom keeps its
             // proportions when the user resizes the window.
-            if (const float glow = customLookAndFeel.getGlowAmount(); glow > 0.01f)
+            // NOT gated on the level. The title keeps a small halo at rest (Giuseppe,
+            // 2026-08-09: "I want a little bit of glow at 0"), so it never goes flat.
+            // Every other glow site in the face draws nothing at silence, and the title
+            // is now the one deliberate exception.
+            //
+            // This costs nothing while idle. The plate only repaints when the level
+            // moves, and at silence the level holds at zero, so the resting bloom is
+            // painted once and then simply stays on screen.
             {
+                const float glow = customLookAndFeel.getGlowAmount();
+
                 const juce::Colour glowCol = meterLinkedTitleGlowHue(clippingHoldTicks > 0);
 
                 constexpr int kGlowDirs = 8;
@@ -6899,12 +6908,14 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
                 // The two multiply, so the bloom grows roughly with the square of the
                 // level. That is what makes the response dramatic rather than gentle.
                 //
-                // bloom does NOT start at zero. Scaling straight off glow made the
-                // quiet end fade to almost nothing, so the first sound arrived with no
-                // bloom at all. The floor gives the title a bloom the moment it is
-                // audible, and the range above it is what the meter then drives. The
-                // outer `glow > 0.01f` test still holds silence at nothing.
-                const float bloom = 0.30f + 0.70f * glow;
+                // The bloom at SILENCE. Scaling straight off glow made the title go
+                // completely flat with no sound, and made the first note arrive with no
+                // bloom at all. This is the resting halo; the meter drives everything
+                // above it. Raise this for a stronger glow at rest, and it lifts the
+                // whole curve with it.
+                constexpr float kBloomFloor = 0.30f;
+
+                const float bloom = kBloomFloor + (1.0f - kBloomFloor) * glow;
 
                 // Radii and alphas at FULL level. Both ends were raised together
                 // (Giuseppe, 2026-08-09) -- a bigger reach and more light at the top,
