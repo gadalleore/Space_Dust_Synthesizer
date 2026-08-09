@@ -6839,11 +6839,25 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
 
         if (titleImage.isValid())
         {
-            // Draw the nebula logo centred in the header strip, preserving aspect.
+            // Draw the logo centred in the header strip, preserving aspect.
             // (The artwork carries its own dusty glow, so no extra glow layer.)
+            //
+            // Fitted inside a slightly SHRUNK copy of the strip rather than the strip
+            // itself, which is how the title is sized: drawImageWithin scales to fit
+            // whatever rectangle it is given, so 0.9 here is 90% of full size. Shrunk
+            // about the centre so it stays put rather than climbing towards the top.
+            // The artwork is wider than the strip's proportions, so the HEIGHT is what
+            // binds -- but both are scaled, so this still holds if the art ever changes
+            // to something width-limited.
+            constexpr float kTitleScale = 0.9f;
+
+            const auto drawArea = titleArea.withSizeKeepingCentre(
+                juce::roundToInt(titleArea.getWidth()  * kTitleScale),
+                juce::roundToInt(titleArea.getHeight() * kTitleScale));
+
             g.setColour(juce::Colours::white);
-            g.drawImageWithin(titleImage, titleArea.getX(), titleArea.getY(),
-                              titleArea.getWidth(), titleArea.getHeight(),
+            g.drawImageWithin(titleImage, drawArea.getX(), drawArea.getY(),
+                              drawArea.getWidth(), drawArea.getHeight(),
                               juce::RectanglePlacement::centred, false);
         }
         else
