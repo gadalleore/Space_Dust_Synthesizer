@@ -6899,12 +6899,19 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
                 // The two multiply, so the bloom grows roughly with the square of the
                 // level. That is what makes the response dramatic rather than gentle.
                 //
-                // The 0.10 and 0.05 are the radii at FULL level, which is the state that
-                // was approved by eye, so the top of the range is unchanged and only the
-                // travel below it is new.
-                const float radius[2] { drawArea.getHeight() * 0.10f * glow,   // outer
-                                        drawArea.getHeight() * 0.05f * glow }; // inner
-                const float ringAlpha[2] { 0.045f, 0.07f };
+                // bloom does NOT start at zero. Scaling straight off glow made the
+                // quiet end fade to almost nothing, so the first sound arrived with no
+                // bloom at all. The floor gives the title a bloom the moment it is
+                // audible, and the range above it is what the meter then drives. The
+                // outer `glow > 0.01f` test still holds silence at nothing.
+                const float bloom = 0.30f + 0.70f * glow;
+
+                // Radii and alphas at FULL level. Both ends were raised together
+                // (Giuseppe, 2026-08-09) -- a bigger reach and more light at the top,
+                // and the floor above carries the same increase down to the quiet end.
+                const float radius[2] { drawArea.getHeight() * 0.16f * bloom,   // outer
+                                        drawArea.getHeight() * 0.08f * bloom }; // inner
+                const float ringAlpha[2] { 0.065f * bloom, 0.10f * bloom };
 
                 for (int ring = 0; ring < 2; ++ring)
                 {
@@ -6917,7 +6924,9 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
                             juce::roundToInt(std::cos(theta) * radius[ring]),
                             juce::roundToInt(std::sin(theta) * radius[ring]));
 
-                        g.setColour(glowCol.withAlpha(glow * ringAlpha[ring]));
+                        // ringAlpha already carries `bloom`; do NOT scale by glow again
+                        // here, or the level is applied twice and the bloom goes dark.
+                        g.setColour(glowCol.withAlpha(ringAlpha[ring]));
                         g.drawImageWithin(titleImage, off.getX(), off.getY(),
                                           off.getWidth(), off.getHeight(),
                                           juce::RectanglePlacement::centred, true);
