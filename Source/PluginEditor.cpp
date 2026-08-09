@@ -6840,7 +6840,6 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
         if (titleImage.isValid())
         {
             // Draw the logo centred in the header strip, preserving aspect.
-            // (The artwork carries its own dusty glow, so no extra glow layer.)
             //
             // Fitted inside a slightly SHRUNK copy of the strip rather than the strip
             // itself, which is how the title is sized: drawImageWithin scales to fit
@@ -6854,6 +6853,43 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
             const auto drawArea = titleArea.withSizeKeepingCentre(
                 juce::roundToInt(titleArea.getWidth()  * kTitleScale),
                 juce::roundToInt(titleArea.getHeight() * kTitleScale));
+
+            //--------------------------------------------------------------
+            // -- Title bloom, driven by the meter (Giuseppe, 2026-08-08) --
+            // The title blooms with the output level, the same as the knob arcs, the
+            // group halos and the starfield. getGlowAmount() is that one law, so the
+            // title rises and falls with everything else instead of having a response
+            // of its own. It draws nothing at silence.
+            //
+            // The colour comes from meterLinkedTitleGlowHue, so the title turns red on
+            // clipping with the rest of the face.
+            //
+            // Method: draw the artwork again, larger and behind, with
+            // fillAlphaChannelWithCurrentBrush TRUE. That uses the image's alpha as a
+            // mask and fills it with the current colour, so the halo takes the exact
+            // shape of the lettering. This is the image equivalent of glowPath's two
+            // widening passes, and it works only because the artwork is keyed -- an
+            // opaque image would mask a rectangle.
+            //
+            // The expansion is a FRACTION of the title's height, not a pixel count, so
+            // the bloom keeps its proportions when the window is resized.
+            if (const float glow = customLookAndFeel.getGlowAmount(); glow > 0.01f)
+            {
+                const juce::Colour glowCol = meterLinkedTitleGlowHue(clippingHoldTicks > 0);
+
+                for (int pass = 0; pass < 2; ++pass)
+                {
+                    const float spread = drawArea.getHeight() * (pass == 0 ? 0.16f : 0.08f);
+                    const float a      = glow * (pass == 0 ? 0.16f : 0.28f);
+
+                    const auto halo = drawArea.expanded(juce::roundToInt(spread));
+
+                    g.setColour(glowCol.withAlpha(a));
+                    g.drawImageWithin(titleImage, halo.getX(), halo.getY(),
+                                      halo.getWidth(), halo.getHeight(),
+                                      juce::RectanglePlacement::centred, true);
+                }
+            }
 
             g.setColour(juce::Colours::white);
             g.drawImageWithin(titleImage, drawArea.getX(), drawArea.getY(),
