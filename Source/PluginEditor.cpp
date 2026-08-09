@@ -6748,8 +6748,11 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
 
     g.fillAll(juce::Colour(0xff0a0a1f));
 
+    // Same offset mainView is given by applyShakeTransform, or the painted face and the
+    // controls standing on it would slide independently of each other.
     g.addTransform(juce::AffineTransform::scale(paintScale)
-                       .translated((float) inset.x, (float) inset.y));
+                       .translated((float) inset.x + shakeOffset.x,
+                                   (float) inset.y + shakeOffset.y));
     const int w = kDesignWidth;
     const int h = designHeight_;
     {
@@ -6981,15 +6984,18 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
 
 //==============================================================================
 // -- Where the plate sits --
-// Overscanned: the plate is the editor's size plus kShakeMargin on every side, so at
-// rest its edges are just outside the visible rectangle. The shake slides it within
-// that margin, and because there is always face beyond the edge, no gap can ever be
-// exposed -- the face reads as being knocked about behind a fixed frame.
+// The plate is the editor's size plus kShakeMargin on every side and NEVER MOVES. It
+// is the fixed backdrop; what the shake moves is the face drawn on it and the controls
+// above it, both of which translate within the margin. Because the plate always covers
+// more than the visible rectangle, no gap can ever be exposed at an edge.
 //
-// The vertical margin is derived from the horizontal one along the design aspect so
-// the plate keeps the editor's proportions. layoutPlate() takes its scale from
-// plate.getWidth(), so the overscan is absorbed as a very slightly larger face rather
-// than as a crop: nothing in the design is lost.
+// The shake was originally applied here, to the plate's position. That made it integer
+// pixels -- a component's bounds are whole numbers -- and at a 3px throw that is four
+// steps for the entire dynamic range, with levels 0.4 to 0.6 all landing on the same
+// +/-1px. It read as on/off instead of as a response to level (Giuseppe, 2026-08-08:
+// "it only shakes when it is in the green... it should shake progressively more as it
+// goes into redline"). Sub-pixel is the only way to get a smooth ramp under 3px, so the
+// offset is a float now and rides the transforms instead. See applyShakeTransform.
 juce::Point<int> SpaceDustAudioProcessorEditor::plateInset() const
 {
     // Vertical margin derived along the design aspect so the band is visually even on
@@ -7007,8 +7013,29 @@ void SpaceDustAudioProcessorEditor::positionPlate()
 
     plate.setBounds(juce::Rectangle<int>(getWidth()  + 2 * inset.x,
                                          getHeight() + 2 * inset.y)
-                        .withPosition(-inset.x + shakeOffset.x,
-                                      -inset.y + shakeOffset.y));
+                        .withPosition(-inset.x, -inset.y));
+}
+
+//==============================================================================
+// -- The face's transform, shake included --
+// mainView is already rendered through a fractional scale (viewScale is the editor's
+// width over 1120, e.g. 0.9518), so its whole subtree is ALREADY going through a
+// resampling path. Folding a fractional translation into that same transform therefore
+// costs nothing in quality or speed -- there is no new resampling, only a different
+// offset on the one that was happening anyway. That is what makes sub-pixel shake free
+// here, and it is the reason the offset goes in the transform rather than the bounds.
+//
+// Kept separate from layoutPlate() so a shake frame does not re-run the whole layout:
+// this only touches one transform, where layoutPlate() repositions every control.
+void SpaceDustAudioProcessorEditor::applyShakeTransform()
+{
+    const auto  inset     = plateInset();
+    const int   faceWidth = juce::jmax(0, plate.getWidth() - 2 * inset.x);
+    const float viewScale = (faceWidth > 0) ? faceWidth / (float) kDesignWidth : 1.0f;
+
+    mainView.setTransform(juce::AffineTransform::scale(viewScale)
+                              .translated((float) inset.x + shakeOffset.x,
+                                          (float) inset.y + shakeOffset.y));
 }
 
 // -- One shake frame --
@@ -7025,12 +7052,16 @@ void SpaceDustAudioProcessorEditor::driveShake(float level)
 
     // Curved so quiet passages barely register and loud ones actually move it. A linear
     // map spends most of its range on a permanent low-level jitter.
+    //
+    // NOT rounded: this is the whole point of the sub-pixel rework. kShakeMax is 3px, so
+    // rounding to whole pixels left four steps for the entire range and flattened the
+    // green region onto one of them.
     const float amp = kShakeMax * std::pow(shakeLevel, kShakeCurve);
-
-    const auto previous = shakeOffset;
 
     if (amp < kShakeFloor)
     {
+        // Settle exactly to zero rather than leaving a fractional offset behind, or the
+        // face would come to rest a hair off-centre and stay there until the next note.
         shakeOffset = {};
     }
     else
@@ -7039,14 +7070,11 @@ void SpaceDustAudioProcessorEditor::driveShake(float level)
         // is that it looks struck.
         const float angle = shakeRng.nextFloat() * juce::MathConstants<float>::twoPi;
 
-        shakeOffset = { juce::roundToInt(std::cos(angle) * amp),
-                        juce::roundToInt(std::sin(angle) * amp) };
+        shakeOffset = { std::cos(angle) * amp,
+                        std::sin(angle) * amp };
     }
 
-    // setBounds on an unchanged rectangle is a no-op in JUCE, but skipping the call
-    // outright also skips the bounds arithmetic, and this runs inside the repaint path.
-    if (shakeOffset != previous)
-        positionPlate();
+    applyShakeTransform();
 }
 
 //==============================================================================
@@ -7133,12 +7161,8 @@ void SpaceDustAudioProcessorEditor::layoutPlate()
     // itself is NOT stretched over the margin, because that would push the outermost few
     // design pixels out of view and the tab bar starts at design x=0.
     {
-        const auto  inset     = plateInset();
-        const int   faceWidth = juce::jmax(0, plate.getWidth() - 2 * inset.x);
-        const float viewScale = (faceWidth > 0) ? faceWidth / (float) kDesignWidth : 1.0f;
         mainView.setBounds(0, 0, kDesignWidth, designHeight_);
-        mainView.setTransform(juce::AffineTransform::scale(viewScale)
-                                  .translated((float) inset.x, (float) inset.y));
+        applyShakeTransform();   // scale + inset + whatever the shake is currently at
     }
 
     //==============================================================================

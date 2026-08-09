@@ -618,10 +618,21 @@ private:
         without the face moving underneath it. */
     static constexpr bool  kShakeEnabled = true;
 
+    // The throw at full scale. Set by ear (Giuseppe, 2026-08-08): "the maximum shake it
+    // has right now is that absolute maximum the synth should be shaking". Turn the
+    // WHOLE effect up or down here -- everything below is a shape, not a size.
     static constexpr float kShakeMax     = 3.0f;    // px at full level, in EDITOR pixels
     static constexpr float kShakeRelease = 0.373f;  // per frame at the 20Hz UI tick
     static constexpr float kShakeCurve   = 1.5f;    // >1 keeps quiet passages still
-    static constexpr float kShakeFloor   = 0.35f;   // px below which it sits dead still
+
+    // The point at which it stops entirely. Deliberately tiny: this used to be 0.35px,
+    // which with whole-pixel offsets was the level below which nothing could show anyway,
+    // but sub-pixel motion is visible far below that and cutting it at 0.35 killed the
+    // bottom third of the range outright -- everything under level 0.24 sat dead still.
+    // At 0.04 the face keeps a faint tremor when quiet and the ramp into redline is
+    // continuous, which is what was asked for. It exists at all so silence is truly
+    // still rather than jittering on meter noise.
+    static constexpr float kShakeFloor   = 0.04f;   // px below which it sits dead still
 
     /** How far the plate overhangs the editor on each side. Must be > kShakeMax or a
         shake at full level would pull the face's own edge into view.
@@ -639,17 +650,26 @@ private:
         is even on all four sides. */
     juce::Point<int> plateInset() const;
 
-    /** Applies one shake frame to the plate's position. Called from timerCallback,
-        immediately before the repaint that will draw it. */
+    /** Advances the ballistics by one frame and moves the face. Called from
+        timerCallback, immediately before the repaint that will draw it. */
     void driveShake(float level);
 
-    /** Puts the plate at its home inset plus the current shake, in editor coordinates.
-        The one place the plate's position is set. */
+    /** Sets mainView's transform: design scale, the plate inset, and the current shake
+        offset. Cheap enough to call per shake frame -- it touches one transform, unlike
+        layoutPlate() which repositions every control. paintPlate() applies the matching
+        offset itself so the face and the controls move together. */
+    void applyShakeTransform();
+
+    /** Sizes the plate to the editor plus the inset margin. The plate does NOT move --
+        the shake rides the transforms, so this only runs on a real resize. */
     void positionPlate();
 
-    juce::Random     shakeRng;
-    float            shakeLevel = 0.0f;
-    juce::Point<int> shakeOffset;
+    juce::Random shakeRng;
+    float        shakeLevel = 0.0f;
+
+    /** FLOAT, not int, and that is the point: a whole-pixel offset gave a 3px throw only
+        four steps and flattened the entire green region onto +/-1px. */
+    juce::Point<float> shakeOffset;
 
     //==============================================================================
     // -- Preset Management --
