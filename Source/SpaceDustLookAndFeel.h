@@ -255,6 +255,12 @@ private:
 
     // Knob accent colours
     juce::Colour knobArcCyan    = juce::Colour(0xff00d4ff);
+
+    /** The always-on value arc under the level fill. Deliberately a LIGHTER, softer blue
+        than knobArcCyan so the meter drawn over it still reads as the brighter thing --
+        same family, one step back. */
+    juce::Colour valueArcBlue   = juce::Colour(0xff7fc4ff);
+
     juce::Colour knobGlowCyan   = juce::Colour(0xff00b4ff);
     juce::Colour knobBodyDark   = juce::Colour(0xff1a1a30);
     juce::Colour knobBodyLight  = juce::Colour(0xff2a2a48);

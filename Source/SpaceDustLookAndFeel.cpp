@@ -346,11 +346,55 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
     // pointer's root into a blob (Sol's kMinSweep, same reasoning).
     constexpr float kMinSweep = 0.06f;
 
-    // NO empty track. Nothing is drawn for the unfilled part of the sweep, so at
-    // silence the dial is just the pointer and the background shows straight through
-    // (Giuseppe, 2026-08-01). The arc exists only as the level draws it in -- which is
-    // also Sol's reasoning for having no track: an empty ring sitting there implies a
-    // value that has not been set.
+    //==========================================================================
+    // -- Value arc (Giuseppe, 2026-08-08) --
+    // A light-blue arc that always runs from the start of the sweep to the pointer,
+    // under the level fill below. Asked for as "a small arc gradient that is light blue
+    // on each knob that follows the arc all the way up to the indicator".
+    //
+    // It CANNOT overrun the pointer: it is drawn to `angle`, which is the pointer's own
+    // angle, so the two are the same number rather than two things kept in sync. Turn
+    // the knob down and the arc shortens with it by construction.
+    //
+    // This supersedes the old "no empty track" rule (2026-08-01), which left a silent
+    // dial as nothing but a pointer. The track is not empty now -- it shows the value --
+    // so the objection to it (an empty ring implying a value that was never set) does
+    // not apply. The level fill still draws over the top, so each knob reads as a
+    // setting with a meter running along inside it.
+    //
+    // The gradient runs between the two ENDS of the arc rather than across the knob's
+    // bounds, so it always tracks the arc's own direction however far round it sweeps.
+    if (angle - rotaryStartAngle > kMinSweep)
+    {
+        juce::Path valueArc;
+        valueArc.addCentredArc(centreX, centreY, arcRadius, arcRadius, 0.0f,
+                               rotaryStartAngle, angle, true);
+
+        auto onArc = [&](float a)
+        {
+            return juce::Point<float>(centreX + std::sin(a) * arcRadius,
+                                      centreY - std::cos(a) * arcRadius);
+        };
+
+        const auto tailP = onArc(rotaryStartAngle);
+        const auto headP = onArc(angle);
+
+        // Brightest at the tail, fading out towards the pointer (Giuseppe, 2026-08-08:
+        // "dark at the top and light at the bottom"). The sweep starts at the bottom
+        // left and climbs over the top, so the light end is the bottom of the dial and
+        // the arc dims as it rises -- the pointer alone marks the value, and the arc
+        // falls away behind it instead of racing it to be the brightest thing.
+        //
+        // Kept well below the level fill's strength either way: this is the quiet layer
+        // and must not compete with the meter drawn over it.
+        juce::ColourGradient grad(valueArcBlue.withAlpha(0.75f), tailP,
+                                  valueArcBlue.withAlpha(0.22f), headP, false);
+
+        g.setGradientFill(grad);
+        g.strokePath(valueArc, juce::PathStrokeType(arcThickness,
+                                                    juce::PathStrokeType::curved,
+                                                    juce::PathStrokeType::butt));
+    }
 
     // --- Fill: the output level, bounded by this knob's own value ---
     {
