@@ -297,6 +297,66 @@ namespace
     {
         return clipping ? juce::Colour(SpaceDustLookAndFeel::kClipRed) : juce::Colour(0xff00d4ff);
     }
+
+    //==========================================================================
+    // -- Bloom for a keyed image (title, 63C logo) --
+    // Shared so the two bloom identically. They were asked for as the same effect
+    // (Giuseppe, 2026-08-09: "have the 63C logo glow the same way the header has been
+    // glowing"), and one function is the only way to keep that true as it is tuned.
+
+    /** The bloom at SILENCE. Both marks keep a small halo at rest rather than going
+        flat, which is the one place the face deliberately departs from "no glow at
+        silence". Raising this lifts the whole curve with it. */
+    constexpr float kBloomFloor = 0.30f;
+
+    /** Maps the meter's glow amount onto the bloom range, floor included. */
+    inline float bloomAmount(float glow) noexcept
+    {
+        return kBloomFloor + (1.0f - kBloomFloor) * glow;
+    }
+
+    /** Draws `image` as light around itself, in `colour`, at strength `bloom`.
+        Works ONLY on an image keyed to transparent: fillAlphaChannelWithCurrentBrush
+        uses the alpha as a mask, so an opaque image would bloom its rectangle.
+
+        The copies are the SAME SIZE and OFFSET, never enlarged. Enlarging is right for
+        a stroke and wrong for a shape with separate parts: it moves the parts away from
+        each other, so nothing lands on top of itself and the result reads as a second
+        copy behind the first rather than as light.
+
+        Both the reach and the brightness scale with `bloom`, so they multiply and the
+        response is steep. Radii are fractions of the height, so a small mark and a
+        large one bloom in proportion rather than by a fixed pixel count. */
+    inline void bloomKeyedImage(juce::Graphics& g, const juce::Image& image,
+                                juce::Rectangle<int> area, juce::Colour colour, float bloom)
+    {
+        if (! image.isValid() || area.isEmpty() || bloom <= 0.0f)
+            return;
+
+        constexpr int kDirs = 8;
+
+        const float radius[2] { area.getHeight() * 0.16f * bloom,    // outer
+                                area.getHeight() * 0.08f * bloom };  // inner
+        const float alpha[2]  { 0.065f * bloom, 0.10f * bloom };
+
+        for (int ring = 0; ring < 2; ++ring)
+        {
+            for (int d = 0; d < kDirs; ++d)
+            {
+                const float theta = juce::MathConstants<float>::twoPi
+                                  * (float) d / (float) kDirs;
+
+                const auto off = area.translated(
+                    juce::roundToInt(std::cos(theta) * radius[ring]),
+                    juce::roundToInt(std::sin(theta) * radius[ring]));
+
+                g.setColour(colour.withAlpha(alpha[ring]));
+                g.drawImageWithin(image, off.getX(), off.getY(),
+                                  off.getWidth(), off.getHeight(),
+                                  juce::RectanglePlacement::centred, true);
+            }
+        }
+    }
 }
 
 //==============================================================================
@@ -6855,95 +6915,21 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
                 juce::roundToInt(titleArea.getHeight() * kTitleScale));
 
             //--------------------------------------------------------------
-            // -- Title bloom, driven by the meter (Giuseppe, 2026-08-08) --
+            // -- Title bloom, driven by the meter --
             // The title blooms with the output level, the same as the knob arcs, the
-            // group halos and the starfield. getGlowAmount() is that one law, so the
-            // title rises and falls with everything else instead of having a response
-            // of its own. It draws nothing at silence.
+            // group halos and the starfield: getGlowAmount() is the one glow law, so
+            // the title rises and falls with the rest of the face.
             //
-            // The colour comes from meterLinkedTitleGlowHue, so the title turns red on
-            // clipping with the rest of the face.
+            // NOT gated on the level, unlike every other glow site. The title keeps a
+            // small halo at rest so it never goes flat (kBloomFloor). This costs
+            // nothing while idle: the plate repaints only when the level moves, so at
+            // silence the resting bloom is painted once and then stays on screen.
             //
-            // Method: draw the artwork again behind itself, with
-            // fillAlphaChannelWithCurrentBrush TRUE. JUCE then uses the image's alpha
-            // as a mask and fills it with the current colour, so the light takes the
-            // exact shape of the lettering. This works only because the artwork is
-            // keyed -- an opaque image masks its rectangle.
-            //
-            // The copies are the SAME SIZE and are OFFSET, not enlarged. The first cut
-            // of this scaled the copy up, the way glowPath widens a stroke. That fails
-            // on a word: enlarging it moves the letters apart from each other, so no
-            // letter lands on top of itself and the result reads as a second title
-            // behind the first (Giuseppe, 2026-08-08: "almost an echo effect offset
-            // from the title"). Offsetting a same-size copy keeps every letter over
-            // itself, so the copies build light around the shape instead of a ghost of
-            // it. Widening works for a stroke and does not work for text.
-            //
-            // Two rings of eight, outer ring first. The per-copy alpha is low and they
-            // accumulate: eight copies at 0.07 give about 0.4 where they all overlap,
-            // falling off with distance from the letters, which is what a glow is.
-            //
-            // The radii are FRACTIONS of the title height, so the bloom keeps its
-            // proportions when the user resizes the window.
-            // NOT gated on the level. The title keeps a small halo at rest (Giuseppe,
-            // 2026-08-09: "I want a little bit of glow at 0"), so it never goes flat.
-            // Every other glow site in the face draws nothing at silence, and the title
-            // is now the one deliberate exception.
-            //
-            // This costs nothing while idle. The plate only repaints when the level
-            // moves, and at silence the level holds at zero, so the resting bloom is
-            // painted once and then simply stays on screen.
-            {
-                const float glow = customLookAndFeel.getGlowAmount();
-
-                const juce::Colour glowCol = meterLinkedTitleGlowHue(clippingHoldTicks > 0);
-
-                constexpr int kGlowDirs = 8;
-
-                // BOTH the spread and the brightness follow the meter. Brightness alone
-                // only fades a halo of fixed size in and out; moving the radius as well
-                // makes the light reach further out of the letters as the synth gets
-                // louder, and pull back in tight as it falls away.
-                //
-                // The two multiply, so the bloom grows roughly with the square of the
-                // level. That is what makes the response dramatic rather than gentle.
-                //
-                // The bloom at SILENCE. Scaling straight off glow made the title go
-                // completely flat with no sound, and made the first note arrive with no
-                // bloom at all. This is the resting halo; the meter drives everything
-                // above it. Raise this for a stronger glow at rest, and it lifts the
-                // whole curve with it.
-                constexpr float kBloomFloor = 0.30f;
-
-                const float bloom = kBloomFloor + (1.0f - kBloomFloor) * glow;
-
-                // Radii and alphas at FULL level. Both ends were raised together
-                // (Giuseppe, 2026-08-09) -- a bigger reach and more light at the top,
-                // and the floor above carries the same increase down to the quiet end.
-                const float radius[2] { drawArea.getHeight() * 0.16f * bloom,   // outer
-                                        drawArea.getHeight() * 0.08f * bloom }; // inner
-                const float ringAlpha[2] { 0.065f * bloom, 0.10f * bloom };
-
-                for (int ring = 0; ring < 2; ++ring)
-                {
-                    for (int d = 0; d < kGlowDirs; ++d)
-                    {
-                        const float theta = juce::MathConstants<float>::twoPi
-                                          * (float) d / (float) kGlowDirs;
-
-                        const auto off = drawArea.translated(
-                            juce::roundToInt(std::cos(theta) * radius[ring]),
-                            juce::roundToInt(std::sin(theta) * radius[ring]));
-
-                        // ringAlpha already carries `bloom`; do NOT scale by glow again
-                        // here, or the level is applied twice and the bloom goes dark.
-                        g.setColour(glowCol.withAlpha(ringAlpha[ring]));
-                        g.drawImageWithin(titleImage, off.getX(), off.getY(),
-                                          off.getWidth(), off.getHeight(),
-                                          juce::RectanglePlacement::centred, true);
-                    }
-                }
-            }
+            // See bloomKeyedImage for the method and for why the copies are offset
+            // rather than enlarged. The 63C logo below blooms through the same call.
+            bloomKeyedImage(g, titleImage, drawArea,
+                            meterLinkedTitleGlowHue(clippingHoldTicks > 0),
+                            bloomAmount(customLookAndFeel.getGlowAmount()));
 
             g.setColour(juce::Colours::white);
             g.drawImageWithin(titleImage, drawArea.getX(), drawArea.getY(),
@@ -7009,6 +6995,19 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
         {
             const int logoX = (w - gap) - logoW;
             const int logoY = masterBottom + gap;
+
+            // Blooms with the meter, through the same call the title uses, so the two
+            // marks light up together and by the same law. The radii inside are
+            // fractions of the height, so the logo -- much smaller than the title --
+            // blooms in proportion rather than getting the title's pixel reach.
+            //
+            // Logo63C.png is a white ghost on transparent, so the alpha mask has a
+            // shape to work with. An opaque logo would bloom its bounding box.
+            bloomKeyedImage(g, logoImage,
+                            juce::Rectangle<int>(logoX, logoY, logoW, logoH),
+                            meterLinkedTitleGlowHue(clippingHoldTicks > 0),
+                            bloomAmount(customLookAndFeel.getGlowAmount()));
+
             g.setColour(juce::Colours::white.withAlpha(0.9f));
             g.drawImageWithin(logoImage, logoX, logoY, logoW, logoH,
                               juce::RectanglePlacement::centred, false);
