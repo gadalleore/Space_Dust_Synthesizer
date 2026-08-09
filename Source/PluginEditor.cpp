@@ -3333,6 +3333,40 @@ namespace
     // clicked, so the QWERTY computer-keyboard keeps playing notes while the user
     // twists controls. Text fields are intentionally left alone so typing (preset
     // names, search) still works. Applied recursively to every descendant.
+    //==========================================================================
+    // -- Cache every label's rendering --
+    // The whole-face repaint that animates the glow re-renders every descendant, and
+    // b16fc8d measured where that goes: "full text layout (drawLabel -> drawText ->
+    // GlyphArrangement) for every label plus every rotary, toggle and group outline",
+    // ~130% CPU. That commit stopped the repaint happening at SILENCE; while notes are
+    // sounding the level moves every tick and it still runs at 20Hz.
+    //
+    // Labels are the half of that cost which is pure waste: their text does not change
+    // when the glow level does, so they lay out the same glyphs 20 times a second to
+    // produce identical pixels. Buffered, they blit a cached image instead.
+    //
+    // Safe under mainView's scale transform: JUCE's StandardCachedComponentImage sizes
+    // the cache by g.getInternalContext().getPhysicalPixelScaleFactor(), so it is
+    // rendered at true on-screen resolution and re-rendered when a drag-resize changes
+    // that factor. Text stays sharp at every zoom.
+    //
+    // Labels ONLY. Sliders are deliberately excluded: the knob arcs fill by output level
+    // (setOutputMeterLevel), so they genuinely have new pixels every frame and caching
+    // them would add an image copy to work that has to happen anyway.
+    void cacheLabelRendering(juce::Component& parent)
+    {
+        for (int i = 0; i < parent.getNumChildComponents(); ++i)
+        {
+            if (auto* child = parent.getChildComponent(i))
+            {
+                if (dynamic_cast<juce::Label*>(child) != nullptr)
+                    child->setBufferedToImage(true);
+
+                cacheLabelRendering(*child);
+            }
+        }
+    }
+
     void preventControlsStealingKeyboardFocus(juce::Component& parent)
     {
         for (int i = 0; i < parent.getNumChildComponents(); ++i)
@@ -3354,125 +3388,6 @@ namespace
 //==============================================================================
 // -- Constructor --
 
-//==============================================================================
-// -- Is this application currently frontmost? --
-// Needed to decide whether clicking the floating window should haul the host
-// forward, or leave the z-order completely alone. Getting that wrong in either
-// direction is visible: always raising means the plugin permanently outranks the
-// DAW and clicking the DAW cannot win focus back; never raising means clicking in
-// from another application does nothing at all.
-//
-// juce::Process::isForegroundProcess() cannot be used -- it exists only in
-// juce_Threads_mac.mm, so on Windows it is a stub that silently answers nothing.
-//
-// The three Win32 calls are declared by hand rather than including <windows.h>,
-// which defines a Rectangle() function that collides with juce::Rectangle right
-// through this file.
-namespace
-{
-   #if JUCE_WINDOWS
-    extern "C" __declspec(dllimport) void*         __stdcall GetForegroundWindow();
-    extern "C" __declspec(dllimport) unsigned long __stdcall GetWindowThreadProcessId(void*, unsigned long*);
-    extern "C" __declspec(dllimport) unsigned long __stdcall GetCurrentProcessId();
-    extern "C" __declspec(dllimport) void*         __stdcall GetAncestor(void*, unsigned int);
-
-    bool thisAppIsFrontmost()
-    {
-        unsigned long pid = 0;
-        GetWindowThreadProcessId(GetForegroundWindow(), &pid);
-        return pid == GetCurrentProcessId();
-    }
-
-    extern "C" __declspec(dllimport) int   __stdcall GetClassNameW(void*, wchar_t*, int);
-    extern "C" __declspec(dllimport) void* __stdcall GetWindow(void*, unsigned int);
-    extern "C" __declspec(dllimport) int   __stdcall IsWindowVisible(void*);
-    extern "C" __declspec(dllimport) int   __stdcall IsIconic(void*);
-
-    //==========================================================================
-    // -- Finding the DAW's main window --
-    // Live 10 gives a plugin GUI its own unowned top-level window ('Vst3PlugWindow'),
-    // a SIBLING of the Live application window rather than a child or an owned window
-    // of it (established from a runtime window dump, 2026-08-04). Two consequences,
-    // and both of them broke an earlier attempt at this:
-    //
-    //   - GA_ROOTOWNER from the editor's peer stops at that plugin window and never
-    //     reaches Live itself, so it cannot be used to find the application;
-    //   - clicking the Live window puts it above the plugin window as readily as
-    //     above ours, which is why watching only OUR window for activation saw
-    //     nothing happen.
-    //
-    // So the application window has to be identified by looking for it: the biggest
-    // visible, unowned, top-level window this process has that is not one of ours.
-    // Live's document window dwarfs every plugin frame, so "biggest" picks it out.
-    // Owned windows are skipped because those are the dialogs and palettes hanging off
-    // it, never the application itself.
-    struct WinRect { long left, top, right, bottom; };
-
-    extern "C" __declspec(dllimport) int __stdcall GetWindowRect(void*, WinRect*);
-    extern "C" __declspec(dllimport) int __stdcall EnumWindows(int (__stdcall*)(void*, void*), void*);
-
-    struct MainWindowSearch
-    {
-        void*     best     = nullptr;
-        long long bestArea = 0;
-    };
-
-    int __stdcall mainWindowEnumProc(void* window, void* userData)
-    {
-        auto& search = *static_cast<MainWindowSearch*>(userData);
-
-        unsigned long pid = 0;
-        GetWindowThreadProcessId(window, &pid);
-
-        if (pid != GetCurrentProcessId()          // another application entirely
-             || ! IsWindowVisible(window)
-             || GetWindow(window, 4 /* GW_OWNER */) != nullptr)   // a dialog or palette
-            return 1;
-
-        wchar_t cls[128] = {};
-        GetClassNameW(window, cls, 128);
-
-        // Every window JUCE makes shares one generated class name beginning "JUCE_",
-        // which is how our own shell is kept out of the running.
-        if (juce::String(juce::CharPointer_UTF16(cls)).startsWith("JUCE"))
-            return 1;
-
-        WinRect r {};
-        GetWindowRect(window, &r);
-
-        const long long area = (long long) (r.right - r.left) * (long long) (r.bottom - r.top);
-
-        if (area > search.bestArea)
-        {
-            search.bestArea = area;
-            search.best     = window;
-        }
-
-        return 1;   // keep enumerating
-    }
-
-    void* findHostMainWindow()
-    {
-        MainWindowSearch search;
-        EnumWindows(mainWindowEnumProc, &search);
-        return search.best;
-    }
-   #else
-    bool thisAppIsFrontmost()
-    {
-        return juce::Process::isForegroundProcess();   // genuinely implemented on macOS
-    }
-
-    /** macOS/Linux fallback: no cheap way to ask which top-level window a child view
-        belongs to without platform headers, so this is process-level. Coarser -- any
-        window of the host counts, not just the plugin's -- but it still only fires on
-        the transition into the host, which is the case that matters. */
-    bool hostWindowIsFrontmost(void*)
-    {
-        return thisAppIsFrontmost();
-    }
-   #endif
-}
 
 SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProcessor& p)
     : AudioProcessorEditor(&p), audioProcessor(p),
@@ -5789,95 +5704,38 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     mainView.setVisible(true);
 
     //==============================================================================
-    // -- Hand the UI over to the floating window --
-    // mainView goes onto the plate, the plate fills the shell, and the shell is a
-    // desktop window of our own (FloatingShell.h explains why the host's rectangle is
-    // no use for this). From here down the editor itself is nothing but the stub.
+    // -- The face goes straight into the host's rectangle --
+    // mainView goes onto the plate and the plate is a child of this editor. It is
+    // added FIRST so it sits at the back: the resizable corner added by setResizable()
+    // below must stay on top of it to remain grabbable.
     plate.addAndMakeVisible(mainView);
-    shell.setContent(&plate);
-
-    // The close X, added to mainView (not the plate) so it scales with the rest of the
-    // UI. Added after the re-parent loop above, which only moved what was already a
-    // child of the editor.
-    mainView.addAndMakeVisible(closeButton);
-    closeButton.onClose = [this]
-    {
-        // Standalone: the shell IS the application's interface, so closing it means
-        // quitting -- hiding it would leave an app running with nothing on screen but
-        // an empty stub window.
-        if (audioProcessor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
-        {
-            if (auto* app = juce::JUCEApplicationBase::getInstance())
-            {
-                app->systemRequestedQuit();
-                return;
-            }
-        }
-
-        // Plugin: a plugin cannot close the host's window, so the nearest equivalent is
-        // to dismiss the UI. Clicking the host's stub brings it back (see mouseUp), and
-        // repaint() brightens the stub's mark to advertise that.
-        //
-        // Latched so that following the host's frame cannot undo it: without this, the
-        // next channel switch would show the window again as though the X had never been
-        // pressed (see followHostFrameVisibility).
-        userDismissedShell_   = true;
-        shellHiddenWithFrame_ = false;
-
-        shell.hideFromDesktop();
-        repaint();
-    };
-
-    // The shell is its own desktop window and NOT a child of this editor, so it does not
-    // inherit the editor's LookAndFeel the way every control used to. Without this line
-    // JUCE walks up the parent chain, hits the shell, finds nothing, and falls back to
-    // the default LookAndFeel -- so every control that was relying on inheritance rather
-    // than an explicit setLookAndFeel() renders as a stock JUCE widget. That is exactly
-    // what made the Master knobs stop matching the rest of the synth.
-    shell.setLookAndFeel(&customLookAndFeel);
-
-    // Clicking the floating window has to be able to bring the whole application
-    // forward when it is not already frontmost. The shell cannot do this itself: it
-    // refuses activation on purpose (so the DAW keeps the spacebar), and the window
-    // that actually needs raising is the HOST's, which only the editor can reach --
-    // the stub is a child of it, so getPeer() here IS the host's window.
-    //
-    // Raise the host first and this window second, in that order, or the host would
-    // land on top of the very window that was just clicked.
-    shell.onForegroundRequest = [this]
-    {
-        if (isBeingDestroyed.load())
-            return;
-
-        // ONLY when this application is not already frontmost. Doing it on every
-        // click made the plugin permanently outrank the DAW: each press shoved the
-        // window back on top, so clicking Ableton could never get the front seat
-        // back (Giuseppe, 2026-08-01). Inside the app this now does nothing at all,
-        // and ordinary window behaviour applies.
-        if (thisAppIsFrontmost())
-            return;
-
-        if (auto* hostPeer = getPeer())
-            hostPeer->toFront(true);      // BringWindowToTop on the host's HWND
-
-        shell.toFront(false);             // ...then us, without taking keyboard focus
-    };
+    addAndMakeVisible(plate);
 
     designHeight_ = 857 + (standaloneKeyboard != nullptr ? standaloneKeyboardHeight : 0);
 
     //==============================================================================
-    // -- Resizing now belongs to the shell --
-    // This used to be setResizable() on the editor, carrying a long note about the host
-    // caching IPlugView::canResize() at attach time and having to be set synchronously.
-    // That problem is gone rather than worked around: what the host attaches to is a
-    // fixed-size stub that never resizes, so there is nothing left for it to cache
-    // wrongly. The aspect lock and the 0.45-1.60 limits are unchanged -- they have just
-    // moved onto whoever owns the resizer corner, which is the shell now.
-    shell.setAspectAndLimits((double) kDesignWidth / (double) designHeight_,
-                             juce::roundToInt(kDesignWidth  * 0.45f),
-                             juce::roundToInt(designHeight_ * 0.45f),
-                             juce::roundToInt(kDesignWidth  * 1.60f),
-                             juce::roundToInt(designHeight_ * 1.60f));
+    // -- Make the editor resizable NOW (synchronously, in the ctor) --
+    // Restored verbatim from before the floating window (git 74f776e removed it on the
+    // grounds that a fixed-size stub gave the host nothing to cache; the stub is gone,
+    // so the original hazard is back and so is the fix).
+    //
+    // The host queries IPlugView::canResize() -> editor->isResizable() at attach time,
+    // which is BEFORE the deferred timer below fires. If resizability isn't set yet the
+    // host caches "fixed size" (confirmed on macOS after a clean .pkg install + rescan;
+    // Windows only won the timing race). setResizable() is safe here: it just sets the
+    // flag and adds the corner child - it does NOT trigger resized()/paint(), so the
+    // Ableton crash that forced us to defer setSize() does not apply. (setSize() itself
+    // stays deferred below.) This MUST come after the plate is added above so the
+    // resizable corner stays on top of it and remains grabbable.
+    setResizable(true, true);   // dragging the corner scales the whole UI (locked aspect)
+    if (auto* constrainer = getConstrainer())
+    {
+        constrainer->setFixedAspectRatio((double) kDesignWidth / (double) designHeight_);
+        constrainer->setSizeLimits(juce::roundToInt(kDesignWidth  * 0.45f),
+                                   juce::roundToInt(designHeight_ * 0.45f),
+                                   juce::roundToInt(kDesignWidth  * 1.60f),
+                                   juce::roundToInt(designHeight_ * 1.60f));
+    }
 
     //==============================================================================
     // -- Keyboard policy --
@@ -5885,13 +5743,20 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // the transport dies under the user's hands while they work the UI. The Standalone
     // is the opposite case: there is no host transport to protect, and the QWERTY
     // keyboard has to be able to hold focus to play notes at all.
-    shell.setKeyboardFocusPolicy(audioProcessor.wrapperType
-                                     == juce::AudioProcessor::wrapperType_Standalone);
+    //
+    // This is the job FloatingShell::setKeyboardFocusPolicy used to do. Back in the
+    // host's own window the second half of that policy is no longer ours to enforce --
+    // the host owns the top-level window and answers WM_MOUSEACTIVATE itself -- so what
+    // is left is stopping our controls from grabbing focus when clicked, which is
+    // exactly what preventControlsStealingKeyboardFocus does. Text editors are left
+    // alone by it, so the preset-name field still types.
+    if (audioProcessor.wrapperType != juce::AudioProcessor::wrapperType_Standalone)
+        preventControlsStealingKeyboardFocus(*this);
 
-    // The host only ever sees this. Safe to size synchronously, unlike the real window
-    // below: the stub's resized() is empty and its paint() draws a single small mark, so
-    // none of the Ableton re-entrancy that forced setSize() into a timer applies here.
-    setSize(kStubWidth, kStubHeight);
+    // Everything the editor owns is parented by now, so this reaches the whole tree.
+    // (Anything added later -- the CheezeGuy tab -- simply goes unbuffered, which costs
+    // nothing beyond missing the optimisation.)
+    cacheLabelRendering(*this);
 
     //==============================================================================
     // -- Set Window Size (DEFERRED VIA TIMER CALLBACK) --
@@ -6007,24 +5872,11 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
                 const float fitH   = (float) area.getHeight() * margin / (float) designHeight_;
                 initScale = juce::jlimit(0.40f, 0.95f, juce::jmin(initScale, fitW, fitH));
             }
-            // The SHELL's size is the on-screen size now; layoutPlate() scales mainView and
-            // the painted background by plate.getWidth()/kDesignWidth. The editor is left at
-            // its stub size and is deliberately not touched here.
-            shell.setSize(juce::roundToInt(kDesignWidth  * initScale),
-                          juce::roundToInt(designHeight_ * initScale));
-
-            // The window goes on screen only now, not in the constructor.
-            // placeShellNearStub() reads the stub's SCREEN bounds, and those are
-            // meaningless until the host has actually attached and positioned the
-            // editor -- during the constructor they are still zero.
-            shell.showOnDesktop();
-            placeShellNearStub();
-
-            // Only once the window is actually on screen -- there is nothing to shake
-            // before that, and starting the timer earlier would just move a hidden window.
-            if constexpr (kShakeEnabled)
-                shakeDriver.startTimerHz(kShakeFps);
-            shellReady_ = true;
+            // The EDITOR's logical size is the on-screen size; resized() gives the plate
+            // that size plus the shake overscan, and layoutPlate() scales mainView and the
+            // painted background by plate.getWidth()/kDesignWidth.
+            setSize(juce::roundToInt(kDesignWidth  * initScale),
+                    juce::roundToInt(designHeight_ * initScale));
 
             DBG("Space Dust: Timer callback - setSize() completed");
             #if JUCE_DEBUG
@@ -6168,11 +6020,7 @@ void SpaceDustAudioProcessorEditor::globalFocusChanged(juce::Component* focusedC
     if (focusedComponent == standaloneKeyboard.get())
         return;
     // Focus left our window (popup / other app) - don't fight it.
-    // Tested against the SHELL, not the editor: every control lives in the floating
-    // window now, so isParentOf(this) would be false for all of them and the keyboard
-    // would never get focus handed back - the QWERTY keys would go dead the first time
-    // the user touched a knob.
-    if (focusedComponent != &shell && ! shell.isParentOf(focusedComponent))
+    if (focusedComponent != this && ! isParentOf(focusedComponent))
         return;
     if (dynamic_cast<juce::TextEditor*>(focusedComponent) != nullptr)  // user is typing - leave it
         return;
@@ -6193,21 +6041,6 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
     // Stop receiving focus-change callbacks before teardown (standalone only;
     // harmless if it was never registered).
     juce::Desktop::getInstance().removeFocusChangeListener(this);
-
-    //==========================================================================
-    // -- Take the floating window down FIRST --
-    // Before any control below is unwired, because the shell is a live top-level
-    // window: while it is on the desktop it can still be painted or clicked, and
-    // both routes call straight back into this half-destroyed editor. Dropping the
-    // content first and then the window means neither can happen.
-    //
-    // This is also the only thing standing between us and a leaked desktop window
-    // that outlives the editor -- close and reopen the UI a few times in a host and
-    // a missed teardown here shows up as windows piling up on screen.
-    shakeDriver.stopTimer();
-    shell.setContent(nullptr);
-    shell.hideFromDesktop();
-    shell.setLookAndFeel(nullptr);   // before customLookAndFeel goes out of scope below
 
     // Easter egg cleanup
     cheezeGuyGame.reset();
@@ -6326,13 +6159,9 @@ void SpaceDustAudioProcessorEditor::refreshPresetList()
 void SpaceDustAudioProcessorEditor::showSavePresetDialog()
 {
     auto currentName = presetManager->getCurrentPresetName();
-    // Anchored to the SHELL, not to `this`. The editor is a 170px stub off in the host's
-    // window now, and a dialog centred on that would open nowhere near the interface the
-    // user is looking at. The dialog is its own desktop window, so the shell's keyboard
-    // refusal does not reach it and the name field still types normally.
     auto* alertWindow = new juce::AlertWindow("Save Preset",
         "Enter a name for this preset:",
-        juce::AlertWindow::NoIcon, &shell);
+        juce::AlertWindow::NoIcon, this);
     alertWindow->addTextEditor("presetName", currentName, "Preset Name:");
     alertWindow->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
     alertWindow->addButton("Cancel", 0, juce::KeyPress(juce::KeyPress::escapeKey));
@@ -6605,13 +6434,6 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     if (isBeingDestroyed.load())
         return;
 
-    // Before anything that can bail out early (the pitch-bend branch below returns):
-    // the floating window has to appear, vanish and rise with the host's own window
-    // whatever else the UI is doing this tick. Visibility first -- there is no point
-    // raising a window that is about to be hidden.
-    followHostFrameVisibility();
-    followHostWindowToFront();
-
     // Remember the active tab so closing/reopening the editor returns here, not Main.
     if (tabbedComponent.getNumTabs() > 0)
         audioProcessor.lastActiveTabIndex = tabbedComponent.getCurrentTabIndex();
@@ -6824,8 +6646,20 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     {
         lastPaintedGlowLevel_ = glowMeterLevel_;
         lastPaintedClipping_  = nowClipping;
-        // The PLATE, not the editor: the face lives in the floating window now, and a
-        // repaint() here would only redraw the stub and leave the glow frozen.
+
+        // -- The shake rides this repaint, and only this repaint --
+        // Sliding the plate dirties the whole face, so on any other tick it would cost
+        // a full repaint of its own. Here it costs nothing: we are inside the branch
+        // that has ALREADY decided to repaint the plate because the output level moved,
+        // and "the output level moved" is the same condition that makes the shake
+        // non-zero. Moving the plate before the repaint folds both into one pass.
+        //
+        // driveShake() must therefore be called here and nowhere else. Calling it on
+        // every tick would drive it to zero during the frames this branch skips, and
+        // the ballistics would never build.
+        if constexpr (kShakeEnabled)
+            driveShake(glowMeterLevel_);
+
         plate.repaint();
     }
 
@@ -6889,11 +6723,11 @@ void SpaceDustAudioProcessorEditor::timerCallback()
 //==============================================================================
 // -- Paint Method --
 
-// This is the whole Space Dust face â€” starfield, edge glow, logo, version. It used
-// to be the editor's own paint(), back when the editor WAS the window. The editor is
-// now just a stub in the host, so this draws into the plate inside the floating shell
-// instead; `plateWidth` is the plate's width where getWidth() used to be the editor's.
-// Nothing about what gets drawn has changed.
+// This is the whole Space Dust face â€” starfield, edge glow, logo, version. It used to
+// be the editor's own paint(), and it draws into the plate instead; `plateWidth` is the
+// plate's width where getWidth() used to be the editor's. That is the editor's width
+// plus the shake overscan, so the face renders a fraction larger and the margin is
+// absorbed rather than cropped. Nothing about WHAT gets drawn has changed.
 void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth)
 {
     if (isBeingDestroyed.load())
@@ -6903,12 +6737,21 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
     // align with the (scaled) controls and fill the resized window. Everything below is
     // drawn in DESIGN coordinates (kDesignWidth x designHeight_); the transform maps it to
     // the on-screen size. fillAll still fills the whole clip region regardless of transform.
-    const float paintScale = (plateWidth > 0) ? plateWidth / (float) kDesignWidth : 1.0f;
-    g.addTransform(juce::AffineTransform::scale(paintScale));
-    const int w = kDesignWidth;
-    const int h = designHeight_;
+    // Scaled to the EDITOR's width and inset by the shake margin, matching mainView above
+    // so the painted face and the controls stay registered with each other. fillAll is
+    // applied BEFORE the transform so it covers the margin band too -- that band is what
+    // slides into view when the face is thrown, and it has to be the face's own colour or
+    // the shake would flash a light edge.
+    const auto  inset      = plateInset();
+    const int   faceWidth  = juce::jmax(0, plateWidth - 2 * inset.x);
+    const float paintScale = (faceWidth > 0) ? faceWidth / (float) kDesignWidth : 1.0f;
 
     g.fillAll(juce::Colour(0xff0a0a1f));
+
+    g.addTransform(juce::AffineTransform::scale(paintScale)
+                       .translated((float) inset.x, (float) inset.y));
+    const int w = kDesignWidth;
+    const int h = designHeight_;
     {
         drawStarfield(g, w, h, getGlowMeterLevel());  // single per-frame averaged L/R snapshot
     }
@@ -7095,12 +6938,7 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
             const juce::String versionText = "v" JucePlugin_VersionString;
             const int textH = 16;
             const int textW = 120;
-            // Right edge sits `gap` from the right, EXCEPT that it must also clear the
-            // close X in the corner. `gap` is derived from the logo band at the bottom
-            // and can be smaller than the X, so without this the version number would
-            // print underneath it.
-            const int textRight = juce::jmin(w - gap, w - kCloseMargin - kCloseSize - 6);
-            const int textX = textRight - textW;
+            const int textX = (w - gap) - textW;  // right edge sits `gap` from the right
             const int textY = gap;                // top edge sits `gap` from the top
             g.setFont(customLookAndFeel.getBodyFont(12.0f, true));
             g.setColour(juce::Colours::white);  // white, pairs with the 63C watermark
@@ -7111,10 +6949,10 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
 }
 
 //==============================================================================
-// -- Plate: the component carrying the whole UI inside the floating shell --
-// A plain forwarder. It exists because the shell needs a child that paints the
-// Space Dust face and parents mainView; the drawing and the layout still live on
-// the editor, where every control member they touch already is.
+// -- Plate: the component carrying the whole UI --
+// A plain forwarder. It exists so the face and mainView have a parent that can be moved
+// independently of the editor, which is what the shake needs; the drawing and the
+// layout still live on the editor, where every control member they touch already is.
 
 void SpaceDustPlateComponent::paint(juce::Graphics& g)
 {
@@ -7127,12 +6965,11 @@ void SpaceDustPlateComponent::resized()
 }
 
 //==============================================================================
-// -- Stub: the only thing the host ever sees --
-// Deliberately tiny and inert. The host frames it with its own title bar and close
-// button, and that is how the UI gets dismissed -- we add no close control of our
-// own. Clicking the stub re-shows the shell and pulls it back beside the stub,
-// which is the recovery path if the floating window ever ends up somewhere
-// unreachable (dragged onto a monitor that has since been disconnected, say).
+// -- The editor itself --
+// It is the rectangle the host gives us, and the plate covers every pixel of it (and
+// then some -- see positionPlate). This paint therefore only ever shows during the
+// frames before the plate has been laid out; the colour matches the face so that gap
+// is invisible rather than white.
 
 void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
 {
@@ -7140,255 +6977,48 @@ void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
         return;
 
     g.fillAll(juce::Colour(0xff0a0a1f));
-
-    const bool showing = shell.isOnDesktop();
-    const auto centre  = getLocalBounds().toFloat().getCentre();
-
-    g.setColour(juce::Colour(0xff00d4ff).withAlpha(showing ? 0.30f : 0.85f));
-
-    juce::Rectangle<float> mark(kStubMarkSize, kStubMarkSize);
-    g.drawRect(mark.withCentre(centre), 1.2f);
 }
 
-void SpaceDustAudioProcessorEditor::mouseUp(const juce::MouseEvent&)
+//==============================================================================
+// -- Where the plate sits --
+// Overscanned: the plate is the editor's size plus kShakeMargin on every side, so at
+// rest its edges are just outside the visible rectangle. The shake slides it within
+// that margin, and because there is always face beyond the edge, no gap can ever be
+// exposed -- the face reads as being knocked about behind a fixed frame.
+//
+// The vertical margin is derived from the horizontal one along the design aspect so
+// the plate keeps the editor's proportions. layoutPlate() takes its scale from
+// plate.getWidth(), so the overscan is absorbed as a very slightly larger face rather
+// than as a crop: nothing in the design is lost.
+juce::Point<int> SpaceDustAudioProcessorEditor::plateInset() const
 {
-    if (isBeingDestroyed.load())
-        return;
-
-    // Clicking the stub is how a dismissed window is asked for again, so it clears the
-    // latch the close X set -- from here on the window follows the channel once more.
-    userDismissedShell_ = false;
-
-    if (! shell.isOnDesktop())
-    {
-        shell.showOnDesktop();
-        placeShellNearStub();
-    }
-
-    // Now that the shell is no longer always-on-top it can be buried behind the host
-    // or anything else, so clicking the stub has to RAISE it as well as show it --
-    // that is the way back to a window that has gone behind something.
-    shell.toFront(false);   // false: do not steal keyboard focus from the host
-    repaint();
+    // Vertical margin derived along the design aspect so the band is visually even on
+    // all four sides rather than thicker top and bottom.
+    return { kShakeMarginX,
+             juce::roundToInt(kShakeMarginX * (double) designHeight_ / (double) kDesignWidth) };
 }
 
-// -- Appearing and disappearing with the channel, the way Serum does --
-// Asked for by name (Giuseppe, 2026-08-04): "it only shows up when you click on the
-// channel, and if you click out of the channel, it disappears... the same behavior as
-// Xfer Serum".
-//
-// Serum gets that for free and we do not, for one reason: Serum's interface IS the frame
-// Live puts it in, so when Live shows or hides that frame -- selecting another track,
-// Live's own "Auto-Hide Plug-In Windows" preference, closing the device view -- Serum
-// follows automatically. Space Dust's face lives in a desktop window of its own that Live
-// has never heard of, so Live hides its frame and our window stays hanging in the air.
-//
-// The fix is to watch the frame and copy it. Note this has to be asked of WINDOWS, not of
-// JUCE: Component::isVisible() reports the flag on our own component, and Live hides the
-// frame ABOVE us without touching it -- the diagnostic log has the editor reporting
-// "visible=1 showing=1" throughout a session where Live's frame was repeatedly hidden.
-// IsWindowVisible() answers for the whole parent chain, which is the actual question.
-//
-// Deliberately NOT reacting to the frame merely being covered or sent behind: Serum stays
-// open when you click another window, and so does this. Only genuine hide/minimise counts.
-//
-// A shell the USER dismissed with the close X is left alone -- it stays gone until the
-// stub is clicked, rather than reappearing on the next channel switch as though the X had
-// not been pressed.
-void SpaceDustAudioProcessorEditor::followHostFrameVisibility()
+void SpaceDustAudioProcessorEditor::positionPlate()
 {
-   #if JUCE_WINDOWS
-    if (isBeingDestroyed.load() || ! shellReady_)
+    if (getWidth() <= 0 || getHeight() <= 0)
         return;
 
-    // Standalone has no frame to follow; hiding on this rule would hide the whole app.
-    if (audioProcessor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
-        return;
+    const auto inset = plateInset();
 
-    auto* peer = getPeer();
-
-    if (peer == nullptr)
-        return;
-
-    auto* frame = GetAncestor(peer->getNativeHandle(), 2 /* GA_ROOT */);
-
-    if (frame == nullptr)
-        return;
-
-    // Minimising counts as gone as well as hiding. A minimised window keeps WS_VISIBLE,
-    // so IsWindowVisible alone would leave the panel floating over the desktop after the
-    // DAW had been minimised out of the way.
-    auto* main = findHostMainWindow();
-
-    const bool frameShown = IsWindowVisible(frame) != 0
-                         && IsIconic(frame) == 0
-                         && (main == nullptr || IsIconic(main) == 0);
-
-    if (frameShown == hostFrameWasShown_)
-        return;   // edge-triggered: only the moment it changes
-
-    hostFrameWasShown_ = frameShown;
-
-    if (! frameShown)
-    {
-        if (shell.isOnDesktop())
-        {
-            shell.hideFromDesktop();
-            shellHiddenWithFrame_ = true;
-        }
-    }
-    else
-    {
-        // Only bring back what WE took away, and only if the user has not dismissed it
-        // themselves in the meantime.
-        if (shellHiddenWithFrame_ && ! userDismissedShell_ && ! shell.isOnDesktop())
-        {
-            shell.showOnDesktop();
-
-            // Its own position is kept -- deliberately NOT placeShellNearStub(), which
-            // would drag the window back beside the stub every time you changed track and
-            // undo wherever the user had put it.
-            shell.toFront(false);
-        }
-
-        shellHiddenWithFrame_ = false;
-    }
-   #endif
+    plate.setBounds(juce::Rectangle<int>(getWidth()  + 2 * inset.x,
+                                         getHeight() + 2 * inset.y)
+                        .withPosition(-inset.x + shakeOffset.x,
+                                      -inset.y + shakeOffset.y));
 }
 
-// -- Coming back to the plugin from elsewhere in the DAW --
-// Without always-on-top the floating window gets buried behind the DAW, and the only way
-// back was the stub -- a 170x36 rectangle inside the host's plugin frame (Giuseppe,
-// 2026-08-04: "the window is stuck behind ableton", with a screenshot of exactly that).
-//
-// Two attempts failed before the plugin was made to log its own window tree, and the dump
-// (2026-08-04, Live 10.1.43) is what this is built on rather than on assumption:
-//
-//     stub   class='JUCE_...'        child of the frame below
-//     frame  class='Vst3PlugWindow'  owner=null   z=62    <- top-level, unowned
-//     Live   class='Ableton Live Window Class'  owner=null  z=59
-//     shell  class='JUCE_...'        z=63
-//
-// The two things that killed the earlier attempts are both in those four lines:
-//
-//   - The plugin frame is a SIBLING of the Live window, not a child and not owned by it.
-//     So GA_ROOTOWNER from our peer stops at the frame and never reaches Live, and the
-//     first fix's ownership went onto the wrong window entirely.
-//   - Clicking Live puts it above the frame as readily as above us (59 vs 62). Watching
-//     only OUR window for activation therefore never fired once -- the window being
-//     clicked was Live's, a handle we were not looking at.
-//
-// So the rule is drawn around the APPLICATION, not around our own window: when a window
-// belonging to the DAW is activated, put the interface above it. Both windows that matter
-// are covered -- Live's document window and our own plugin frame -- and nothing else is,
-// which is what keeps this from being the always-on-top that was rejected on 2026-08-01:
-//
-//   - Another application activated? Not our process, so nothing happens and the shell
-//     goes behind it exactly as an ordinary window does. Alt-tab away and it is gone from
-//     view; come back to Live and it returns.
-//   - ANOTHER PLUGIN's window activated? Deliberately not raised. Clicking Serum should
-//     not throw Space Dust's face over the top of it.
-//   - It only raises a shell that is already on the desktop; one dismissed with the close
-//     X stays dismissed until the stub is clicked.
-//
-// The cost, and it is the direct price of what was asked for: the shell can no longer be
-// pushed behind the Live window by clicking it. Moving it, or the close X, are the ways
-// to get it out of the way now.
-//
-// Polled from the 50ms UI timer because none of this generates a callback a plugin can
-// see: our editor is a child window that is never itself activated, and the shell answers
-// WM_MOUSEACTIVATE with MA_NOACTIVATE so the DAW keeps the transport keys.
-void SpaceDustAudioProcessorEditor::followHostWindowToFront()
-{
-    if (isBeingDestroyed.load() || ! shellReady_)
-        return;
-
-    // Standalone has no host window to follow -- the shell IS the application.
-    if (audioProcessor.wrapperType == juce::AudioProcessor::wrapperType_Standalone)
-        return;
-
-    auto* peer = getPeer();
-
-   #if JUCE_WINDOWS
-    if (shell.isOnDesktop() && peer != nullptr)
-    {
-        auto* fg = GetForegroundWindow();
-
-        // Only act the moment the foreground window CHANGES. Re-raising on every tick
-        // while it stays put would fight anything the user does with the z-order and
-        // would burn a z-order call 20 times a second for nothing.
-        if (fg != lastForegroundWindow_)
-        {
-            lastForegroundWindow_ = fg;
-
-            if (fg != nullptr)
-            {
-                unsigned long pid = 0;
-                GetWindowThreadProcessId(fg, &pid);
-
-                // Our own plugin frame, or the DAW's document window. Anything else in
-                // the DAW's process -- another plugin's window, a dialog -- is left alone.
-                const bool isOurFrame = fg == GetAncestor(peer->getNativeHandle(), 2 /* GA_ROOT */);
-                const bool isHostMain = fg == findHostMainWindow();
-
-                if (pid == GetCurrentProcessId() && (isOurFrame || isHostMain))
-                    shell.toFront(false);   // false: the DAW keeps the keyboard, transport included
-            }
-        }
-    }
-
-   #else
-    // Elsewhere there is no cheap window-level answer, so fall back to the process-level
-    // one: coming back to the host application at all raises the interface.
-    const bool isFront = peer != nullptr
-                      && shell.isOnDesktop()
-                      && hostWindowIsFrontmost(peer->getNativeHandle());
-
-    if (isFront && ! hostWindowWasFrontmost_)
-        shell.toFront(false);
-
-    hostWindowWasFrontmost_ = isFront;
-   #endif
-}
-
-void SpaceDustAudioProcessorEditor::placeShellNearStub()
-{
-    const auto stub = getScreenBounds();
-
-    juce::Rectangle<int> target(stub.getX(), stub.getBottom() + 10,
-                                shell.getWidth(), shell.getHeight());
-
-    // Keep the whole window on screen. Without this the shell gets pushed off the left
-    // or the bottom by wherever the host happened to put its plugin window, and the UI
-    // is clipped -- the same failure the Standalone's restored-window clamp exists for
-    // (StandaloneApp.cpp), and constrainedWithin() is likewise a no-op when the window
-    // already fits.
-    if (auto* display = juce::Desktop::getInstance().getDisplays()
-                            .getDisplayForRect(stub, true))
-        target = target.constrainedWithin(display->userArea);
-
-    // Home, not merely position: the next shake frame is measured from this.
-    shell.setHomePosition(target.getPosition());
-}
-
-void SpaceDustAudioProcessorEditor::shakeTick()
-{
-    if (isBeingDestroyed.load())
-        return;
-
-    // Sol reads a fresh peak every frame rather than a per-frame UI snapshot, and so do
-    // we. getGlowMeterLevel() only moves at 20Hz, so feeding the shake from it would step
-    // it at a third of its own frame rate. These are the same live atomics that snapshot
-    // is built from -- max of the two channels, as Sol does, not the average the glow
-    // uses: a transient on one side alone should still throw the window.
-    const float peak = juce::jmax(audioProcessor.getLeftPeakLevel(),
-                                  audioProcessor.getRightPeakLevel());
-    driveShake(peak);
-}
-
+// -- One shake frame --
+// Sol Voice Tuner's ballistics. Called only from the branch of timerCallback that has
+// already committed to repainting the plate, so `level` is that tick's glow level and
+// the move costs nothing extra. See the note on kShakeMax in the header for why this
+// is no longer a window move.
 void SpaceDustAudioProcessorEditor::driveShake(float level)
 {
-    // Hit hard, fall away: the window should snap on a transient and drift back, not
+    // Hit hard, fall away: the face should snap on a transient and drift back, not
     // wobble along behind the average level.
     shakeLevel = juce::jmax(juce::jlimit(0.0f, 1.0f, level),
                             shakeLevel * kShakeRelease);
@@ -7396,6 +7026,8 @@ void SpaceDustAudioProcessorEditor::driveShake(float level)
     // Curved so quiet passages barely register and loud ones actually move it. A linear
     // map spends most of its range on a permanent low-level jitter.
     const float amp = kShakeMax * std::pow(shakeLevel, kShakeCurve);
+
+    const auto previous = shakeOffset;
 
     if (amp < kShakeFloor)
     {
@@ -7411,56 +7043,29 @@ void SpaceDustAudioProcessorEditor::driveShake(float level)
                         juce::roundToInt(std::sin(angle) * amp) };
     }
 
-    shell.setShakeOffset(shakeOffset);
+    // setBounds on an unchanged rectangle is a no-op in JUCE, but skipping the call
+    // outright also skips the bounds arithmetic, and this runs inside the repaint path.
+    if (shakeOffset != previous)
+        positionPlate();
 }
 
 //==============================================================================
 // -- Resized Method --
-// The editor is now just the stub and has nothing to lay out. The real layout is
-// layoutPlate(), driven by the plate's resized() inside the shell.
+// The host resized us (or the deferred init set our size). This positions the plate and
+// stops; the plate's own resized() then calls layoutPlate(), which is where the whole UI
+// is actually laid out.
 //
-// DELIBERATELY EMPTY, and deliberately NOT forwarding to layoutPlate(): this fires when
-// the HOST resizes the stub, which has nothing to do with the size of the floating
-// window, so forwarding would relayout the UI against the wrong dimensions.
-//
-// The trap that follows from that: any code that used to call resized() to force a
-// relayout is now a silent no-op. That is what stopped the Master box resizing on a
-// voice-mode change. Call layoutPlate() instead -- and grep for bare resized() calls
-// inside this class before assuming a layout bug is anywhere else.
-
+// The trap to know about: this does NOT lay out the UI itself, so any code that calls
+// resized() hoping to force a relayout gets only a re-position. That is what once
+// stopped the Master box resizing on a voice-mode change. Call layoutPlate() for that --
+// and grep for bare resized() calls inside this class before assuming a layout bug is
+// anywhere else.
 void SpaceDustAudioProcessorEditor::resized()
 {
-}
-
-// The shell is a window of OUR making, so nothing takes it down when the host merely
-// hides the editor instead of destroying it -- and FL does exactly that. Left alone,
-// an always-on-top window stays registered with the OS after the plugin looks closed,
-// which is one of the ways a host ends up unable to quit (Giuseppe, 2026-08-01: FL had
-// to be force quit). Tying the shell to the editor's visibility means the only way to
-// see it is for the editor to be on screen.
-void SpaceDustAudioProcessorEditor::visibilityChanged()
-{
-    if (isBeingDestroyed.load() || ! shellReady_)
+    if (isBeingDestroyed.load())
         return;
 
-    if (isVisible())
-    {
-        if (! shell.isOnDesktop())
-        {
-            shell.showOnDesktop();
-            placeShellNearStub();
-        }
-    }
-    else
-    {
-        shell.hideFromDesktop();
-    }
-}
-
-void SpaceDustAudioProcessorEditor::parentHierarchyChanged()
-{
-    // Being detached from the host's window counts as gone, same as being hidden.
-    visibilityChanged();
+    positionPlate();
 }
 
 void SpaceDustAudioProcessorEditor::layoutPlate()
@@ -7522,19 +7127,19 @@ void SpaceDustAudioProcessorEditor::layoutPlate()
     // -- Drag-resize: size + scale the container holding the whole UI --
     // mainView is laid out at the fixed design size; one uniform transform scales it to the
     // plate's current (resizable) size. All layout below positions controls in design space.
-    // The scale comes off the PLATE, not the editor: the editor is a fixed-size stub in the
-    // host now, so getWidth() here would be the stub's 170px and shrink the whole UI away.
+    // The design is scaled to the EDITOR's width and then inset inside the plate by the
+    // shake margin, so design (0,0) lands exactly on the editor's top-left. The plate is
+    // bigger than the editor purely so the shake has somewhere to slide to; the face
+    // itself is NOT stretched over the margin, because that would push the outermost few
+    // design pixels out of view and the tab bar starts at design x=0.
     {
-        const int   plateWidth = plate.getWidth();
-        const float viewScale  = (plateWidth > 0) ? plateWidth / (float) kDesignWidth : 1.0f;
+        const auto  inset     = plateInset();
+        const int   faceWidth = juce::jmax(0, plate.getWidth() - 2 * inset.x);
+        const float viewScale = (faceWidth > 0) ? faceWidth / (float) kDesignWidth : 1.0f;
         mainView.setBounds(0, 0, kDesignWidth, designHeight_);
-        mainView.setTransform(juce::AffineTransform::scale(viewScale));
+        mainView.setTransform(juce::AffineTransform::scale(viewScale)
+                                  .translated((float) inset.x, (float) inset.y));
     }
-
-    // Close X, tucked into the top-right corner in design space.
-    closeButton.setBounds(kDesignWidth - kCloseMargin - kCloseSize, kCloseMargin,
-                          kCloseSize, kCloseSize);
-    closeButton.toFront(false);   // above the painted face, never buried by a panel
 
     //==============================================================================
     // -- Preset Controls Layout (Top Header Bar) --

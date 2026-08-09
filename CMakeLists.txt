@@ -164,7 +164,6 @@ target_sources(SpaceDust PRIVATE
     Source/PresetHotReload.cpp
     Source/PresetHotReload.h
     Source/CheezeGuyGame.h
-    Source/FloatingShell.h
     Source/SpaceDustDither.h
     Source/MemorySafetyLogger.cpp
     Source/MemorySafetyLogger.h

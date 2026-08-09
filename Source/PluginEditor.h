@@ -13,7 +13,6 @@
 #include "FinalEQComponent.h"
 #include "PresetManager.h"
 #include "CheezeGuyGame.h"
-#include "FloatingShell.h"
 #include "SpaceDustDither.h"
 
 // Glow overlays are defined in PluginEditor.cpp; forward-declare them here so the
@@ -370,86 +369,27 @@ public:
 };
 
 //==============================================================================
-/** The close control in the top-right corner of the floating window.
-
-    The window we own has no title bar, so without this there is no way to dismiss the
-    interface from the interface itself -- only via the host's own frame around the
-    stub. Small and grey on purpose: it is a utility control, not part of the face.
-
-    A child rather than something drawn in paintPlate() because it has to be clickable.
-    It lives inside mainView so it is positioned in DESIGN coordinates and scales with
-    everything else when the window is zoomed. */
-class ShellCloseButton final : public juce::Component
-{
-public:
-    ShellCloseButton()
-    {
-        setMouseCursor(juce::MouseCursor::PointingHandCursor);
-    }
-
-    std::function<void()> onClose;
-
-    void paint(juce::Graphics& g) override
-    {
-        auto r = getLocalBounds().toFloat().reduced(getWidth() * 0.25f);
-
-        const juce::Colour c = juce::Colours::grey.withAlpha(hover ? 0.95f : 0.55f);
-
-        // Blooms with everything else. The X is grey rather than cyan, so its halo
-        // is grey too -- it should read as part of the same lit surface without
-        // pretending to be one of the signal-coloured controls.
-        if (auto* sdLnf = dynamic_cast<SpaceDustLookAndFeel*>(&getLookAndFeel()))
-        {
-            juce::Path cross;
-            cross.startNewSubPath(r.getX(),     r.getY());
-            cross.lineTo         (r.getRight(), r.getBottom());
-            cross.startNewSubPath(r.getRight(), r.getY());
-            cross.lineTo         (r.getX(),     r.getBottom());
-
-            sdLnf->glowPath(g, cross, c, 1.4f);
-        }
-
-        g.setColour(c);
-        g.drawLine(r.getX(),     r.getY(), r.getRight(), r.getBottom(), 1.4f);
-        g.drawLine(r.getRight(), r.getY(), r.getX(),     r.getBottom(), 1.4f);
-    }
-
-    void mouseEnter(const juce::MouseEvent&) override { hover = true;  repaint(); }
-    void mouseExit (const juce::MouseEvent&) override { hover = false; repaint(); }
-
-    void mouseUp(const juce::MouseEvent& e) override
-    {
-        // Only if the release lands back inside: dragging off the X should cancel, the
-        // way any button behaves.
-        if (onClose != nullptr && getLocalBounds().contains(e.getPosition()))
-            onClose();
-    }
-
-private:
-    bool hover = false;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ShellCloseButton)
-};
-
-//==============================================================================
-/** The component carrying the entire Space Dust UI inside the FloatingShell.
+/** The component carrying the entire Space Dust UI.
 
     A thin forwarder. It paints by calling the editor's paintPlate() and lays out by
     calling layoutPlate(), because every control those two touch is an editor member
-    already. It exists only because the shell needs a child to hold the face and to
-    parent mainView.
+    already.
+
+    It is a child of the editor and deliberately LARGER than it -- see kShakeMargin.
+    The editor is the rectangle the host gives us; the plate overhangs it on all four
+    sides so the shake can slide the face without ever exposing a gap at an edge.
 
     Two settings carry weight:
 
-      - Opaque. The shell is layered so that a transparent silhouette is POSSIBLE,
-        but nothing about Space Dust's face is see-through today, and declaring the
-        plate opaque spares JUCE an alpha pass over the whole window every frame.
-        This is the line to change first if a shaped plate is ever wanted.
+      - Opaque. Nothing about Space Dust's face is see-through, and declaring the
+        plate opaque spares JUCE an alpha pass over the whole surface every frame.
+        It also means the plate alone covers the editor, so the editor's own paint()
+        never shows through. This is the line to change first if a shaped plate is
+        ever wanted.
 
-      - Click-through. A press on empty background has to reach the shell for
-        window-dragging to work, and it can only get there if the plate declines it.
-        Controls inside mainView still take their own clicks exactly as before â€”
-        this only forwards presses that nothing else wanted. */
+      - Click-through. The plate takes no clicks of its own; controls inside mainView
+        take theirs exactly as before. A press on empty background simply does
+        nothing, which is what it should do now there is no window to drag. */
 class SpaceDustPlateComponent final : public juce::Component
 {
 public:
@@ -501,16 +441,12 @@ public:
     //==============================================================================
     void paint(juce::Graphics&) override;
     void resized() override;
-    void mouseUp(const juce::MouseEvent&) override;
-    void visibilityChanged() override;
-    void parentHierarchyChanged() override;
 
     //==============================================================================
-    // -- The floating window (see FloatingShell.h) --
-    // The host is handed `this`, a small inert stub; the interface itself lives in
-    // `shell`, a desktop window we own. These two are the plate's way back into the
-    // editor and so have to be public. They are the old paint()/resized() bodies,
-    // unchanged apart from taking their scale from the plate instead of the editor.
+    // -- The plate's way back into the editor --
+    // Public because the plate calls them: every control they touch is an editor
+    // member already, so the plate is a forwarder rather than an owner. They take
+    // their scale from the PLATE, which is the editor's size plus the shake overscan.
     void paintPlate(juce::Graphics& g, int plateWidth);
     void layoutPlate();
 
@@ -631,137 +567,86 @@ private:
     // and rendered through a single uniform scale. mainView is a transparent container
     // that holds every control and is scaled by k = plate.getWidth()/kDesignWidth;
     // paintPlate() scales its background/decorations by the same k via g.addTransform.
-    // The SHELL is what is resizable now, with a locked aspect ratio, so dragging its
-    // corner grows/shrinks everything together without moving any item relative to
-    // another. (Before the floating window this scale came off the editor itself.)
+    // The EDITOR is resizable with a locked aspect ratio, so dragging its corner
+    // grows/shrinks everything together without moving any item relative to another.
+    // The plate is the editor plus the shake overscan, so k is very slightly over the
+    // editor's own ratio -- that is what absorbs the margin instead of cropping it.
     static constexpr int kDesignWidth = 1120;
     int designHeight_ = 857;          // set in the ctor timer (+ keyboard strip in standalone)
     juce::Component mainView;         // scalable container parenting the entire UI
     bool cheezeGuyTabAdded = false;
 
     //==============================================================================
-    // -- The floating window and the plate that fills it (see FloatingShell.h) --
-    // `shell` is declared first so that on destruction the plate goes first and the
-    // shell is never left holding a dangling content pointer. The dtor clears both
-    // explicitly anyway, because a shell left on the desktop is a leaked top-level
-    // window that outlives the editor.
-    FloatingShell           shell;
+    // -- The plate that carries the face --
+    // The UI lives in the rectangle the host gives us. It used to live in a desktop
+    // window of our own (FloatingShell), which was removed on 2026-08-08: that window
+    // existed only to get per-pixel alpha for a shaped silhouette, the alpha was
+    // abandoned on 2026-08-01 for being slow in FL, and what was left cost a
+    // system-wide EnumWindows poll 20x a second plus a z-order fight with the DAW for
+    // a panel that is opaque and rectangular anyway. See git 74f776e for what it was.
     SpaceDustPlateComponent plate { *this };
-
-    /** The stub the host is given: big enough to click, small enough that nobody
-        mistakes it for the interface. */
-    static constexpr int   kStubWidth    = 170;
-    static constexpr int   kStubHeight   = 36;
-    static constexpr float kStubMarkSize = 11.0f;
-
-    /** False until the deferred init has put the shell on screen. Guards
-        visibilityChanged() from acting before there is anything to act on. */
-    bool shellReady_ = false;
-
-    /** Close control, in DESIGN pixels (it lives in mainView and scales with the UI).
-        paintPlate() reserves room for it so the version number cannot run underneath. */
-    static constexpr int kCloseSize   = 18;
-    static constexpr int kCloseMargin = 10;
-
-    ShellCloseButton closeButton;
-
-    /** Positions the shell just below the host's plugin window, clamped onto a real
-        display. Only used when the shell first appears or is recovered by clicking
-        the stub -- never while the user is working, or it would yank the window out
-        from under them every time the host moved its own. */
-    void placeShellNearStub();
-
-    /** Raises the shell above whichever DAW window the user just activated -- the
-        host's document window or our own plugin frame -- so clicking the plugin
-        anywhere in the DAW brings the interface back rather than only the stub.
-        Polled from timerCallback; see the definition for the window layout it is
-        built on and why it is not always-on-top. */
-    void followHostWindowToFront();
-
-    /** The foreground window as of the last tick, so the raise happens on the CHANGE
-        and not continuously. Kept as a raw handle rather than a peer because the
-        window in question belongs to the DAW, not to us. */
-    void* lastForegroundWindow_ = nullptr;
-
-    /** Shows and hides the shell with the DAW's plugin frame, so the interface appears
-        and disappears with the channel the way an ordinary plugin's window does.
-        Windows only; polled from timerCallback. */
-    void followHostFrameVisibility();
-
-    /** Whether the DAW's frame was showing last tick -- the edge this acts on. Starts
-        true because the frame is on screen when the editor is created. */
-    bool hostFrameWasShown_ = true;
-
-    /** True when the shell was taken off the desktop BY US following the frame, which
-        is what distinguishes a window to restore from one the user closed. */
-    bool shellHiddenWithFrame_ = false;
-
-    /** True once the close X has been used, until the stub is clicked again. Stops a
-        channel switch from resurrecting a window the user deliberately dismissed. */
-    bool userDismissedShell_ = false;
-
-    /** Previous answer from hostWindowIsFrontmost(), so only the transition INTO the
-        host raises the shell. Starts false: if the host window is already frontmost
-        when the editor opens, the first tick counts as an arrival and raises once,
-        which is what we want anyway -- the window has just appeared. */
-    bool hostWindowWasFrontmost_ = false;
 
     //==============================================================================
     // -- Shake --
-    // The window is thrown around by whatever is coming out of the synth. This is Sol
-    // Voice Tuner's shake and is kept deliberately identical to it (Giuseppe,
-    // 2026-07-31): same ballistics, same constants, same 60Hz frame.
+    // The face is thrown around by whatever is coming out of the synth. Sol Voice
+    // Tuner's ballistics, but driven and rendered differently since 2026-08-08, and
+    // the difference is the whole point:
     //
-    // It gets its OWN timer rather than riding the main one, and Sol's own note is the
-    // reason. Those release constants are PER FRAME AT 60Hz, and a 33ms frame is too
-    // coarse for a transient -- fed from Space Dust's 20Hz UI timer this would not be
-    // Sol's shake, it would be a third of one. The UI timer is slow because a
-    // whole-editor repaint is expensive; shaking repaints nothing at all, it only moves
-    // a window, so it can run fast without bringing that cost with it.
+    //   BEFORE: moved our own desktop window with SetWindowPos on a private 60Hz
+    //           timer. Painting cost nothing -- the compositor blits an unchanged
+    //           surface -- but every frame was window-manager traffic on the thread
+    //           the DAW draws its UI on, and the throw was capped at 0.656px because
+    //           of it.
     //
-    // Amplitude is the ONE thing that departs from Sol: a SIXTEENTH of Sol's throw,
-    // quartered twice at Giuseppe's request (2026-07-31). The ballistics are what make
-    // it read as struck rather than wobbly, so those stay exactly Sol's -- only the
-    // distance is scaled down.
+    //   NOW:    slides the PLATE inside the editor. That dirties the face, so it
+    //           costs a repaint... except it is deliberately driven from the SAME
+    //           20Hz tick that already repaints the plate to animate the glow, and
+    //           only when that repaint is already happening (see timerCallback).
+    //           The condition for the glow repaint is "output level moved", which is
+    //           exactly the condition for the shake being non-zero, so the shake
+    //           rides a repaint that was going to happen anyway and adds nothing.
     //
-    // Be aware this is now below the resolution of the thing being moved. Window
-    // positions are whole pixels, so a 0.66px throw rounds to 0 or 1 -- at full level
-    // the window twitches by a single pixel and nothing more. That IS the "really
-    // subtle" that was asked for, but it also means turning this down further has
-    // almost no effect: past here the only remaining step is off.
-    /** Master switch for the shake. Was turned off briefly on 2026-08-01 to judge the
-        glow without the window moving underneath it, and turned back on once the glow
-        was settled. With it false the 60Hz timer is never started at all, so the
-        window sits exactly at its home position rather than being driven to a zero
-        offset every frame -- useful again any time the bloom needs judging. */
+    // 20fps would be far too coarse for smooth motion, and is fine here: driveShake()
+    // picks a fresh random angle every frame precisely so it reads as struck rather
+    // than as a wobble. Random jitter is noise at any frame rate.
+    //
+    // Freed from the window-manager cost, the throw can be a size you can actually
+    // see. kShakeRelease is Sol's per-frame-at-60Hz constant re-derived for 20Hz:
+    // 0.72^3 = 0.373, so the decay per SECOND is unchanged.
+    /** Master switch. With it false the plate sits exactly at its home offset and
+        driveShake() is never called -- useful any time the bloom needs judging
+        without the face moving underneath it. */
     static constexpr bool  kShakeEnabled = true;
 
-    static constexpr int   kShakeFps     = 60;
-    static constexpr float kShakeMax     = 0.656f;  // px at full level (25% of 2.625)
-    static constexpr float kShakeRelease = 0.72f;   // per frame at kShakeFps
+    static constexpr float kShakeMax     = 3.0f;    // px at full level, in EDITOR pixels
+    static constexpr float kShakeRelease = 0.373f;  // per frame at the 20Hz UI tick
     static constexpr float kShakeCurve   = 1.5f;    // >1 keeps quiet passages still
-    // Kept proportional to kShakeMax rather than left at Sol's 0.6. The floor is an
-    // ABSOLUTE pixel cutoff, so holding it fixed while scaling the amplitude down would
-    // swallow the entire range -- the window would simply never move. Scaling it with
-    // the throw preserves Sol's curve at any amplitude.
-    static constexpr float kShakeFloor   = 0.0375f; // px below which it sits dead still
+    static constexpr float kShakeFloor   = 0.35f;   // px below which it sits dead still
 
-    /** Reads the live output peak and drives one shake frame. */
-    void shakeTick();
+    /** How far the plate overhangs the editor on each side. Must be > kShakeMax or a
+        shake at full level would pull the face's own edge into view.
+
+        The face is NOT stretched over this margin -- it is scaled to the editor's width
+        and inset by it, so the design still maps 1:1 onto the visible rectangle and
+        nothing is cropped (the tab bar starts at design x=0, so cropping here would
+        clip the first tab). What fills the margin is the face's background colour, laid
+        down by paintPlate's fillAll before the transform. That band is what slides into
+        view when the face is thrown, and being the same colour it reads as the face
+        moving rather than as a gap opening. */
+    static constexpr int kShakeMarginX = 4;
+
+    /** The margin as an (x, y) pair, the y derived along the design aspect so the band
+        is even on all four sides. */
+    juce::Point<int> plateInset() const;
+
+    /** Applies one shake frame to the plate's position. Called from timerCallback,
+        immediately before the repaint that will draw it. */
     void driveShake(float level);
 
-    /** Drives shakeTick() at kShakeFps. A nested timer because the editor is already a
-        juce::Timer and one class cannot be two of them. */
-    class ShakeDriver final : public juce::Timer
-    {
-    public:
-        explicit ShakeDriver(SpaceDustAudioProcessorEditor& e) : owner(e) {}
-        void timerCallback() override { owner.shakeTick(); }
-    private:
-        SpaceDustAudioProcessorEditor& owner;
-    };
+    /** Puts the plate at its home inset plus the current shake, in editor coordinates.
+        The one place the plate's position is set. */
+    void positionPlate();
 
-    ShakeDriver      shakeDriver { *this };
     juce::Random     shakeRng;
     float            shakeLevel = 0.0f;
     juce::Point<int> shakeOffset;
