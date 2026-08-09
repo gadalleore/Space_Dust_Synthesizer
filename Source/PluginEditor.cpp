@@ -5705,11 +5705,16 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
 
     //==============================================================================
     // -- The face goes straight into the host's rectangle --
-    // mainView goes onto the plate and the plate is a child of this editor. It is
-    // added FIRST so it sits at the back: the resizable corner added by setResizable()
-    // below must stay on top of it to remain grabbable.
-    plate.addAndMakeVisible(mainView);
-    addAndMakeVisible(plate);
+    // mainView holds every control and is a direct child of this editor. It is added
+    // FIRST so it sits at the back: the resizable corner added by setResizable() below
+    // must stay on top of it to remain grabbable.
+    addAndMakeVisible(mainView);
+
+    // paintPlate() fills every pixel of this component (fillAll, then the face on top),
+    // so declaring it spares JUCE an alpha pass over the whole window. This used to be
+    // carried by the plate, which was opaque; removing the plate silently dropped it and
+    // idle CPU went 1.9% -> 10.2% until this line was put back.
+    setOpaque(true);
 
     designHeight_ = 857 + (standaloneKeyboard != nullptr ? standaloneKeyboardHeight : 0);
 
@@ -5872,9 +5877,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
                 const float fitH   = (float) area.getHeight() * margin / (float) designHeight_;
                 initScale = juce::jlimit(0.40f, 0.95f, juce::jmin(initScale, fitW, fitH));
             }
-            // The EDITOR's logical size is the on-screen size; resized() gives the plate
-            // that size plus the shake overscan, and layoutPlate() scales mainView and the
-            // painted background by plate.getWidth()/kDesignWidth.
+            // The EDITOR's logical size is the on-screen size; layoutPlate() scales
+            // mainView and the painted background by getWidth()/kDesignWidth.
             setSize(juce::roundToInt(kDesignWidth  * initScale),
                     juce::roundToInt(designHeight_ * initScale));
 
@@ -6641,27 +6645,12 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     // label/knob, so doing it unconditionally every tick pegged the CPU even at silence (the
     // Standalone appeared to hang on launch). The painted look is a pure function of these two
     // values, so skipping unchanged frames is visually identical and lets CPU fall to idle.
-    // -- Advance the shake BEFORE deciding whether to repaint --
-    // It was originally driven from inside the repaint branch below, on the reasoning
-    // that "the level moved" and "the shake is non-zero" were the same condition. They
-    // are not: a sustained note holds the level steady, so the branch stopped firing and
-    // the face froze mid-throw exactly when the synth was loudest. The shake needs the
-    // level to be HIGH, not to be CHANGING.
-    //
-    // Driving it every tick and letting it report whether it moved keeps both cases
-    // right, and costs nothing at silence: the ballistics settle to a zero offset,
-    // driveShake returns false, and no repaint is asked for.
-    const bool shakeMoved = kShakeEnabled && driveShake(glowMeterLevel_);
-
     const bool nowClipping = (clippingHoldTicks > 0);
-    const bool glowMoved   = std::abs(glowMeterLevel_ - lastPaintedGlowLevel_) > 0.001f
-                          || nowClipping != lastPaintedClipping_;
-
-    if (glowMoved || shakeMoved)
+    if (std::abs(glowMeterLevel_ - lastPaintedGlowLevel_) > 0.001f || nowClipping != lastPaintedClipping_)
     {
         lastPaintedGlowLevel_ = glowMeterLevel_;
         lastPaintedClipping_  = nowClipping;
-        plate.repaint();
+        repaint();
     }
 
 
@@ -6711,12 +6700,12 @@ void SpaceDustAudioProcessorEditor::timerCallback()
             //
             // layoutPlate(), NOT resized(). The editor's resized() is the stub's now and
             // does nothing, so calling it here silently stopped the Master box resizing
-            // when the voice mode changed -- the border simply never moved. The plate is
-            // repainted too because the painted face (the logo sits off the Master box's
-            // bottom edge) depends on the layout this just changed.
+            // when the voice mode changed -- the border simply never moved. The face is
+            // repainted too because the painted background (the logo sits off the Master
+            // box's bottom edge) depends on the layout this just changed.
             legatoGlideButton.setVisible(isMonoOrLegato);
             layoutPlate();
-            plate.repaint();
+            repaint();
         }
     }
 }
@@ -6725,10 +6714,9 @@ void SpaceDustAudioProcessorEditor::timerCallback()
 // -- Paint Method --
 
 // This is the whole Space Dust face â€” starfield, edge glow, logo, version. It used to
-// be the editor's own paint(), and it draws into the plate instead; `plateWidth` is the
-// plate's width where getWidth() used to be the editor's. That is the editor's width
-// plus the shake overscan, so the face renders a fraction larger and the margin is
-// absorbed rather than cropped. Nothing about WHAT gets drawn has changed.
+// be split out when the UI lived in a floating window. `plateWidth` is simply the
+// editor's own width now; the parameter is kept so the internal call sites read the
+// same. Nothing about what gets drawn has changed.
 void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth)
 {
     if (isBeingDestroyed.load())
@@ -6738,22 +6726,11 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
     // align with the (scaled) controls and fill the resized window. Everything below is
     // drawn in DESIGN coordinates (kDesignWidth x designHeight_); the transform maps it to
     // the on-screen size. fillAll still fills the whole clip region regardless of transform.
-    // Scaled to the EDITOR's width and inset by the shake margin, matching mainView above
-    // so the painted face and the controls stay registered with each other. fillAll is
-    // applied BEFORE the transform so it covers the margin band too -- that band is what
-    // slides into view when the face is thrown, and it has to be the face's own colour or
-    // the shake would flash a light edge.
-    const auto  inset      = plateInset();
-    const int   faceWidth  = juce::jmax(0, plateWidth - 2 * inset.x);
-    const float paintScale = (faceWidth > 0) ? faceWidth / (float) kDesignWidth : 1.0f;
+    const float paintScale = (plateWidth > 0) ? plateWidth / (float) kDesignWidth : 1.0f;
 
     g.fillAll(juce::Colour(0xff0a0a1f));
 
-    // Same offset mainView is given by applyShakeTransform, or the painted face and the
-    // controls standing on it would slide independently of each other.
-    g.addTransform(juce::AffineTransform::scale(paintScale)
-                       .translated((float) inset.x + shakeOffset.x,
-                                   (float) inset.y + shakeOffset.y));
+    g.addTransform(juce::AffineTransform::scale(paintScale));
     const int w = kDesignWidth;
     const int h = designHeight_;
     {
@@ -6953,193 +6930,25 @@ void SpaceDustAudioProcessorEditor::paintPlate(juce::Graphics& g, int plateWidth
 }
 
 //==============================================================================
-// -- Plate: the component carrying the whole UI --
-// A plain forwarder. It exists so the face and mainView have a parent that can be moved
-// independently of the editor, which is what the shake needs; the drawing and the
-// layout still live on the editor, where every control member they touch already is.
-
-void SpaceDustPlateComponent::paint(juce::Graphics& g)
-{
-    editor.paintPlate(g, getWidth());
-}
-
-void SpaceDustPlateComponent::resized()
-{
-    editor.layoutPlate();
-}
-
-//==============================================================================
-// -- The editor itself --
-// It is the rectangle the host gives us, and the plate covers every pixel of it (and
-// then some -- see positionPlate). This paint therefore only ever shows during the
-// frames before the plate has been laid out; the colour matches the face so that gap
-// is invisible rather than white.
+// -- paint / resized --
+// Thin wrappers over the two functions that do the real work. They kept the "Plate"
+// names when the UI lived in a floating window and then in a plate component inside the
+// editor; both of those are gone (the shake was the only thing the plate existed to
+// move), so the editor paints and lays out the face directly again, as it did before
+// git 74f776e. The names are left alone because a dozen call sites inside this class
+// call layoutPlate() to force a relayout, and they read correctly as-is.
 
 void SpaceDustAudioProcessorEditor::paint(juce::Graphics& g)
 {
     if (isBeingDestroyed.load())
         return;
 
-    g.fillAll(juce::Colour(0xff0a0a1f));
+    paintPlate(g, getWidth());
 }
 
-//==============================================================================
-// -- Where the plate sits --
-// The plate is the editor's size plus kShakeMargin on every side and NEVER MOVES. It
-// is the fixed backdrop; what the shake moves is the face drawn on it and the controls
-// above it, both of which translate within the margin. Because the plate always covers
-// more than the visible rectangle, no gap can ever be exposed at an edge.
-//
-// The shake was originally applied here, to the plate's position. That made it integer
-// pixels -- a component's bounds are whole numbers -- and at a 3px throw that is four
-// steps for the entire dynamic range, with levels 0.4 to 0.6 all landing on the same
-// +/-1px. It read as on/off instead of as a response to level (Giuseppe, 2026-08-08:
-// "it only shakes when it is in the green... it should shake progressively more as it
-// goes into redline"). Sub-pixel is the only way to get a smooth ramp under 3px, so the
-// offset is a float now and rides the transforms instead. See applyShakeTransform.
-juce::Point<int> SpaceDustAudioProcessorEditor::plateInset() const
-{
-    // Vertical margin derived along the design aspect so the band is visually even on
-    // all four sides rather than thicker top and bottom.
-    return { kShakeMarginX,
-             juce::roundToInt(kShakeMarginX * (double) designHeight_ / (double) kDesignWidth) };
-}
-
-void SpaceDustAudioProcessorEditor::positionPlate()
-{
-    if (getWidth() <= 0 || getHeight() <= 0)
-        return;
-
-    const auto inset = plateInset();
-
-    plate.setBounds(juce::Rectangle<int>(getWidth()  + 2 * inset.x,
-                                         getHeight() + 2 * inset.y)
-                        .withPosition(-inset.x, -inset.y));
-}
-
-//==============================================================================
-// -- The face's transform, shake included --
-// mainView is already rendered through a fractional scale (viewScale is the editor's
-// width over 1120, e.g. 0.9518), so its whole subtree is ALREADY going through a
-// resampling path. Folding a fractional translation into that same transform therefore
-// costs nothing in quality or speed -- there is no new resampling, only a different
-// offset on the one that was happening anyway. That is what makes sub-pixel shake free
-// here, and it is the reason the offset goes in the transform rather than the bounds.
-//
-// Kept separate from layoutPlate() so a shake frame does not re-run the whole layout:
-// this only touches one transform, where layoutPlate() repositions every control.
-void SpaceDustAudioProcessorEditor::applyShakeTransform()
-{
-    const auto  inset     = plateInset();
-    const int   faceWidth = juce::jmax(0, plate.getWidth() - 2 * inset.x);
-    const float viewScale = (faceWidth > 0) ? faceWidth / (float) kDesignWidth : 1.0f;
-
-    mainView.setTransform(juce::AffineTransform::scale(viewScale)
-                              .translated((float) inset.x + shakeOffset.x,
-                                          (float) inset.y + shakeOffset.y));
-}
-
-//==============================================================================
-// -- Linear peak -> the meter's own scale --
-// This MUST stay in step with StereoLevelMeterComponent::linearToDb/dbToHeight, because
-// matching the meter is the entire point: the shake is judged against the bar sitting
-// next to it, so it has to move on the same scale the bar does.
-//
-// Driving it from raw linear amplitude instead (as it was until 2026-08-08) put every
-// bit of the motion in the top tenth of the meter. Measured across the bar:
-//
-//     dB     meter bar    linear    shake from linear
-//     -30    50% full     0.0316    0.017 px      <- half the meter, invisible
-//     -12    80% full     0.2512    0.378 px
-//      -6    90% full     0.5012    1.064 px
-//       0    100% full    1.0000    3.000 px
-//
-// Half a meter of signal produced seventeen THOUSANDTHS of a pixel. That is what
-// "it only shakes when it is in the green" was describing (Giuseppe, 2026-08-08) --
-// there was no ramp to see because the whole ramp lived above -6 dB.
-namespace
-{
-    constexpr float kShakeMeterFloorDb = -60.0f;   // matches the meter's minDb
-
-    float meterNormalisedLevel(float linearPeak) noexcept
-    {
-        if (linearPeak <= 0.0f)
-            return 0.0f;
-
-        const float db = 20.0f * std::log10(linearPeak);
-
-        if (db <= kShakeMeterFloorDb) return 0.0f;
-        if (db >= 0.0f)               return 1.0f;
-
-        return (db - kShakeMeterFloorDb) / (0.0f - kShakeMeterFloorDb);
-    }
-}
-
-// -- One shake frame --
-// Sol Voice Tuner's ballistics. Called EVERY tick, not only when the glow level moved:
-// a sustained note holds the level steady, and gating on "the level changed" froze the
-// face mid-throw exactly when the synth was loudest. Returns true when the offset
-// actually moved, so timerCallback knows whether a repaint is owed.
-bool SpaceDustAudioProcessorEditor::driveShake(float linearPeak)
-{
-    const float level = meterNormalisedLevel(linearPeak);
-
-    // Hit hard, fall away: the face should snap on a transient and drift back, not
-    // wobble along behind the average level.
-    shakeLevel = juce::jmax(juce::jlimit(0.0f, 1.0f, level),
-                            shakeLevel * kShakeRelease);
-
-    // Curved so quiet passages barely register and loud ones actually move it. The curve
-    // now applies to the METER's scale, not to linear amplitude, so its meaning changed
-    // with it: this shapes the ramp along the visible bar rather than crushing the whole
-    // bar into the top of the range.
-    //
-    // NOT rounded: kShakeMax is 3px, so whole pixels would leave four steps for the
-    // entire range and flatten most of the bar onto +/-1px.
-    const float amp = kShakeMax * std::pow(shakeLevel, kShakeCurve);
-
-    const auto previous = shakeOffset;
-
-    if (amp < kShakeFloor)
-    {
-        // Settle exactly to zero rather than leaving a fractional offset behind, or the
-        // face would come to rest a hair off-centre and stay there until the next note.
-        shakeOffset = {};
-    }
-    else
-    {
-        // A fresh direction every frame. Anything smoothed reads as a wobble; the point
-        // is that it looks struck.
-        const float angle = shakeRng.nextFloat() * juce::MathConstants<float>::twoPi;
-
-        shakeOffset = { std::cos(angle) * amp,
-                        std::sin(angle) * amp };
-    }
-
-    if (shakeOffset == previous)
-        return false;   // silence: nothing moved, so nothing is repainted
-
-    applyShakeTransform();
-    return true;
-}
-
-//==============================================================================
-// -- Resized Method --
-// The host resized us (or the deferred init set our size). This positions the plate and
-// stops; the plate's own resized() then calls layoutPlate(), which is where the whole UI
-// is actually laid out.
-//
-// The trap to know about: this does NOT lay out the UI itself, so any code that calls
-// resized() hoping to force a relayout gets only a re-position. That is what once
-// stopped the Master box resizing on a voice-mode change. Call layoutPlate() for that --
-// and grep for bare resized() calls inside this class before assuming a layout bug is
-// anywhere else.
 void SpaceDustAudioProcessorEditor::resized()
 {
-    if (isBeingDestroyed.load())
-        return;
-
-    positionPlate();
+    layoutPlate();
 }
 
 void SpaceDustAudioProcessorEditor::layoutPlate()
@@ -7200,15 +7009,11 @@ void SpaceDustAudioProcessorEditor::layoutPlate()
     //==============================================================================
     // -- Drag-resize: size + scale the container holding the whole UI --
     // mainView is laid out at the fixed design size; one uniform transform scales it to the
-    // plate's current (resizable) size. All layout below positions controls in design space.
-    // The design is scaled to the EDITOR's width and then inset inside the plate by the
-    // shake margin, so design (0,0) lands exactly on the editor's top-left. The plate is
-    // bigger than the editor purely so the shake has somewhere to slide to; the face
-    // itself is NOT stretched over the margin, because that would push the outermost few
-    // design pixels out of view and the tab bar starts at design x=0.
+    // editor's current (resizable) size. All layout below positions controls in design space.
     {
+        const float viewScale = (getWidth() > 0) ? getWidth() / (float) kDesignWidth : 1.0f;
         mainView.setBounds(0, 0, kDesignWidth, designHeight_);
-        applyShakeTransform();   // scale + inset + whatever the shake is currently at
+        mainView.setTransform(juce::AffineTransform::scale(viewScale));
     }
 
     //==============================================================================

@@ -369,46 +369,6 @@ public:
 };
 
 //==============================================================================
-/** The component carrying the entire Space Dust UI.
-
-    A thin forwarder. It paints by calling the editor's paintPlate() and lays out by
-    calling layoutPlate(), because every control those two touch is an editor member
-    already.
-
-    It is a child of the editor and deliberately LARGER than it -- see kShakeMargin.
-    The editor is the rectangle the host gives us; the plate overhangs it on all four
-    sides so the shake can slide the face without ever exposing a gap at an edge.
-
-    Two settings carry weight:
-
-      - Opaque. Nothing about Space Dust's face is see-through, and declaring the
-        plate opaque spares JUCE an alpha pass over the whole surface every frame.
-        It also means the plate alone covers the editor, so the editor's own paint()
-        never shows through. This is the line to change first if a shaped plate is
-        ever wanted.
-
-      - Click-through. The plate takes no clicks of its own; controls inside mainView
-        take theirs exactly as before. A press on empty background simply does
-        nothing, which is what it should do now there is no window to drag. */
-class SpaceDustPlateComponent final : public juce::Component
-{
-public:
-    explicit SpaceDustPlateComponent(SpaceDustAudioProcessorEditor& e) : editor(e)
-    {
-        setOpaque(true);
-        setInterceptsMouseClicks(false, true);
-    }
-
-    void paint(juce::Graphics&) override;
-    void resized() override;
-
-private:
-    SpaceDustAudioProcessorEditor& editor;
-
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpaceDustPlateComponent)
-};
-
-//==============================================================================
 class SpaceDustAudioProcessorEditor : public juce::AudioProcessorEditor,
                                       public juce::Timer,
                                       public juce::Slider::Listener,
@@ -443,10 +403,11 @@ public:
     void resized() override;
 
     //==============================================================================
-    // -- The plate's way back into the editor --
-    // Public because the plate calls them: every control they touch is an editor
-    // member already, so the plate is a forwarder rather than an owner. They take
-    // their scale from the PLATE, which is the editor's size plus the shake overscan.
+    // -- The real paint and layout --
+    // paint()/resized() above are one-line wrappers over these. They kept the "Plate"
+    // names from when the UI lived in a floating window with a plate component inside
+    // it; both are gone, but a dozen sites inside this class call layoutPlate() to
+    // force a relayout, so the names stay. `plateWidth` is just getWidth().
     void paintPlate(juce::Graphics& g, int plateWidth);
     void layoutPlate();
 
@@ -565,120 +526,14 @@ private:
     // -- Drag-resize scaling --
     // The whole UI is authored at a fixed design size (kDesignWidth x designHeight_)
     // and rendered through a single uniform scale. mainView is a transparent container
-    // that holds every control and is scaled by k = plate.getWidth()/kDesignWidth;
-    // paintPlate() scales its background/decorations by the same k via g.addTransform.
-    // The EDITOR is resizable with a locked aspect ratio, so dragging its corner
-    // grows/shrinks everything together without moving any item relative to another.
-    // The plate is the editor plus the shake overscan, so k is very slightly over the
-    // editor's own ratio -- that is what absorbs the margin instead of cropping it.
+    // that holds every control and is scaled by k = getWidth()/kDesignWidth; paintPlate()
+    // scales its background/decorations by the same k via g.addTransform. The editor is
+    // resizable with a locked aspect ratio, so dragging its corner grows/shrinks
+    // everything together without moving any item relative to another.
     static constexpr int kDesignWidth = 1120;
     int designHeight_ = 857;          // set in the ctor timer (+ keyboard strip in standalone)
     juce::Component mainView;         // scalable container parenting the entire UI
     bool cheezeGuyTabAdded = false;
-
-    //==============================================================================
-    // -- The plate that carries the face --
-    // The UI lives in the rectangle the host gives us. It used to live in a desktop
-    // window of our own (FloatingShell), which was removed on 2026-08-08: that window
-    // existed only to get per-pixel alpha for a shaped silhouette, the alpha was
-    // abandoned on 2026-08-01 for being slow in FL, and what was left cost a
-    // system-wide EnumWindows poll 20x a second plus a z-order fight with the DAW for
-    // a panel that is opaque and rectangular anyway. See git 74f776e for what it was.
-    SpaceDustPlateComponent plate { *this };
-
-    //==============================================================================
-    // -- Shake --
-    // The face is thrown around by whatever is coming out of the synth. Sol Voice
-    // Tuner's ballistics, but driven and rendered differently since 2026-08-08, and
-    // the difference is the whole point:
-    //
-    //   BEFORE: moved our own desktop window with SetWindowPos on a private 60Hz
-    //           timer. Painting cost nothing -- the compositor blits an unchanged
-    //           surface -- but every frame was window-manager traffic on the thread
-    //           the DAW draws its UI on, and the throw was capped at 0.656px because
-    //           of it.
-    //
-    //   NOW:    slides the PLATE inside the editor. That dirties the face, so it
-    //           costs a repaint... except it is deliberately driven from the SAME
-    //           20Hz tick that already repaints the plate to animate the glow, and
-    //           only when that repaint is already happening (see timerCallback).
-    //           The condition for the glow repaint is "output level moved", which is
-    //           exactly the condition for the shake being non-zero, so the shake
-    //           rides a repaint that was going to happen anyway and adds nothing.
-    //
-    // 20fps would be far too coarse for smooth motion, and is fine here: driveShake()
-    // picks a fresh random angle every frame precisely so it reads as struck rather
-    // than as a wobble. Random jitter is noise at any frame rate.
-    //
-    // Freed from the window-manager cost, the throw can be a size you can actually
-    // see. kShakeRelease is Sol's per-frame-at-60Hz constant re-derived for 20Hz:
-    // 0.72^3 = 0.373, so the decay per SECOND is unchanged.
-    /** Master switch. With it false the plate sits exactly at its home offset and
-        driveShake() is never called -- useful any time the bloom needs judging
-        without the face moving underneath it. */
-    static constexpr bool  kShakeEnabled = true;
-
-    // The throw at full scale. Set by ear (Giuseppe, 2026-08-08): "the maximum shake it
-    // has right now is that absolute maximum the synth should be shaking". Turn the
-    // WHOLE effect up or down here -- everything below is a shape, not a size.
-    static constexpr float kShakeMax     = 3.0f;    // px at 0 dBFS, in EDITOR pixels
-    static constexpr float kShakeRelease = 0.373f;  // per frame at the 20Hz UI tick
-
-    // Shapes the ramp ALONG THE METER BAR (driveShake converts to the meter's dB scale
-    // first), not along linear amplitude. >1 keeps the bottom of the bar calm while
-    // still leaving it visible. Raise this if quiet passages feel too twitchy; it is the
-    // right knob for that, whereas kShakeMax would scale the whole effect.
-    static constexpr float kShakeCurve   = 1.5f;
-
-    // The point at which it stops entirely. Deliberately tiny: this used to be 0.35px,
-    // which with whole-pixel offsets was the level below which nothing could show anyway,
-    // but sub-pixel motion is visible far below that and cutting it at 0.35 killed the
-    // bottom third of the range outright -- everything under level 0.24 sat dead still.
-    // At 0.04 the face keeps a faint tremor when quiet and the ramp into redline is
-    // continuous, which is what was asked for. It exists at all so silence is truly
-    // still rather than jittering on meter noise.
-    static constexpr float kShakeFloor   = 0.04f;   // px below which it sits dead still
-
-    /** How far the plate overhangs the editor on each side. Must be > kShakeMax or a
-        shake at full level would pull the face's own edge into view.
-
-        The face is NOT stretched over this margin -- it is scaled to the editor's width
-        and inset by it, so the design still maps 1:1 onto the visible rectangle and
-        nothing is cropped (the tab bar starts at design x=0, so cropping here would
-        clip the first tab). What fills the margin is the face's background colour, laid
-        down by paintPlate's fillAll before the transform. That band is what slides into
-        view when the face is thrown, and being the same colour it reads as the face
-        moving rather than as a gap opening. */
-    static constexpr int kShakeMarginX = 4;
-
-    /** The margin as an (x, y) pair, the y derived along the design aspect so the band
-        is even on all four sides. */
-    juce::Point<int> plateInset() const;
-
-    /** Advances the ballistics by one frame and moves the face. Takes the raw LINEAR
-        peak and converts it to the meter's dB scale internally, so the shake ramps
-        along the same bar the user is looking at.
-
-        Called every tick, and returns true when the offset actually moved so
-        timerCallback knows whether a repaint is owed. */
-    bool driveShake(float linearPeak);
-
-    /** Sets mainView's transform: design scale, the plate inset, and the current shake
-        offset. Cheap enough to call per shake frame -- it touches one transform, unlike
-        layoutPlate() which repositions every control. paintPlate() applies the matching
-        offset itself so the face and the controls move together. */
-    void applyShakeTransform();
-
-    /** Sizes the plate to the editor plus the inset margin. The plate does NOT move --
-        the shake rides the transforms, so this only runs on a real resize. */
-    void positionPlate();
-
-    juce::Random shakeRng;
-    float        shakeLevel = 0.0f;
-
-    /** FLOAT, not int, and that is the point: a whole-pixel offset gave a 3px throw only
-        four steps and flattened the entire green region onto +/-1px. */
-    juce::Point<float> shakeOffset;
 
     //==============================================================================
     // -- Preset Management --
