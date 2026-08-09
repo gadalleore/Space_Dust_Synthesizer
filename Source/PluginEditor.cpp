@@ -1111,7 +1111,16 @@ void MainPageComponent::resized()
     
     // Consistent spacing constants for Oscillators section
     const int oscRowSpacing = 28; // Vertical spacing between oscillator rows (compact)
-    
+
+    // Cosmetic lift for the knob groups. The knob title labels (Coarse / Detune /
+    // Level, Low Shelf/Cut / High Shelf/Cut / Level) must sit flush with the row
+    // label (Waveform 1 / Waveform 2 / Noize Type), which starts
+    // (labelHeight + labelGap) above the combo box. Both use the same font and
+    // label height, so an equal top Y reads as one line.
+    // Row flow below still uses the unlifted knob bottom, so no other element,
+    // and no box height derived from it, moves.
+    const int oscKnobLift = (comboHeight - knobDiameter) / 2 + labelHeight + labelGap;
+
     // Osc1 - Waveform combo + 3 knobs horizontally
     int osc1Y = oscStartY;
     parentEditor.osc1WaveformLabel.setBounds(oscContent.getX(), osc1Y, comboWidth, labelHeight);
@@ -1125,7 +1134,8 @@ void MainPageComponent::resized()
     parentEditor.osc1PanLabel.setBounds(oscContent.getX(), osc1PanY + panSliderHeight + 2, comboWidth, labelHeight);
     
     // Knobs shifted down so title labels (Coarse, Detune, Level) sit above â€” matches Filter Cutoff/Resonance
-    int osc1KnobY = osc1Y + (comboHeight - knobDiameter) / 2 + labelHeight + oscKnobLabelGap;
+    int osc1KnobRowY = osc1Y + (comboHeight - knobDiameter) / 2 + labelHeight + oscKnobLabelGap; // row-flow anchor
+    int osc1KnobY = osc1KnobRowY - oscKnobLift;
     int osc1KnobX = oscContent.getX() + comboWidth + horizontalSpacing;
     
     parentEditor.osc1CoarseTuneLabel.setBounds(osc1KnobX, osc1KnobY - labelHeight - oscKnobLabelGap, knobDiameter, labelHeight);
@@ -1140,7 +1150,7 @@ void MainPageComponent::resized()
     parentEditor.osc1LevelSlider.setBounds(osc1KnobX, osc1KnobY, knobDiameter, knobDiameter);
     
     // Bottom of row: knob + value text box (no title label below)
-    int osc1Bottom = osc1KnobY + knobDiameter + oscLabelSpacing;
+    int osc1Bottom = osc1KnobRowY + knobDiameter + oscLabelSpacing;
     
     // Osc2 - Same layout, below Osc1 with proper spacing to prevent overlaps
     int osc2Y = osc1Bottom + oscRowSpacing;
@@ -1153,7 +1163,8 @@ void MainPageComponent::resized()
     parentEditor.osc2PanSlider.setBounds(oscContent.getX(), osc2PanY, comboWidth, panSliderHeight);
     parentEditor.osc2PanLabel.setBounds(oscContent.getX(), osc2PanY + panSliderHeight + 2, comboWidth, labelHeight);
     
-    int osc2KnobY = osc2Y + (comboHeight - knobDiameter) / 2 + labelHeight + oscKnobLabelGap;
+    int osc2KnobRowY = osc2Y + (comboHeight - knobDiameter) / 2 + labelHeight + oscKnobLabelGap; // row-flow anchor
+    int osc2KnobY = osc2KnobRowY - oscKnobLift;
     int osc2KnobX = oscContent.getX() + comboWidth + horizontalSpacing;
     
     parentEditor.osc2CoarseTuneLabel.setBounds(osc2KnobX, osc2KnobY - labelHeight - oscKnobLabelGap, knobDiameter, labelHeight);
@@ -1167,7 +1178,7 @@ void MainPageComponent::resized()
     parentEditor.osc2LevelLabel.setBounds(osc2KnobX, osc2KnobY - labelHeight - oscKnobLabelGap, knobDiameter, labelHeight);
     parentEditor.osc2LevelSlider.setBounds(osc2KnobX, osc2KnobY, knobDiameter, knobDiameter);
     
-    int osc2Bottom = osc2KnobY + knobDiameter + oscLabelSpacing;
+    int osc2Bottom = osc2KnobRowY + knobDiameter + oscLabelSpacing;
     
     // Noise - Below Osc2 with proper padding
     // Match the Osc1->Osc2 row gap (oscRowSpacing) so the Waveform2->Noise distance is identical
@@ -1177,7 +1188,8 @@ void MainPageComponent::resized()
     noiseY += labelHeight + labelGap;
     parentEditor.noiseColorCombo.setBounds(oscContent.getX(), noiseY, comboWidth, comboHeight);
     
-    int noiseKnobY = noiseY + (comboHeight - knobDiameter) / 2 + labelHeight + oscKnobLabelGap;
+    int noiseKnobRowY = noiseY + (comboHeight - knobDiameter) / 2 + labelHeight + oscKnobLabelGap; // row-flow anchor
+    int noiseKnobY = noiseKnobRowY - oscKnobLift;
     int noiseKnobX = oscContent.getX() + comboWidth + horizontalSpacing;  // First knob column
 
     // Noise EQ knobs occupy the first two columns; Level sits in the third column
@@ -1433,7 +1445,7 @@ void MainPageComponent::resized()
     // (Both boxes share the same spacing constants, so the element-bottom
     // definition is identical and the two gaps line up exactly.)
     // ------------------------------------------------------------------
-    int oscElementsBottom    = noiseKnobY    + knobDiameter + oscLabelSpacing;
+    int oscElementsBottom    = noiseKnobRowY + knobDiameter + oscLabelSpacing;
     int oscBottomGap         = (oscY + oscHeight) - oscElementsBottom;
     int filterElementsBottom = filterEnvKnobY + knobDiameter + filterLabelSpacing;
     int matchedFilterHeight  = (filterElementsBottom - filterY) + oscBottomGap;
