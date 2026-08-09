@@ -407,13 +407,20 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
         // reads as a uniform wash -- the acceleration is what makes it look like it is
         // dissolving rather than merely being dimmed.
         //
-        // Kept well below the level fill's strength throughout: this is the quiet layer
-        // and must not compete with the meter drawn over it.
-        juce::ColourGradient grad(valueArcBlue.withAlpha(0.85f), tailP,
-                                  valueArcBlue.withAlpha(0.0f),  headP, false);
-        grad.addColour(0.35, valueArcBlue.withAlpha(0.55f));
-        grad.addColour(0.65, valueArcBlue.withAlpha(0.24f));
-        grad.addColour(0.85, valueArcBlue.withAlpha(0.07f));
+        // arcHue is the POINTER's own colour, so the arc leaves the bottom of the dial
+        // as the same blue the pointer is drawn in and dissolves from there (Giuseppe,
+        // 2026-08-08). Using the shared hue rather than a colour of its own also means
+        // the arc follows the pointer red on clipping, so the dial still flips as one
+        // object the way every other glow site does.
+        //
+        // Separation from the level fill is carried by ALPHA alone now, not by hue:
+        // the fill is drawn at full strength over the top, this peaks at 0.85 and falls
+        // away, so it stays the quiet layer without needing to be a different colour.
+        juce::ColourGradient grad(arcHue.withAlpha(0.85f), tailP,
+                                  arcHue.withAlpha(0.0f),  headP, false);
+        grad.addColour(0.35, arcHue.withAlpha(0.55f));
+        grad.addColour(0.65, arcHue.withAlpha(0.24f));
+        grad.addColour(0.85, arcHue.withAlpha(0.07f));
 
         g.setGradientFill(grad);
         g.strokePath(valueArc, juce::PathStrokeType(arcThickness,
