@@ -258,11 +258,18 @@ private:
     static constexpr int   kHoldFrames = 4;       // ~65ms at 60Hz
 
     // Peak-hold ticks: slower than the bar by enough that the mark reads as its
-    // own object, but out of the way quickly once it starts to drop -- it sinks
-    // and dissolves at the same time.
+    // own object. It stays fully lit for the whole descent and dissolves only over
+    // the last stretch, so it lands and vanishes together.
+    //
+    // The dissolve used to run on its own clock (0.93 per frame, killed at 0.06
+    // alpha), which put the tick out after ~0.65s -- and at ~25 dB/s that is barely
+    // a quarter of the way down. From a full-scale peak the mark was snapped to zero
+    // while still at 74% height, so it left the scale in one step instead of falling
+    // (Giuseppe, 2026-08-09: "jumps down instead of slowly lowering to zero").
+    // Alpha is taken from the distance still to fall now, so it cannot outrun the
+    // fall no matter how high the peak it started from.
     static constexpr float kMarkRelease    = 0.955f;  // ~25 dB/s at 60Hz
-    static constexpr float kMarkFade       = 0.93f;
-    static constexpr float kMarkMinAlpha   = 0.06f;
+    static constexpr float kMarkFadeSpan   = 0.15f;   // fraction of scale it fades across
     static constexpr int   kMarkHoldFrames = 12;      // ~0.2s at 60Hz
     static constexpr float kMarkThickness  = 2.0f;
 

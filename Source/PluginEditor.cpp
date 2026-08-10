@@ -551,12 +551,19 @@ void StereoLevelMeterComponent::timerCallback()
         }
         else
         {
-            mark[ch]     *= kMarkRelease;
-            markFade[ch] *= kMarkFade;
+            mark[ch] *= kMarkRelease;
 
-            // Gone once it is too faint to read, without waiting for the position
-            // to crawl all the way down to the floor.
-            if (markFade[ch] <= kMarkMinAlpha || dbToHeight(linearToDb(mark[ch])) <= 0.0f)
+            const float markNorm = dbToHeight(linearToDb(mark[ch]));
+
+            // Lit the whole way down, dissolving only across the last kMarkFadeSpan
+            // of the scale. Tying alpha to the height left rather than to a frame
+            // count is what keeps the two in step: the tick can no longer run out of
+            // opacity while it still has most of the bar to travel.
+            markFade[ch] = juce::jlimit(0.0f, 1.0f, markNorm / kMarkFadeSpan);
+
+            // Only once it has actually reached the floor -- by then it is both at
+            // zero height and at zero alpha, so nothing visible is being cut off.
+            if (markNorm <= 0.0f)
             {
                 mark[ch]     = 0.0f;
                 markFade[ch] = 0.0f;
