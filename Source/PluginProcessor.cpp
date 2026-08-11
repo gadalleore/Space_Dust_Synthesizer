@@ -305,6 +305,16 @@ SpaceDustAudioProcessor::SpaceDustAudioProcessor()
     }
     
     //==============================================================================
+    // -- Imported waveforms --
+    // Read the user's saved waveforms so the dropdowns are populated before any
+    // preset loads. A song that carries its own waveforms replaces these when its
+    // state is restored; anything the song does not carry stays available.
+    // Safe here despite the note below about voices: this touches no DSP and needs
+    // no sample rate, and the audio thread cannot see the result until the first
+    // processBlock picks it up.
+    userWaveLibrary.loadFromDisk();
+
+    //==============================================================================
     // -- DEBUG LOGGING: DISABLED --
     // FileLogger DISABLED to prevent LeakedObjectDetector assertions in Ableton Live
     // FileLogger is known to cause leaks in VST3 hosts, especially Ableton Live
@@ -545,7 +555,13 @@ SpaceDustAudioProcessor::~SpaceDustAudioProcessor()
 
     synth.setCurrentPlaybackSampleRate(0.0); // Reset sample rate to clean state
     DBG("Space Dust: Sample rate reset");
-    
+
+    // Free the waveform snapshot the audio thread was holding. Audio has stopped
+    // by now, so nothing is reading it; the library's own timer only ever sees the
+    // banks the audio thread handed BACK, not the one it was still using.
+    userWaveLibrary.reclaimFromAudio(audioUserWaveBank);
+
+
     //==============================================================================
     // -- Aggressive Ableton VST3 Unload Crash Workaround --
     // 
@@ -1117,6 +1133,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     {
         if (auto* voice = dynamic_cast<SynthVoice*>(synth.getVoice(i)))
         {
+            voice->setUserWaveBank(audioUserWaveBank);
             voice->setOsc1Waveform(osc1Wave);
             voice->setOsc2Waveform(osc2Wave);
             voice->setOsc1CoarseTune(osc1CoarseTune);
@@ -1478,6 +1495,13 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // message-thread parameterChanged, so it can't race note rendering. No-op unless
     // mpeMode/mpePitchBendRange changed since the last block.
     applyPendingMpeReconfig();
+
+    // Pick up any newly imported waveforms and hand the previous set back to be
+    // freed on the message thread. One atomic exchange, and a no-op on every block
+    // where nothing was imported. Doing this before the zero-sample guard below
+    // means the handover keeps happening while a host is sending empty blocks
+    // during GUI edits -- which is exactly when an import lands.
+    userWaveLibrary.exchangeBank(audioUserWaveBank);
 
     //==============================================================================
     // -- CRITICAL: Bulletproof Buffer Guard for Ableton/Reaper Compatibility --
@@ -3035,6 +3059,15 @@ void SpaceDustAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
             // Marks which meaning the stored values carry. Anything without it predates
             // a different LFO rate range and gets its rates rescaled on load.
             xml->setAttribute("stateVersion", currentStateVersion);
+
+            // Imported waveforms travel with the song. Single Cycle slots carry
+            // their table inline and are fully self contained; Full Sample slots
+            // carry a reference to their copy in the user's Wavetables folder,
+            // because embedding fifteen seconds of audio eight times over would
+            // add tens of megabytes to every save.
+            if (auto waves = userWaveLibrary.createStateXml())
+                xml->addChildElement(waves.release());
+
             copyXmlToBinary(*xml, destData);
         }
     }
@@ -3076,9 +3109,27 @@ void SpaceDustAudioProcessor::setStateInformation(const void* data, int sizeInBy
             cheezeGuyActivated = xmlState->getBoolAttribute("cheezeGuyActivated", false);
             lastActiveTabIndex = xmlState->getIntAttribute("lastActiveTabIndex", 0);
 
+            // Lift the imported waveforms OUT of the XML before it becomes the
+            // parameter tree. Left in place they would become a child of the APVTS
+            // state, get written out again by the next save, and double in size on
+            // every round trip.
+            std::unique_ptr<juce::XmlElement> waves;
+            if (auto* stored = xmlState->getChildByName("USERWAVES"))
+            {
+                // The false says "do not delete it" — ownership passes to us here.
+                xmlState->removeChildElement(stored, false);
+                waves.reset(stored);
+            }
+
             auto restored = juce::ValueTree::fromXml(*xmlState);
             migrateLfoRatesIfOld(restored, xmlState->getIntAttribute("stateVersion", 1));
             apvts.replaceState(restored);
+
+            // After the parameters, so the waveform choices they restored already
+            // point at the slots this is about to fill.
+            if (waves != nullptr)
+                userWaveLibrary.restoreFromStateXml(*waves);
+
             updateVoicesWithParameters();
         }
     }
@@ -3169,18 +3220,43 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     //==============================================================================
     // -- Oscillator Parameters --
     
+    //==============================================================================
+    // -- Waveform choices, and why the User slots are always there --
+    //
+    // VST3 and AU freeze the item count of a Choice parameter when the plugin
+    // loads. A host writes automation against that list and a session recalls it
+    // by position, so a list that grew when the user imported another sample would
+    // silently move every automation point already written.
+    //
+    // So all eight User slots exist from the start, whether or not anything has
+    // been imported into them, and only the NAMES shown in the dropdown follow
+    // what the user has loaded (see PluginEditor's refreshUserWaveformNames).
+    // The host always sees "User 1" through "User 8".
+    //
+    // The built-in shapes keep their existing positions, so every preset and every
+    // saved song written before this feature still selects the same waveform:
+    // the value stored is the index, and index 2 is still Saw.
+    juce::StringArray waveformChoices;
+    waveformChoices.add(safeString("Sine"));
+    waveformChoices.add(safeString("Triangle"));
+    waveformChoices.add(safeString("Saw"));
+    waveformChoices.add(safeString("Square"));
+
+    for (int i = 1; i <= UserWave::numSlots; ++i)
+        waveformChoices.add("User " + juce::String(i));
+
     // Oscillator 1 waveform
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"osc1Waveform", 1}, "Osc 1 Waveform",
-            juce::StringArray(safeString("Sine"), safeString("Triangle"), safeString("Saw"), safeString("Square")), 1),
+            waveformChoices, 1),
         safeString("osc1Waveform"));
-    
+
     // Oscillator 2 waveform
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"osc2Waveform", 1}, "Osc 2 Waveform",
-            juce::StringArray(safeString("Sine"), safeString("Triangle"), safeString("Saw"), safeString("Square")), 1),
+            waveformChoices, 1),
         safeString("osc2Waveform"));
     
     //==============================================================================
@@ -3258,11 +3334,21 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.0f),
         "noiseLevel");
 
-    // Noise type (White / Pink) â€” a real parameter so it can be automated and saved.
+    // Noise type â€” a real parameter so it can be automated and saved.
+    // The same eight User slots as the oscillators, appended after the two noise
+    // colours for the same reason: the item count can never change. Choosing one
+    // turns this source into a third oscillator that tracks the played note, with
+    // the Level knob as its volume and the two shelves as its tone controls.
+    juce::StringArray noiseChoices;
+    noiseChoices.add(safeString("White"));
+    noiseChoices.add(safeString("Pink"));
+
+    for (int i = 1; i <= UserWave::numSlots; ++i)
+        noiseChoices.add("User " + juce::String(i));
+
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
-            juce::ParameterID{"noiseType", 1}, "Noise Type",
-            juce::StringArray(safeString("White"), safeString("Pink")), 0),
+            juce::ParameterID{"noiseType", 1}, "Noise Type", noiseChoices, 0),
         safeString("noiseType"));
 
     // Noise EQ: Low Shelf/Cut (affects frequencies below 200 Hz)

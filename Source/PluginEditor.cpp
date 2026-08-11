@@ -848,6 +848,9 @@ MainPageComponent::MainPageComponent(SpaceDustAudioProcessorEditor& editor)
     addAndMakeVisible(parentEditor.oscillatorsGroup);
     addAndMakeVisible(parentEditor.osc1WaveformCombo);
     addAndMakeVisible(parentEditor.osc1WaveformLabel);
+    addAndMakeVisible(parentEditor.osc1WaveformEditButton);
+    addAndMakeVisible(parentEditor.osc2WaveformEditButton);
+    addAndMakeVisible(parentEditor.noiseWaveformEditButton);
     addAndMakeVisible(parentEditor.osc1CoarseTuneSlider);
     addAndMakeVisible(parentEditor.osc1CoarseTuneLabel);
     addAndMakeVisible(parentEditor.osc1DetuneSlider);
@@ -1128,12 +1131,25 @@ void MainPageComponent::resized()
     // and no box height derived from it, moves.
     const int oscKnobLift = (comboHeight - knobDiameter) / 2 + labelHeight + labelGap;
 
+    // The button that opens the Waveforms window sits in the gap that already
+    // exists between the combo column and the first knob column (horizontalSpacing
+    // is 50 px), so nothing else moves and no width has to be recalculated.
+    // 6 + 40 leaves four pixels before the knob column starts.
+    const int waveEditButtonWidth = 40;
+    const int waveEditButtonSize = 22;
+    const int waveEditButtonGap = 6;
+
     // Osc1 - Waveform combo + 3 knobs horizontally
     int osc1Y = oscStartY;
     parentEditor.osc1WaveformLabel.setBounds(oscContent.getX(), osc1Y, comboWidth, labelHeight);
     osc1Y += labelHeight + labelGap;
     parentEditor.osc1WaveformCombo.setBounds(oscContent.getX(), osc1Y, comboWidth, comboHeight);
-    
+    parentEditor.osc1WaveformEditButton.setBounds(
+        oscContent.getX() + comboWidth + waveEditButtonGap,
+        osc1Y + (comboHeight - waveEditButtonSize) / 2,
+        waveEditButtonWidth, waveEditButtonSize);
+
+
     // Pan slider in green box area (below waveform combo, left of knobs)
     const int panSliderHeight = 20;
     int osc1PanY = osc1Y + comboHeight + 4;
@@ -1164,7 +1180,12 @@ void MainPageComponent::resized()
     parentEditor.osc2WaveformLabel.setBounds(oscContent.getX(), osc2Y, comboWidth, labelHeight);
     osc2Y += labelHeight + labelGap;
     parentEditor.osc2WaveformCombo.setBounds(oscContent.getX(), osc2Y, comboWidth, comboHeight);
-    
+    parentEditor.osc2WaveformEditButton.setBounds(
+        oscContent.getX() + comboWidth + waveEditButtonGap,
+        osc2Y + (comboHeight - waveEditButtonSize) / 2,
+        waveEditButtonWidth, waveEditButtonSize);
+
+
     // Pan slider in green box area (below waveform combo, left of knobs)
     int osc2PanY = osc2Y + comboHeight + 4;
     parentEditor.osc2PanSlider.setBounds(oscContent.getX(), osc2PanY, comboWidth, panSliderHeight);
@@ -1194,7 +1215,12 @@ void MainPageComponent::resized()
     parentEditor.noiseColorLabel.setBounds(oscContent.getX(), noiseY, comboWidth, labelHeight);
     noiseY += labelHeight + labelGap;
     parentEditor.noiseColorCombo.setBounds(oscContent.getX(), noiseY, comboWidth, comboHeight);
-    
+    parentEditor.noiseWaveformEditButton.setBounds(
+        oscContent.getX() + comboWidth + waveEditButtonGap,
+        noiseY + (comboHeight - waveEditButtonSize) / 2,
+        waveEditButtonWidth, waveEditButtonSize);
+
+
     int noiseKnobRowY = noiseY + (comboHeight - knobDiameter) / 2 + labelHeight + oscKnobLabelGap; // row-flow anchor
     int noiseKnobY = noiseKnobRowY - oscKnobLift;
     int noiseKnobX = oscContent.getX() + comboWidth + horizontalSpacing;  // First knob column
@@ -3731,6 +3757,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     osc1WaveformCombo.addItem(safeString("Triangle"), 2);
     osc1WaveformCombo.addItem(safeString("Saw"), 3);
     osc1WaveformCombo.addItem(safeString("Square"), 4);
+
+    // The imported waveforms are added by rebuildWaveformMenus() once every combo
+    // exists, and only the slots that actually hold something get an entry.
     osc1WaveformCombo.setSelectedId(2);  // Default to Triangle
     
     #if JUCE_DEBUG
@@ -3767,8 +3796,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     catch (...) {}
     #endif
     
-    osc1WaveformAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        audioProcessor.getValueTreeState(), "osc1Waveform", osc1WaveformCombo);
+    if (auto* osc1WaveformParam = audioProcessor.getValueTreeState().getParameter("osc1Waveform"))
+        osc1WaveformAttachment = std::make_unique<WaveformChoiceAttachment>(
+            *osc1WaveformParam, osc1WaveformCombo);
     osc1WaveformLabel.setText(safeString("Waveform 1"), juce::dontSendNotification);
     osc1WaveformLabel.setJustificationType(juce::Justification::centred);
     osc1WaveformLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
@@ -3819,8 +3849,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     osc2WaveformCombo.addItem(safeString("Saw"), 3);
     osc2WaveformCombo.addItem(safeString("Square"), 4);
     osc2WaveformCombo.setSelectedId(2);  // Default to Triangle
-    osc2WaveformAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        audioProcessor.getValueTreeState(), "osc2Waveform", osc2WaveformCombo);
+    if (auto* osc2WaveformParam = audioProcessor.getValueTreeState().getParameter("osc2Waveform"))
+        osc2WaveformAttachment = std::make_unique<WaveformChoiceAttachment>(
+            *osc2WaveformParam, osc2WaveformCombo);
     osc2WaveformLabel.setText(safeString("Waveform 2"), juce::dontSendNotification);
     osc2WaveformLabel.setJustificationType(juce::Justification::centred);
     osc2WaveformLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
@@ -3871,13 +3902,59 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     noiseColorCombo.setLookAndFeel(&customLookAndFeel);
     // Attach to the "noiseType" parameter (White=0, Pink=1) so it can be automated
     // and saved like any other control. Items must be added before the attachment.
-    noiseColorAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        audioProcessor.getValueTreeState(), "noiseType", noiseColorCombo);
+    if (auto* noiseTypeParam = audioProcessor.getValueTreeState().getParameter("noiseType"))
+        noiseColorAttachment = std::make_unique<WaveformChoiceAttachment>(
+            *noiseTypeParam, noiseColorCombo);
     noiseColorLabel.setText(safeString("Noize Type"), juce::dontSendNotification);
     noiseColorLabel.setJustificationType(juce::Justification::centred);
     noiseColorLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
     noiseColorLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    
+
+    //==========================================================================
+    // -- The three buttons that open the Waveforms window --
+    // One beside each dropdown that can select an imported sample. They open the
+    // same window; the only difference is which slot it lands on, taken from what
+    // that dropdown is currently set to.
+    {
+        struct EditButtonTarget { juce::TextButton* button; juce::ComboBox* combo; int userBase; const char* tip; };
+
+        const EditButtonTarget targets[] =
+        {
+            { &osc1WaveformEditButton,  &osc1WaveformCombo, UserWave::oscUserBase,
+              "Import a sample as an Oscillator 1 waveform" },
+            { &osc2WaveformEditButton,  &osc2WaveformCombo, UserWave::oscUserBase,
+              "Import a sample as an Oscillator 2 waveform" },
+            { &noiseWaveformEditButton, &noiseColorCombo,   UserWave::noiseUserBase,
+              "Import a sample as a Noize source" },
+        };
+
+        for (const auto& target : targets)
+        {
+            target.button->setButtonText(safeString("Edit"));
+            target.button->setTooltip(safeString(target.tip));
+            target.button->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a1a45));
+            target.button->setColour(juce::TextButton::textColourOffId, juce::Colour(0xff6dd5fa));
+            target.button->setColour(juce::TextButton::textColourOnId, juce::Colours::white);
+
+            auto* combo = target.combo;
+            const int userBase = target.userBase;
+            target.button->onClick = [this, combo, userBase]
+            {
+                openWaveformWindow(combo, userBase);
+            };
+        }
+    }
+
+    // The dropdowns follow whatever has been imported, and keep following it: the
+    // library calls back whenever a slot changes.
+    rebuildWaveformMenus();
+
+    audioProcessor.getUserWaveLibrary().onChange = [this]
+    {
+        rebuildWaveformMenus();
+    };
+
+
     noiseLevelSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     noiseLevelSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     noiseLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -6126,6 +6203,93 @@ void SpaceDustAudioProcessorEditor::globalFocusChanged(juce::Component* focusedC
     standaloneKeyboard->grabKeyboardFocus();
 }
 
+//==============================================================================
+void SpaceDustAudioProcessorEditor::rebuildWaveformMenus()
+{
+    auto& library = audioProcessor.getUserWaveLibrary();
+
+    struct MenuToBuild
+    {
+        juce::ComboBox* combo;
+        WaveformChoiceAttachment* attachment;
+        int userBase;
+        const char* builtIns[4];
+    };
+
+    // The built-in entries, in the order the parameter declares them. Their ids
+    // are their parameter index plus one, exactly like the User slots.
+    const MenuToBuild menus[] =
+    {
+        { &osc1WaveformCombo, osc1WaveformAttachment.get(), UserWave::oscUserBase,
+          { "Sine", "Triangle", "Saw", "Square" } },
+        { &osc2WaveformCombo, osc2WaveformAttachment.get(), UserWave::oscUserBase,
+          { "Sine", "Triangle", "Saw", "Square" } },
+        { &noiseColorCombo,   noiseColorAttachment.get(),   UserWave::noiseUserBase,
+          { "White", "Pink", nullptr, nullptr } },
+    };
+
+    for (const auto& menu : menus)
+    {
+        if (menu.combo == nullptr || menu.attachment == nullptr)
+            continue;
+
+        // Read the selection from the PARAMETER, not from the box. The box is
+        // about to be emptied, and its own selection may point at a slot that has
+        // since been cleared and so has no entry left to report.
+        const int selectedIndex = menu.attachment->currentIndex();
+
+        menu.combo->clear(juce::dontSendNotification);
+
+        for (int i = 0; i < menu.userBase; ++i)
+            menu.combo->addItem(menu.builtIns[i], i + 1);
+
+        for (int slot = 0; slot < UserWave::numSlots; ++slot)
+        {
+            const int id = menu.userBase + slot + 1;
+            const bool filled = library.bank().slot(slot).isPlayable();
+
+            if (filled)
+            {
+                menu.combo->addItem(library.choiceNameForSlot(slot), id);
+            }
+            else if (selectedIndex == id - 1)
+            {
+                // This slot is empty but the parameter still points at it, which
+                // happens when a song is loaded whose waveforms did not come with
+                // it. Showing the entry keeps the state visible and recoverable;
+                // dropping it would leave the box blank with nothing to explain
+                // why there is no sound.
+                menu.combo->addItem("User " + juce::String(slot + 1) + " (missing)", id);
+            }
+        }
+
+        // dontSendNotification: restoring what the parameter already says, so
+        // writing it back would be a redundant gesture in the host's undo history.
+        menu.combo->setSelectedId(selectedIndex + 1, juce::dontSendNotification);
+    }
+
+    if (waveformWindow != nullptr)
+        waveformWindow->refreshContent();
+}
+
+void SpaceDustAudioProcessorEditor::openWaveformWindow(juce::ComboBox* combo, int userBase)
+{
+    auto& library = audioProcessor.getUserWaveLibrary();
+
+    if (waveformWindow == nullptr)
+        waveformWindow = std::make_unique<WaveformEditorWindow>(library, customLookAndFeel);
+
+    // The window drives this dropdown directly, so its list and this menu are the
+    // same list and cannot drift apart. -1 means "do not move the selection": the
+    // dropdown is on a built-in shape, and opening a window must never change the
+    // sound by itself.
+    const int slot = combo->getSelectedId() - 1 - userBase;
+
+    waveformWindow->showFor(combo, userBase,
+                            (slot >= 0 && slot < UserWave::numSlots) ? slot : -1);
+}
+
+//==============================================================================
 SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
 {
     DBG("Space Dust: Processor destructor START");
@@ -6139,6 +6303,12 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
 
     // Easter egg cleanup
     cheezeGuyGame.reset();
+
+    // The library outlives this editor -- it belongs to the processor -- and its
+    // change callback captures this. Clear it before anything else is torn down,
+    // or a later import would call into a half-destroyed editor.
+    audioProcessor.getUserWaveLibrary().onChange = nullptr;
+    waveformWindow.reset();
 
     // Remove APVTS filter sync listeners
     {

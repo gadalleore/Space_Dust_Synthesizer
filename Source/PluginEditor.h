@@ -13,6 +13,8 @@
 #include "FinalEQComponent.h"
 #include "PresetManager.h"
 #include "CheezeGuyGame.h"
+#include "WaveformChoiceAttachment.h"
+#include "WaveformEditorComponent.h"
 #include "SpaceDustDither.h"
 
 // Glow overlays are defined in PluginEditor.cpp; forward-declare them here so the
@@ -530,6 +532,29 @@ private:
     int masterKnobClickCount = 0;
     std::unique_ptr<CheezeGuyGameComponent> cheezeGuyGame;
 
+    /** The Waveforms window. Built on first use and then kept, hidden, so that
+        closing and reopening it does not lose the selected slot or move it back
+        to the middle of the screen. */
+    std::unique_ptr<WaveformEditorWindow> waveformWindow;
+
+    /** Open the Waveforms window, pointed at the dropdown that asked for it.
+
+        The window drives that dropdown directly rather than keeping a list of its
+        own, so choosing a waveform in the window and choosing it in the menu are
+        the same act, and the two can never disagree about what is selected.
+        userBase says where that dropdown's User entries start, which differs
+        between the oscillators and the noise source. */
+    void openWaveformWindow(juce::ComboBox* combo, int userBase);
+
+    /** Rebuild the three waveform dropdowns from the imported waveforms.
+
+        The menus list the built-in shapes and then only the User slots that hold
+        something, so the player never scrolls past entries they cannot choose.
+        The PARAMETER behind each menu is untouched and still offers all eight
+        slots, because a host's automation is written against that fixed list --
+        see WaveformChoiceAttachment for how the two are kept apart. */
+    void rebuildWaveformMenus();
+
     // -- Drag-resize scaling --
     // The whole UI is authored at a fixed design size (kDesignWidth x designHeight_)
     // and rendered through a single uniform scale. mainView is a transparent container
@@ -589,6 +614,13 @@ private:
     // Waveform selectors
     juce::ComboBox osc1WaveformCombo;
     juce::ComboBox osc2WaveformCombo;
+
+    // Opens the Waveforms window, one beside each dropdown that can select an
+    // imported sample. All three open the same window; they differ only in which
+    // slot it lands on.
+    juce::TextButton osc1WaveformEditButton;
+    juce::TextButton osc2WaveformEditButton;
+    juce::TextButton noiseWaveformEditButton;
     
     // Oscillator tuning controls (simple, intuitive system)
     juce::Slider osc1CoarseTuneSlider;
@@ -1066,8 +1098,10 @@ private:
     // These connect GUI controls to AudioProcessorValueTreeState for automatic
     // bidirectional parameter updates (thread-safe, real-time compatible)
     
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> osc1WaveformAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> osc2WaveformAttachment;
+    // Bound by item id rather than by position, so the menu can leave empty User
+    // slots out while the parameter keeps all eight. See WaveformChoiceAttachment.
+    std::unique_ptr<WaveformChoiceAttachment> osc1WaveformAttachment;
+    std::unique_ptr<WaveformChoiceAttachment> osc2WaveformAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> osc1CoarseTuneAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> osc1DetuneAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> osc2CoarseTuneAttachment;
@@ -1077,7 +1111,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> osc1PanAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> osc2PanAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> noiseLevelAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> noiseColorAttachment;
+    std::unique_ptr<WaveformChoiceAttachment> noiseColorAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lowShelfAmountAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> highShelfAmountAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> filterModeAttachment;

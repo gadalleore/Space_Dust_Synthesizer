@@ -115,6 +115,13 @@ target_sources(SpaceDust PRIVATE
     Source/PluginEditor.h
     Source/NoteLockGrid.cpp
     Source/NoteLockGrid.h
+    Source/WaveAnalysis.cpp
+    Source/WaveAnalysis.h
+    Source/UserWavetable.cpp
+    Source/UserWavetable.h
+    Source/WaveformEditorComponent.cpp
+    Source/WaveformEditorComponent.h
+    Source/WaveformChoiceAttachment.h
     Source/LfoWaveform.cpp
     Source/LfoWaveform.h
     Source/Goniometer.cpp
@@ -342,6 +349,26 @@ add_custom_target(notelock-test
     COMMAND $<TARGET_FILE:notelock_test>
     DEPENDS notelock_test
     COMMENT "Running Note Lock grid tests")
+
+#==============================================================================
+# wavetable-test — standalone check of the sample-import analysis.
+# Pitch detection, harmonic measurement and band-limited table rendering all have
+# right answers that can be checked against generated signals of known pitch and
+# known harmonic content, and none of it needs JUCE, so it builds and runs in
+# seconds without touching the plugin.
+# Usage: cmake --build build --config Release --target wavetable-test
+#==============================================================================
+add_executable(wavetable_test
+    tools/wavetabletest/wavetable_test.cpp
+    Source/WaveAnalysis.cpp)
+set_target_properties(wavetable_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/wavetable_test")
+target_compile_features(wavetable_test PRIVATE cxx_std_17)
+
+add_custom_target(wavetable-test
+    COMMAND $<TARGET_FILE:wavetable_test>
+    DEPENDS wavetable_test
+    COMMENT "Running wave analysis tests")
 
 #==============================================================================
 # lfo-test — measures LFO fold-back (aliasing) across the rate range.

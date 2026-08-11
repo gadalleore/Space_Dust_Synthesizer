@@ -8,6 +8,7 @@
 #include "OversampledStage.h" // Per-sample oversampling wrapper for the nonlinear master filter
 #include "RetargetableADSR.h" // juce::ADSR-faithful envelope + live release retargeting
 #include "SynthSound.h"   // Kept for build compatibility (some headers still include it indirectly)
+#include "UserWavetable.h" // Imported samples played as oscillator waveforms
 #include <array>
 #include <numeric>
 
@@ -154,7 +155,14 @@ public:
 
     void setOsc1Waveform(int waveform);
     void setOsc2Waveform(int waveform);
-    
+
+    /** Hand over the imported waveforms for this block.
+
+        The bank is owned by the processor, which holds it for the whole of
+        processBlock, so the voice only borrows the pointer and never frees it. */
+    void setUserWaveBank(const UserWaveBank* bank) noexcept { userWaveBank = bank; }
+
+
     // Oscillator pitch tuning (simple, intuitive system)
     void setOsc1CoarseTune(float semitones);
     void setOsc1Detune(float cents);
@@ -287,7 +295,30 @@ private:
     float subOscCoarse = 0.0f;      // Semitones
     double subOscAngle = 0.0;
     double subOscAngleDelta = 0.0;
-    int noiseType = White;           // Noise type (0=White, 1=Pink)
+    int noiseType = White;           // Noise type (0=White, 1=Pink, 2+=imported waveform)
+
+    //==============================================================================
+    // -- Imported waveforms --
+    // The bank is owned by the processor and swapped in whole; this is only ever a
+    // borrowed pointer, valid for the block it was handed over in.
+    const UserWaveBank* userWaveBank = nullptr;
+
+    // Resolved once per block from the bank and the three waveform choices, so the
+    // per-sample path is a null check rather than a lookup.
+    const UserWaveSlot* osc1UserSlot = nullptr;
+    const UserWaveSlot* osc2UserSlot = nullptr;
+    const UserWaveSlot* noiseUserSlot = nullptr;
+
+    // 1.0 for the built-in shapes and for Single Cycle slots. Full Sample slots
+    // stretch one turn of the phase to cover the whole file instead of one period.
+    double osc1PhaseScale = 1.0;
+    double osc2PhaseScale = 1.0;
+    double noisePhaseScale = 1.0;
+
+    // The noise source has no pitch of its own, so an imported waveform in that
+    // slot needs its own phase, run at the played note's frequency.
+    double noiseWaveAngle = 0.0;
+    double noiseWaveAngleDelta = 0.0;
     
     // Noise EQ parameters (affects noise source only)
     float lowShelfAmount = 0.0f;     // Low shelf/cut amount (-1.0 to +1.0), affects frequencies below 200 Hz
@@ -625,8 +656,27 @@ private:
     /**
         Generate a waveform sample from an angle and waveform type.
         Real-time safe: no allocations, pure computation.
+
+        userSlot short-circuits the built-in shapes: when it is non-null the
+        sample the player imported is read instead. It is resolved once per block
+        by refreshUserWaveSelection() rather than looked up per sample, because
+        this runs up to four times per sample per oscillator per voice.
+
+        freqHz is the pitch this oscillator is sounding at, and decides how much
+        bandwidth an imported waveform may use before it would fold back. It is
+        ignored by the built-in shapes.
     */
-    float generateWaveform(double angle, int waveform);
+    float generateWaveform(double angle, int waveform, const UserWaveSlot* userSlot, double freqHz);
+
+    /**
+        Work out which imported waveform each source is set to, and what that does
+        to its phase increment. Called once per block.
+
+        Full Sample slots need the phase to sweep once per pass through the file
+        rather than once per period of the note, which is a fixed multiplier per
+        slot -- see UserWaveSlot::phaseIncrementScale.
+    */
+    void refreshUserWaveSelection() noexcept;
     
     /**
         Update filter parameters based on current mode, cutoff, and resonance.

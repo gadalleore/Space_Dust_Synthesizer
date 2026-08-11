@@ -89,7 +89,14 @@ public:
 
     //==============================================================================
     juce::AudioProcessorValueTreeState& getValueTreeState() { return apvts; }
-    
+
+    /** The samples the player has imported as oscillator waveforms.
+
+        The editor edits this directly; the audio thread never touches it, and
+        gets an immutable snapshot instead (see the note in UserWavetable.h). */
+    UserWaveLibrary& getUserWaveLibrary() { return userWaveLibrary; }
+
+
     // LFO buffers for per-sample access from voices
     juce::AudioBuffer<float> lfo1Buffer;
     juce::AudioBuffer<float> lfo2Buffer;
@@ -210,8 +217,22 @@ private:
     PresetHotReload presetHotReload { *this, apvts, currentPresetName };
 
     //==============================================================================
+    // -- Imported waveforms --
+
+    UserWaveLibrary userWaveLibrary;
+
+    /** The snapshot the audio thread is playing from.
+
+        Deliberately a raw pointer, not a smart one. It is handed over by an atomic
+        exchange inside processBlock, and a smart pointer would free the previous
+        bank right there on the audio thread -- which is the one thing the whole
+        handover exists to avoid. It is freed on the message thread instead, either
+        by the library's timer or by the destructor here. */
+    UserWaveBank* audioUserWaveBank = nullptr;
+
+    //==============================================================================
     // -- Core Synthesis Components --
-    
+
     SpaceDustSynthesiser synth;          // Manages polyphonic voices and MIDI handling with mono mode support
     
     // -- Atomic ADSR Parameter Storage --

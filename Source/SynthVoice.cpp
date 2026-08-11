@@ -408,6 +408,7 @@ void SynthVoice::noteStarted()
         osc1Angle = 0.0;
         osc2Angle = 0.0;
         subOscAngle = 0.0;
+        noiseWaveAngle = 0.0;
         pinkState.fill(0.0f);
         pinkSum = 0.0f;
         pinkNoiseCounter = 0;
@@ -744,8 +745,38 @@ void SynthVoice::debugLogPitchRenderSample0(double osc1HzFinal, double baseHzAft
 //==============================================================================
 // -- Waveform Generation --
 
-float SynthVoice::generateWaveform(double angle, int waveform)
+void SynthVoice::refreshUserWaveSelection() noexcept
 {
+    osc1UserSlot = nullptr;
+    osc2UserSlot = nullptr;
+    noiseUserSlot = nullptr;
+    osc1PhaseScale = 1.0;
+    osc2PhaseScale = 1.0;
+    noisePhaseScale = 1.0;
+
+    if (userWaveBank == nullptr)
+        return;
+
+    osc1UserSlot = userWaveBank->slotForChoice(osc1Waveform, UserWave::oscUserBase);
+    osc2UserSlot = userWaveBank->slotForChoice(osc2Waveform, UserWave::oscUserBase);
+    noiseUserSlot = userWaveBank->slotForChoice(noiseType, UserWave::noiseUserBase);
+
+    if (osc1UserSlot != nullptr) osc1PhaseScale = osc1UserSlot->phaseIncrementScale;
+    if (osc2UserSlot != nullptr) osc2PhaseScale = osc2UserSlot->phaseIncrementScale;
+    if (noiseUserSlot != nullptr) noisePhaseScale = noiseUserSlot->phaseIncrementScale;
+}
+
+float SynthVoice::generateWaveform(double angle, int waveform, const UserWaveSlot* userSlot, double freqHz)
+{
+    // An imported waveform replaces the shape entirely. The angle still means the
+    // same thing, so everything that drives the angle -- tuning, glide, LFO pitch
+    // modulation, the oversampler -- is unaffected.
+    if (userSlot != nullptr)
+    {
+        constexpr double oneOverTwoPi = 1.0 / (2.0 * juce::MathConstants<double>::pi);
+        return userSlot->read(angle * oneOverTwoPi, freqHz, sampleRate);
+    }
+
     switch (waveform)
     {
         case Sine:
@@ -800,7 +831,10 @@ void SynthVoice::updateOsc1Frequency(double baseFrequency)
     if (sampleRate > 0.0)
     {
         auto cyclesPerSample = tunedFrequency / sampleRate;
-        osc1AngleDelta = cyclesPerSample * 2.0 * juce::MathConstants<double>::pi;
+        // The scale is 1 for every built-in shape, and only differs for a Full
+        // Sample slot, where one turn of the phase covers the file rather than a
+        // period. See UserWaveSlot::phaseIncrementScale.
+        osc1AngleDelta = cyclesPerSample * 2.0 * juce::MathConstants<double>::pi * osc1PhaseScale;
     }
     else
     {
@@ -825,7 +859,7 @@ void SynthVoice::updateOsc2Frequency(double baseFrequency)
     if (sampleRate > 0.0)
     {
         auto cyclesPerSample = tunedFrequency / sampleRate;
-        osc2AngleDelta = cyclesPerSample * 2.0 * juce::MathConstants<double>::pi;
+        osc2AngleDelta = cyclesPerSample * 2.0 * juce::MathConstants<double>::pi * osc2PhaseScale;
     }
     else
     {
@@ -1099,6 +1133,11 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
     // Denormal prevention: FTZ/DAZ for oscillators, filters, envelopes (per JUCE best practice)
     juce::ScopedNoDenormals noDenormals;
 
+    // Resolve the imported waveforms once for the whole block. The bank only
+    // changes when the user imports something, so doing this per sample would be
+    // three pointer chases per oscillator per voice to reach the same answer.
+    refreshUserWaveSelection();
+
     // SAFETY: a host may render a block LARGER than it declared to prepareToPlay
     // (Ableton does this during freeze/bounce/render). The per-voice scratch buffer
     // is sized to the prepared max; the per-sample writes and clear() below address
@@ -1342,14 +1381,21 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
 #endif
         
         // Update oscillator angle deltas with modulated frequencies
+        double noiseWaveFreq = osc1Freq;
         if (sampleRate > 0.0)
         {
-            osc1AngleDelta = (osc1Freq / sampleRate) * 2.0 * juce::MathConstants<double>::pi;
-            osc2AngleDelta = (osc2Freq / sampleRate) * 2.0 * juce::MathConstants<double>::pi;
+            osc1AngleDelta = (osc1Freq / sampleRate) * 2.0 * juce::MathConstants<double>::pi * osc1PhaseScale;
+            osc2AngleDelta = (osc2Freq / sampleRate) * 2.0 * juce::MathConstants<double>::pi * osc2PhaseScale;
             double baseFreq = osc1Freq / osc1TuneRatio;
             double subFreq = baseFreq * 0.5 * subCoarseRatio;
             subFreq = juce::jlimit(20.0, 20000.0, subFreq);
             subOscAngleDelta = (subFreq / sampleRate) * 2.0 * juce::MathConstants<double>::pi;
+
+            // An imported waveform in the noise slot has no tuning controls of its
+            // own, so it runs at the played note before Osc 1's coarse and detune
+            // are applied -- the same pitch the sub oscillator is derived from.
+            noiseWaveFreq = baseFreq;
+            noiseWaveAngleDelta = (baseFreq / sampleRate) * 2.0 * juce::MathConstants<double>::pi * noisePhaseScale;
         }
         
         // Step 1-2: Generate oscillator waveforms
@@ -1358,9 +1404,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         if (!oscOSActive)
         {
             // Base rate. Phases are advanced at the bottom of the loop, as always.
-            osc1Sample = generateWaveform(osc1Angle, osc1Waveform);
-            osc2Sample = generateWaveform(osc2Angle, osc2Waveform);
-            subOscSample = subOscOn ? generateWaveform(subOscAngle, subOscWaveform) * subOscLevel : 0.0f;
+            osc1Sample = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq);
+            osc2Sample = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq);
+            subOscSample = subOscOn ? generateWaveform(subOscAngle, subOscWaveform, nullptr, osc1Freq * 0.5) * subOscLevel : 0.0f;
         }
         else
         {
@@ -1386,14 +1432,14 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             // upsampler still runs on zeros, which costs a little and changes nothing.
             osc1Sample = oscOsc12OS.process(0, 0.0f, [&] (float) -> float
             {
-                const float v = generateWaveform(osc1Angle, osc1Waveform);
+                const float v = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq);
                 osc1Angle += d1; wrap(osc1Angle);
                 return v;
             });
 
             osc2Sample = oscOsc12OS.process(1, 0.0f, [&] (float) -> float
             {
-                const float v = generateWaveform(osc2Angle, osc2Waveform);
+                const float v = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq);
                 osc2Angle += d2; wrap(osc2Angle);
                 return v;
             });
@@ -1402,7 +1448,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             {
                 subOscSample = oscSubOS.process(0, 0.0f, [&] (float) -> float
                 {
-                    const float v = generateWaveform(subOscAngle, subOscWaveform);
+                    const float v = generateWaveform(subOscAngle, subOscWaveform, nullptr, osc1Freq * 0.5);
                     subOscAngle += ds; wrap(subOscAngle);
                     return v;
                 }) * subOscLevel;
@@ -1413,10 +1459,18 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             }
         }
         
-        // Step 3: Generate noise (white or pink)
+        // Step 3: Generate the noise source (white, pink, or an imported waveform)
         float noiseSample = 0.0f;
-        
-        if (noiseType == White)
+
+        if (noiseUserSlot != nullptr)
+        {
+            // An imported waveform in this slot is not noise at all -- it is a
+            // third oscillator, tracking the played note, with the noise level
+            // knob as its volume and the noise shelves as its tone controls.
+            constexpr double oneOverTwoPi = 1.0 / (2.0 * juce::MathConstants<double>::pi);
+            noiseSample = noiseUserSlot->read(noiseWaveAngle * oneOverTwoPi, noiseWaveFreq, sampleRate);
+        }
+        else if (noiseType == White)
         {
             noiseSample = random.nextFloat() * 2.0f - 1.0f;
         }
@@ -1932,6 +1986,18 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         }
         }   // end !oscOSActive
 
+        // The noise slot is outside the block above on purpose: the oversampler
+        // covers the two oscillators and the sub, not the noise source, so this
+        // phase must advance whether oversampling is on or not.
+        if (noiseUserSlot != nullptr)
+        {
+            noiseWaveAngle += noiseWaveAngleDelta;
+            if (noiseWaveAngle >= 2.0 * juce::MathConstants<double>::pi)
+                noiseWaveAngle -= 2.0 * juce::MathConstants<double>::pi;
+            if (noiseWaveAngle < 0.0)
+                noiseWaveAngle += 2.0 * juce::MathConstants<double>::pi;
+        }
+
         // Advance glide after audio for this sample (see comment at loop top)
         if (glideDelta != 0.0)
         {
@@ -2172,14 +2238,23 @@ void SynthVoice::setCurrentSampleRate(double newRate)
 //==============================================================================
 // -- Parameter Update Methods --
 
+// The upper bound covers the four built-in shapes AND the eight import slots.
+// It was 3 when Square was the last waveform there was, which silently turned
+// every imported waveform into a square wave: the choice arrived as 4 or more,
+// the clamp pulled it back to 3, and nothing anywhere reported a problem.
+// Derived from the slot count rather than written out, so it cannot go stale
+// again if the number of slots ever changes.
+static constexpr int kHighestOscWaveformIndex = UserWave::oscUserBase + UserWave::numSlots - 1;
+static constexpr int kHighestNoiseTypeIndex   = UserWave::noiseUserBase + UserWave::numSlots - 1;
+
 void SynthVoice::setOsc1Waveform(int waveform)
 {
-    osc1Waveform = juce::jlimit(0, 3, waveform);
+    osc1Waveform = juce::jlimit(0, kHighestOscWaveformIndex, waveform);
 }
 
 void SynthVoice::setOsc2Waveform(int waveform)
 {
-    osc2Waveform = juce::jlimit(0, 3, waveform);
+    osc2Waveform = juce::jlimit(0, kHighestOscWaveformIndex, waveform);
 }
 
 //==============================================================================
@@ -2278,7 +2353,10 @@ void SynthVoice::setNoiseLevel(float level)
 
 void SynthVoice::setNoiseType(int type)
 {
-    noiseType = (type == 0) ? White : Pink;
+    // Anything past Pink selects an imported waveform. Collapsing every non-zero
+    // value to Pink, as this used to, meant an imported noise source could never
+    // reach the voice at all.
+    noiseType = juce::jlimit(0, kHighestNoiseTypeIndex, type);
 }
 
 void SynthVoice::setSubOscOn(bool on)
