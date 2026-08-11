@@ -886,10 +886,13 @@ WaveformEditorWindow::WaveformEditorWindow (UserWaveLibrary& library,
     : DocumentWindow ("Space Dust - Waveforms", juce::Colour (0xff0a0a1f),
                       DocumentWindow::closeButton)
 {
+    // setContentOwned takes ownership immediately, so the raw pointer never
+    // outlives this statement unowned. content is only a borrowed handle for
+    // showFor() and refreshContent(); the window frees the component.
     auto* editor = new WaveformEditorComponent (library, lookAndFeel);
+    setContentOwned (editor, true);
     content = editor;
 
-    setContentOwned (editor, true);
     setUsingNativeTitleBar (true);
     setResizable (false, false);
     centreWithSize (editor->getWidth(), editor->getHeight());
