@@ -543,10 +543,13 @@ private:
         own, so choosing a waveform in the window and choosing it in the menu are
         the same act, and the two can never disagree about what is selected.
         userBase says where that dropdown's User entries start, which differs
-        between the oscillators, the noise source and the Transient, and kind
-        says what the entries before them are so the window can draw them. */
+        between the oscillators, the noise source and the Transient, kind says
+        what the entries before them are so the window can draw them, and group
+        says which of the five sets of import slots the window is to show --
+        each dropdown has its own. */
     void openWaveformWindow(juce::ComboBox* combo, int userBase,
-                            WaveformEditorComponent::BuiltInKind kind);
+                            WaveformEditorComponent::BuiltInKind kind,
+                            UserWave::Group group);
 
     /** Rebuild the five waveform dropdowns from the imported waveforms.
 

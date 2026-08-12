@@ -194,8 +194,13 @@ std::unique_ptr<UserWaveBank> UserWaveLibrary::cloneBank (const UserWaveBank& so
 {
     auto copy = std::make_unique<UserWaveBank>();
 
-    for (int i = 0; i < UserWave::numSlots; ++i)
-        copy->editableSlot (i) = source.slot (i);
+    for (int g = 0; g < UserWave::numGroups; ++g)
+    {
+        const auto group = (UserWave::Group) g;
+
+        for (int i = 0; i < UserWave::numSlots; ++i)
+            copy->editableSlot (group, i) = source.slot (group, i);
+    }
 
     return copy;
 }
@@ -358,8 +363,8 @@ void UserWaveLibrary::buildSlot (UserWaveSlot& slot, const std::vector<float>& m
 }
 
 //==============================================================================
-bool UserWaveLibrary::importFile (const juce::File& file, int slotIndex, UserWave::Mode mode,
-                                  juce::String& errorMessage)
+bool UserWaveLibrary::importFile (const juce::File& file, UserWave::Group group, int slotIndex,
+                                  UserWave::Mode mode, juce::String& errorMessage)
 {
     if (slotIndex < 0 || slotIndex >= UserWave::numSlots)
     {
@@ -378,7 +383,10 @@ bool UserWaveLibrary::importFile (const juce::File& file, int slotIndex, UserWav
     auto folder = wavetableFolder().getChildFile ("Samples");
     folder.createDirectory();
 
-    const auto copyName = "slot" + juce::String (slotIndex + 1) + "_"
+    // The list's tag leads the name, because slot 3 of the Transient and slot 3
+    // of Oscillator 1 are now different slots and can hold different files.
+    const auto copyName = juce::String (UserWave::groupTag (group))
+                        + "_slot" + juce::String (slotIndex + 1) + "_"
                         + sanitiseFileName (file.getFileNameWithoutExtension())
                         + file.getFileExtension();
 
@@ -395,7 +403,7 @@ bool UserWaveLibrary::importFile (const juce::File& file, int slotIndex, UserWav
         }
     }
 
-    auto& slot = editable->editableSlot (slotIndex);
+    auto& slot = editable->editableSlot (group, slotIndex);
     slot.name = file.getFileNameWithoutExtension();
     slot.sourceFile = copyName;
 
@@ -404,7 +412,7 @@ bool UserWaveLibrary::importFile (const juce::File& file, int slotIndex, UserWav
     if (! slot.active)
     {
         errorMessage = "Nothing pitched could be found in that file.";
-        clearSlot (slotIndex);
+        clearSlot (group, slotIndex);
         return false;
     }
 
@@ -414,7 +422,8 @@ bool UserWaveLibrary::importFile (const juce::File& file, int slotIndex, UserWav
 }
 
 //==============================================================================
-bool UserWaveLibrary::setSlotMode (int slotIndex, UserWave::Mode mode, juce::String& errorMessage)
+bool UserWaveLibrary::setSlotMode (UserWave::Group group, int slotIndex, UserWave::Mode mode,
+                                   juce::String& errorMessage)
 {
     if (slotIndex < 0 || slotIndex >= UserWave::numSlots)
     {
@@ -422,7 +431,7 @@ bool UserWaveLibrary::setSlotMode (int slotIndex, UserWave::Mode mode, juce::Str
         return false;
     }
 
-    auto& slot = editable->editableSlot (slotIndex);
+    auto& slot = editable->editableSlot (group, slotIndex);
 
     if (! slot.active)
     {
@@ -459,12 +468,13 @@ bool UserWaveLibrary::setSlotMode (int slotIndex, UserWave::Mode mode, juce::Str
     return true;
 }
 
-void UserWaveLibrary::renameSlot (int slotIndex, const juce::String& newName)
+void UserWaveLibrary::renameSlot (UserWave::Group group, int slotIndex,
+                                  const juce::String& newName)
 {
     if (slotIndex < 0 || slotIndex >= UserWave::numSlots)
         return;
 
-    auto& slot = editable->editableSlot (slotIndex);
+    auto& slot = editable->editableSlot (group, slotIndex);
 
     if (! slot.active)
         return;
@@ -475,30 +485,80 @@ void UserWaveLibrary::renameSlot (int slotIndex, const juce::String& newName)
     publish();
 }
 
-void UserWaveLibrary::clearSlot (int slotIndex)
+void UserWaveLibrary::clearSlot (UserWave::Group group, int slotIndex)
 {
     if (slotIndex < 0 || slotIndex >= UserWave::numSlots)
         return;
 
-    editable->editableSlot (slotIndex) = UserWaveSlot();
+    editable->editableSlot (group, slotIndex) = UserWaveSlot();
 
     saveToDisk();
     publish();
 }
 
-juce::StringArray UserWaveLibrary::slotChoiceNames() const
+bool UserWaveLibrary::copySlotToAllGroups (UserWave::Group group, int slotIndex,
+                                           juce::String& errorMessage)
+{
+    if (slotIndex < 0 || slotIndex >= UserWave::numSlots)
+    {
+        errorMessage = "That waveform slot does not exist.";
+        return false;
+    }
+
+    // By value, not by reference: the loop below writes into the same array the
+    // reference would point into, and the source would then be a reference to a
+    // slot that had already been assigned over.
+    const UserWaveSlot source = editable->slot (group, slotIndex);
+
+    if (! source.isPlayable())
+    {
+        errorMessage = "That slot is empty, so there is nothing to copy.";
+        return false;
+    }
+
+    // The copy carries sourceFile with it, so all five lists point at the one
+    // file in the Wavetables folder. Nothing is duplicated on disk, and Full
+    // Sample slots in every list rebuild from the same copy.
+    for (int g = 0; g < UserWave::numGroups; ++g)
+    {
+        const auto target = (UserWave::Group) g;
+
+        if (target != group)
+            editable->editableSlot (target, slotIndex) = source;
+    }
+
+    saveToDisk();
+    publish();
+    return true;
+}
+
+void UserWaveLibrary::clearAllSlots()
+{
+    for (int g = 0; g < UserWave::numGroups; ++g)
+    {
+        const auto group = (UserWave::Group) g;
+
+        for (int i = 0; i < UserWave::numSlots; ++i)
+            editable->editableSlot (group, i) = UserWaveSlot();
+    }
+
+    saveToDisk();
+    publish();
+}
+
+juce::StringArray UserWaveLibrary::slotChoiceNames (UserWave::Group group) const
 {
     juce::StringArray names;
 
     for (int i = 0; i < UserWave::numSlots; ++i)
-        names.add (choiceNameForSlot (i));
+        names.add (choiceNameForSlot (group, i));
 
     return names;
 }
 
-juce::String UserWaveLibrary::choiceNameForSlot (int slotIndex) const
+juce::String UserWaveLibrary::choiceNameForSlot (UserWave::Group group, int slotIndex) const
 {
-    const auto& slot = editable->slot (slotIndex);
+    const auto& slot = editable->slot (group, slotIndex);
 
     if (slot.active && slot.name.isNotEmpty())
         return slot.name;
@@ -511,36 +571,109 @@ std::unique_ptr<juce::XmlElement> UserWaveLibrary::createStateXml() const
 {
     auto root = std::make_unique<juce::XmlElement> ("USERWAVES");
 
-    for (int i = 0; i < UserWave::numSlots; ++i)
+    for (int g = 0; g < UserWave::numGroups; ++g)
     {
-        const auto& slot = editable->slot (i);
+        const auto group = (UserWave::Group) g;
 
-        if (! slot.active)
-            continue;
-
-        auto* element = root->createNewChildElement ("SLOT");
-        element->setAttribute ("index", i);
-        element->setAttribute ("name", slot.name);
-        element->setAttribute ("source", slot.sourceFile);
-        element->setAttribute ("mode", (int) slot.mode);
-        element->setAttribute ("fundamental", slot.fundamentalHz);
-        element->setAttribute ("confidence", slot.confidence);
-        element->setAttribute ("pitchLabel", slot.pitchLabel);
-        element->setAttribute ("retuned", slot.retuned);
-
-        // Only the richest table is stored. The other ten are a transform away,
-        // and eight kilobytes per slot is small enough to sit inside a preset --
-        // which is what makes a Single Cycle waveform travel with the song.
-        if (slot.mode == UserWave::Mode::SingleCycle && ! slot.tables.empty())
+        for (int i = 0; i < UserWave::numSlots; ++i)
         {
-            juce::MemoryOutputStream encoded;
-            juce::Base64::convertToBase64 (encoded, slot.tables.data(),
-                                           sizeof (float) * (std::size_t) WaveAnalysis::tableSize);
-            element->setAttribute ("table", encoded.toString());
+            const auto& slot = editable->slot (group, i);
+
+            if (! slot.active)
+                continue;
+
+            auto* element = root->createNewChildElement ("SLOT");
+            element->setAttribute ("index", i);
+
+            // Which list this belongs to. Its absence is what marks state
+            // written before the lists were split -- see restoreFromStateXml.
+            element->setAttribute ("group", UserWave::groupTag (group));
+            element->setAttribute ("name", slot.name);
+            element->setAttribute ("source", slot.sourceFile);
+            element->setAttribute ("mode", (int) slot.mode);
+            element->setAttribute ("fundamental", slot.fundamentalHz);
+            element->setAttribute ("confidence", slot.confidence);
+            element->setAttribute ("pitchLabel", slot.pitchLabel);
+            element->setAttribute ("retuned", slot.retuned);
+
+            // Only the richest table is stored. The other ten are a transform
+            // away, and eight kilobytes per slot is small enough to sit inside a
+            // preset -- which is what makes a Single Cycle waveform travel with
+            // the song.
+            if (slot.mode == UserWave::Mode::SingleCycle && ! slot.tables.empty())
+            {
+                juce::MemoryOutputStream encoded;
+                juce::Base64::convertToBase64 (encoded, slot.tables.data(),
+                                               sizeof (float) * (std::size_t) WaveAnalysis::tableSize);
+                element->setAttribute ("table", encoded.toString());
+            }
         }
     }
 
     return root;
+}
+
+void UserWaveLibrary::restoreSlotFromXml (const juce::XmlElement& element, UserWaveSlot& slot)
+{
+    slot = UserWaveSlot();
+
+    slot.name = element.getStringAttribute ("name");
+    slot.sourceFile = element.getStringAttribute ("source");
+    slot.mode = element.getIntAttribute ("mode", 0) == 1 ? UserWave::Mode::FullSample
+                                                         : UserWave::Mode::SingleCycle;
+    slot.fundamentalHz = element.getDoubleAttribute ("fundamental", 0.0);
+    slot.confidence = element.getDoubleAttribute ("confidence", 0.0);
+    slot.pitchLabel = element.getStringAttribute ("pitchLabel");
+    slot.retuned = element.getBoolAttribute ("retuned", false);
+
+    if (slot.mode == UserWave::Mode::SingleCycle)
+    {
+        const auto encoded = element.getStringAttribute ("table");
+
+        if (encoded.isEmpty())
+            return;
+
+        juce::MemoryOutputStream decoded;
+
+        if (! juce::Base64::convertFromBase64 (decoded, encoded))
+            return;
+
+        if (decoded.getDataSize() != sizeof (float) * (std::size_t) WaveAnalysis::tableSize)
+            return;
+
+        // Rebuild the ladder rather than storing it. Reading the harmonics
+        // back out of the stored table is exact, so this loses nothing.
+        std::vector<float> table ((std::size_t) WaveAnalysis::tableSize);
+        std::memcpy (table.data(), decoded.getData(), decoded.getDataSize());
+
+        const auto harmonics = WaveAnalysis::harmonicsFromTable (table.data());
+
+        slot.tables.resize ((std::size_t) (WaveAnalysis::mipLevels * WaveAnalysis::tableSize));
+        WaveAnalysis::renderMipmaps (harmonics, slot.tables.data());
+
+        slot.active = true;
+        return;
+    }
+
+    // A whole sample is too big to carry inside a song, so it is reloaded from
+    // the copy kept in the Wavetables folder. A song moved to a different
+    // machine needs that folder to come with it.
+    auto source = wavetableFolder().getChildFile ("Samples").getChildFile (slot.sourceFile);
+
+    std::vector<float> mono;
+    double sampleRate = 0.0;
+    juce::String ignored;
+
+    if (readFileAsMono (source, mono, sampleRate, ignored))
+    {
+        const auto keptName = slot.name;
+        const auto keptSource = slot.sourceFile;
+
+        buildSlot (slot, mono, sampleRate, UserWave::Mode::FullSample);
+
+        slot.name = keptName;
+        slot.sourceFile = keptSource;
+    }
 }
 
 void UserWaveLibrary::restoreFromStateXml (const juce::XmlElement& xml)
@@ -548,8 +681,13 @@ void UserWaveLibrary::restoreFromStateXml (const juce::XmlElement& xml)
     if (! xml.hasTagName ("USERWAVES"))
         return;
 
-    for (int i = 0; i < UserWave::numSlots; ++i)
-        editable->editableSlot (i) = UserWaveSlot();
+    for (int g = 0; g < UserWave::numGroups; ++g)
+    {
+        const auto group = (UserWave::Group) g;
+
+        for (int i = 0; i < UserWave::numSlots; ++i)
+            editable->editableSlot (group, i) = UserWaveSlot();
+    }
 
     for (auto* element : xml.getChildWithTagNameIterator ("SLOT"))
     {
@@ -558,66 +696,21 @@ void UserWaveLibrary::restoreFromStateXml (const juce::XmlElement& xml)
         if (index < 0 || index >= UserWave::numSlots)
             continue;
 
-        auto& slot = editable->editableSlot (index);
+        UserWaveSlot rebuilt;
+        restoreSlotFromXml (*element, rebuilt);
 
-        slot.name = element->getStringAttribute ("name");
-        slot.sourceFile = element->getStringAttribute ("source");
-        slot.mode = element->getIntAttribute ("mode", 0) == 1 ? UserWave::Mode::FullSample
-                                                              : UserWave::Mode::SingleCycle;
-        slot.fundamentalHz = element->getDoubleAttribute ("fundamental", 0.0);
-        slot.confidence = element->getDoubleAttribute ("confidence", 0.0);
-        slot.pitchLabel = element->getStringAttribute ("pitchLabel");
-        slot.retuned = element->getBoolAttribute ("retuned", false);
+        UserWave::Group group;
 
-        if (slot.mode == UserWave::Mode::SingleCycle)
+        if (UserWave::groupFromTag (element->getStringAttribute ("group"), group))
         {
-            const auto encoded = element->getStringAttribute ("table");
-
-            if (encoded.isEmpty())
-                continue;
-
-            juce::MemoryOutputStream decoded;
-
-            if (! juce::Base64::convertFromBase64 (decoded, encoded))
-                continue;
-
-            if (decoded.getDataSize() != sizeof (float) * (std::size_t) WaveAnalysis::tableSize)
-                continue;
-
-            // Rebuild the ladder rather than storing it. Reading the harmonics
-            // back out of the stored table is exact, so this loses nothing.
-            std::vector<float> table ((std::size_t) WaveAnalysis::tableSize);
-            std::memcpy (table.data(), decoded.getData(), decoded.getDataSize());
-
-            const auto harmonics = WaveAnalysis::harmonicsFromTable (table.data());
-
-            slot.tables.resize ((std::size_t) (WaveAnalysis::mipLevels * WaveAnalysis::tableSize));
-            WaveAnalysis::renderMipmaps (harmonics, slot.tables.data());
-
-            slot.active = true;
+            editable->editableSlot (group, index) = std::move (rebuilt);
+            continue;
         }
-        else
-        {
-            // A whole sample is too big to carry inside a song, so it is reloaded
-            // from the copy kept in the Wavetables folder. A song moved to a
-            // different machine needs that folder to come with it.
-            auto source = wavetableFolder().getChildFile ("Samples").getChildFile (slot.sourceFile);
 
-            std::vector<float> mono;
-            double sampleRate = 0.0;
-            juce::String ignored;
-
-            if (readFileAsMono (source, mono, sampleRate, ignored))
-            {
-                const auto keptName = slot.name;
-                const auto keptSource = slot.sourceFile;
-
-                buildSlot (slot, mono, sampleRate, UserWave::Mode::FullSample);
-
-                slot.name = keptName;
-                slot.sourceFile = keptSource;
-            }
-        }
+        // No tag: written when all five lists shared one set of slots. Putting
+        // it into all five is what that song sounded like when it was saved.
+        for (int g = 0; g < UserWave::numGroups; ++g)
+            editable->editableSlot ((UserWave::Group) g, index) = rebuilt;
     }
 
     publish();

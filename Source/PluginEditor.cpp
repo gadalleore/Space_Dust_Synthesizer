@@ -3702,10 +3702,18 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     savePresetButton.onClick = [this]() { showSavePresetDialog(); };
     addAndMakeVisible(savePresetButton);
 
-    initPresetButton.setTooltip("Reset all parameters to defaults");
+    initPresetButton.setTooltip("Reset all parameters to defaults and clear every imported sample");
     initPresetButton.onClick = [this]()
     {
         presetManager->loadInitPreset();
+
+        // After the parameters, not before: they have just gone back to their
+        // defaults, so every waveform dropdown is on a built-in shape and no
+        // selection is left pointing at a slot this is about to empty. Clearing
+        // the slots calls back into rebuildWaveformMenus, which then finds the
+        // menus and the parameters already agreeing.
+        audioProcessor.getUserWaveLibrary().clearAllSlots();
+
         audioProcessor.currentPresetName = "Init";
         audioProcessor.updateVoicesWithParameters();
         presetCombo.setSelectedId(0, juce::dontSendNotification);
@@ -3945,26 +3953,29 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             juce::ComboBox* combo;
             int userBase;
             Kind kind;
+            UserWave::Group group;
             const char* tip;
         };
 
         // The sub oscillator's and the Transient's buttons are set up here too,
         // even though their dropdowns are built further down and in other
         // sections of the panel: what makes these five one thing is that they all
-        // open the same window on the same eight slots, and that is easier to see
-        // when they are written out together.
+        // open the same window, and that is easier to see when they are written
+        // out together. Each one opens it on its OWN eight slots -- the group
+        // column -- so a sample loaded for one of them changes that waveform and
+        // no other.
         const EditButtonTarget targets[] =
         {
             { &osc1WaveformEditButton,   &osc1WaveformCombo,   UserWave::oscUserBase,       Kind::Shapes,
-              "Import a sample as an Oscillator 1 waveform" },
+              UserWave::Group::Osc1,      "Import a sample as an Oscillator 1 waveform" },
             { &osc2WaveformEditButton,   &osc2WaveformCombo,   UserWave::oscUserBase,       Kind::Shapes,
-              "Import a sample as an Oscillator 2 waveform" },
+              UserWave::Group::Osc2,      "Import a sample as an Oscillator 2 waveform" },
             { &noiseWaveformEditButton,  &noiseColorCombo,     UserWave::noiseUserBase,     Kind::Noise,
-              "Import a sample as a Noize source" },
+              UserWave::Group::Noise,     "Import a sample as a Noize source" },
             { &subOscWaveformEditButton, &subOscWaveformCombo, UserWave::oscUserBase,       Kind::Shapes,
-              "Import a sample as the Sub Oscillator waveform" },
+              UserWave::Group::Sub,       "Import a sample as the Sub Oscillator waveform" },
             { &transientTypeEditButton,  &transientTypeCombo,  UserWave::transientUserBase, Kind::Drums,
-              "Import a sample to play as the Transient hit" },
+              UserWave::Group::Transient, "Import a sample to play as the Transient hit" },
         };
 
         for (const auto& target : targets)
@@ -3978,9 +3989,10 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             auto* combo = target.combo;
             const int userBase = target.userBase;
             const Kind kind = target.kind;
-            target.button->onClick = [this, combo, userBase, kind]
+            const auto group = target.group;
+            target.button->onClick = [this, combo, userBase, kind, group]
             {
-                openWaveformWindow(combo, userBase, kind);
+                openWaveformWindow(combo, userBase, kind, group);
             };
         }
     }
@@ -6267,15 +6279,16 @@ void SpaceDustAudioProcessorEditor::rebuildWaveformMenus()
         juce::ComboBox* combo;
         WaveformChoiceAttachment* attachment;
         int userBase;
+        UserWave::Group group;
     };
 
     const MenuToBuild menus[] =
     {
-        { &osc1WaveformCombo,   osc1WaveformAttachment.get(),   UserWave::oscUserBase },
-        { &osc2WaveformCombo,   osc2WaveformAttachment.get(),   UserWave::oscUserBase },
-        { &subOscWaveformCombo, subOscWaveformAttachment.get(), UserWave::oscUserBase },
-        { &noiseColorCombo,     noiseColorAttachment.get(),     UserWave::noiseUserBase },
-        { &transientTypeCombo,  transientTypeAttachment.get(),  UserWave::transientUserBase },
+        { &osc1WaveformCombo,   osc1WaveformAttachment.get(),   UserWave::oscUserBase,       UserWave::Group::Osc1 },
+        { &osc2WaveformCombo,   osc2WaveformAttachment.get(),   UserWave::oscUserBase,       UserWave::Group::Osc2 },
+        { &subOscWaveformCombo, subOscWaveformAttachment.get(), UserWave::oscUserBase,       UserWave::Group::Sub },
+        { &noiseColorCombo,     noiseColorAttachment.get(),     UserWave::noiseUserBase,     UserWave::Group::Noise },
+        { &transientTypeCombo,  transientTypeAttachment.get(),  UserWave::transientUserBase, UserWave::Group::Transient },
     };
 
     for (const auto& menu : menus)
@@ -6317,11 +6330,11 @@ void SpaceDustAudioProcessorEditor::rebuildWaveformMenus()
         for (int slot = 0; slot < UserWave::numSlots; ++slot)
         {
             const int id = menu.userBase + slot + 1;
-            const bool filled = library.bank().slot(slot).isPlayable();
+            const bool filled = library.bank().slot(menu.group, slot).isPlayable();
 
             if (filled)
             {
-                menu.combo->addItem(library.choiceNameForSlot(slot), id);
+                menu.combo->addItem(library.choiceNameForSlot(menu.group, slot), id);
             }
             else if (selectedIndex == id - 1)
             {
@@ -6344,7 +6357,8 @@ void SpaceDustAudioProcessorEditor::rebuildWaveformMenus()
 }
 
 void SpaceDustAudioProcessorEditor::openWaveformWindow(juce::ComboBox* combo, int userBase,
-                                                      WaveformEditorComponent::BuiltInKind kind)
+                                                      WaveformEditorComponent::BuiltInKind kind,
+                                                      UserWave::Group group)
 {
     auto& library = audioProcessor.getUserWaveLibrary();
 
@@ -6357,7 +6371,7 @@ void SpaceDustAudioProcessorEditor::openWaveformWindow(juce::ComboBox* combo, in
     // sound by itself.
     const int slot = combo->getSelectedId() - 1 - userBase;
 
-    waveformWindow->showFor(combo, userBase, kind,
+    waveformWindow->showFor(combo, userBase, kind, group,
                             (slot >= 0 && slot < UserWave::numSlots) ? slot : -1);
 }
 

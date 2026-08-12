@@ -114,6 +114,7 @@ WaveformEditorComponent::WaveformEditorComponent (UserWaveLibrary& libraryToUse,
 
     addAndMakeVisible (loadButton);
     addAndMakeVisible (clearButton);
+    addAndMakeVisible (updateAllButton);
     addAndMakeVisible (singleCycleButton);
     addAndMakeVisible (fullSampleButton);
     addAndMakeVisible (nameEditor);
@@ -124,8 +125,32 @@ WaveformEditorComponent::WaveformEditorComponent (UserWaveLibrary& libraryToUse,
     clearButton.onClick = [this]
     {
         const int slot = activeSlot;
-        library.clearSlot (slot);
-        setStatus ("Slot " + juce::String (slot + 1) + " cleared.", false);
+        library.clearSlot (group, slot);
+        setStatus ("Slot " + juce::String (slot + 1) + " cleared from "
+                   + UserWave::groupName (group) + ".", false);
+        refresh();
+    };
+
+    updateAllButton.setTooltip ("Put this waveform into the same slot of Waveform 1, "
+                               "Waveform 2, Sub, Noize and Transient");
+
+    updateAllButton.onClick = [this]
+    {
+        const int slot = activeSlot;
+
+        // Read the name before the copy, not after: the slot itself is not moved
+        // and keeps its name, but reading it first makes that independent of what
+        // the copy does.
+        const auto name = library.bank().slot (group, slot).name;
+
+        juce::String error;
+
+        if (! library.copySlotToAllGroups (group, slot, error))
+            setStatus (error, true);
+        else
+            setStatus ("\"" + name + "\" is now slot " + juce::String (slot + 1)
+                       + " of Waveform 1, Waveform 2, Sub, Noize and Transient.", false);
+
         refresh();
     };
 
@@ -154,16 +179,17 @@ WaveformEditorComponent::WaveformEditorComponent (UserWaveLibrary& libraryToUse,
 
     nameEditor.onReturnKey = [this]
     {
-        library.renameSlot (activeSlot, nameEditor.getText());
+        library.renameSlot (group, activeSlot, nameEditor.getText());
         refresh();
     };
     nameEditor.onFocusLost = [this]
     {
-        library.renameSlot (activeSlot, nameEditor.getText());
+        library.renameSlot (group, activeSlot, nameEditor.getText());
         refresh();
     };
 
-    for (auto* button : { &loadButton, &clearButton, &singleCycleButton, &fullSampleButton })
+    for (auto* button : { &loadButton, &clearButton, &updateAllButton,
+                          &singleCycleButton, &fullSampleButton })
     {
         button->setColour (juce::TextButton::buttonColourId, juce::Colour (0xff1a1a30));
         button->setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff1e5f7a));
@@ -180,11 +206,18 @@ WaveformEditorComponent::~WaveformEditorComponent()
 }
 
 //==============================================================================
-void WaveformEditorComponent::setTarget (juce::ComboBox* combo, int base, BuiltInKind kind)
+void WaveformEditorComponent::setTarget (juce::ComboBox* combo, int base, BuiltInKind kind,
+                                         UserWave::Group groupToShow)
 {
     targetCombo = combo;
     userBase = base;
     builtInKind = kind;
+    group = groupToShow;
+
+    // Named, because the five lists are separate and what is on screen is one of
+    // them. Without this the window looks the same whichever button opened it,
+    // and a slot loaded into the wrong list is invisible until it is played.
+    listGroup.setText (juce::String (UserWave::groupName (group)) + " Waveforms");
 
     // A list with more built-ins needs more room for them. The window follows
     // this; see WaveformEditorWindow::showFor.
@@ -200,7 +233,7 @@ void WaveformEditorComponent::selectSlot (int slotIndex)
     // Only move the selection onto the slot if there is something in it. Choosing
     // an empty slot would silence the oscillator, and opening a window must never
     // change the sound by itself.
-    if (library.bank().slot (activeSlot).isPlayable() && targetCombo != nullptr)
+    if (library.bank().slot (group, activeSlot).isPlayable() && targetCombo != nullptr)
         targetCombo->setSelectedId (userBase + activeSlot + 1, juce::sendNotificationSync);
 
     refresh();
@@ -221,7 +254,7 @@ int WaveformEditorComponent::rowForSelection() const
 
     const int slot = slotForRow (selectedRow);
 
-    if (slot >= 0 && ! library.bank().slot (slot).isPlayable())
+    if (slot >= 0 && ! library.bank().slot (group, slot).isPlayable())
         return -1;
 
     return selectedRow;
@@ -249,7 +282,7 @@ void WaveformEditorComponent::selectRow (int row)
 int WaveformEditorComponent::fallbackImportSlot() const
 {
     for (int i = 0; i < UserWave::numSlots; ++i)
-        if (! library.bank().slot (i).isPlayable())
+        if (! library.bank().slot (group, i).isPlayable())
             return i;
 
     // Every slot is full, so a drop replaces whichever one is on screen.
@@ -278,7 +311,7 @@ juce::String WaveformEditorComponent::rowName (int row) const
         return {};
     }
 
-    return library.choiceNameForSlot (slot);
+    return library.choiceNameForSlot (group, slot);
 }
 
 juce::String WaveformEditorComponent::rowDetail (int row) const
@@ -288,7 +321,7 @@ juce::String WaveformEditorComponent::rowDetail (int row) const
     if (slot < 0)
         return "Built in";
 
-    const auto& entry = library.bank().slot (slot);
+    const auto& entry = library.bank().slot (group, slot);
 
     if (! entry.isPlayable())
         return "empty";
@@ -313,7 +346,7 @@ void WaveformEditorComponent::refresh()
     if (slot >= 0)
         activeSlot = slot;
 
-    const auto& entry = library.bank().slot (activeSlot);
+    const auto& entry = library.bank().slot (group, activeSlot);
 
     // A built-in has nothing to rename, clear, re-import or switch modes on, so
     // those controls go dead while one is shown. It is the only way the two kinds
@@ -325,6 +358,7 @@ void WaveformEditorComponent::refresh()
     nameEditor.setEnabled (editable);
     nameLabel.setEnabled (editable);
     clearButton.setEnabled (editable);
+    updateAllButton.setEnabled (editable);
     singleCycleButton.setEnabled (editable);
     fullSampleButton.setEnabled (editable);
 
@@ -352,13 +386,13 @@ void WaveformEditorComponent::importInto (int slotIndex, const juce::File& file)
 
     // Keep whichever mode the slot is already in, so replacing the sample in a
     // Full Sample slot does not quietly turn it back into a single cycle.
-    const auto& existing = library.bank().slot (slotIndex);
+    const auto& existing = library.bank().slot (group, slotIndex);
     const auto mode = existing.isPlayable() ? existing.mode : UserWave::Mode::SingleCycle;
 
     // Reading the file and building eleven tables takes long enough on a long
     // sample to look like a hang without this.
     juce::MouseCursor::showWaitCursor();
-    const bool ok = library.importFile (file, slotIndex, mode, error);
+    const bool ok = library.importFile (file, group, slotIndex, mode, error);
     juce::MouseCursor::hideWaitCursor();
 
     if (! ok)
@@ -375,7 +409,7 @@ void WaveformEditorComponent::importInto (int slotIndex, const juce::File& file)
     if (targetCombo != nullptr)
         targetCombo->setSelectedId (userBase + slotIndex + 1, juce::sendNotificationSync);
 
-    const auto& slot = library.bank().slot (slotIndex);
+    const auto& slot = library.bank().slot (group, slotIndex);
     juce::String message = "Loaded \"" + slot.name + "\", " + slot.pitchLabel;
 
     if (slot.mode == UserWave::Mode::FullSample && ! slot.retuned)
@@ -411,7 +445,7 @@ void WaveformEditorComponent::applyMode (UserWave::Mode mode)
 {
     juce::String error;
 
-    if (! library.setSlotMode (activeSlot, mode, error))
+    if (! library.setSlotMode (group, activeSlot, mode, error))
         setStatus (error, true);
     else
         setStatus (modeName (mode) + ": " + (mode == UserWave::Mode::SingleCycle
@@ -509,7 +543,7 @@ bool WaveformEditorComponent::isRowVisible (int row) const
 {
     const int slot = slotForRow (row);
 
-    return slot < 0 || library.bank().slot (slot).isPlayable();
+    return slot < 0 || library.bank().slot (group, slot).isPlayable();
 }
 
 int WaveformEditorComponent::displayPositionForRow (int row) const
@@ -584,7 +618,11 @@ void WaveformEditorComponent::resized()
 
     controls.removeFromTop (8);
 
+    // Update All sits on the lower row rather than beside Clear Slot: the upper
+    // row is already full, and the name box has width to spare.
     auto lower = controls.removeFromTop (28);
+    updateAllButton.setBounds (lower.removeFromRight (100));
+    lower.removeFromRight (6);
     nameLabel.setBounds (lower.removeFromLeft (42));
     nameEditor.setBounds (lower);
 }
@@ -659,7 +697,7 @@ void WaveformEditorComponent::paintRowWaveform (juce::Graphics& g, juce::Rectang
         return;
     }
 
-    const UserWaveSlot* entry = slot >= 0 ? &library.bank().slot (slot) : nullptr;
+    const UserWaveSlot* entry = slot >= 0 ? &library.bank().slot (group, slot) : nullptr;
 
     if (entry != nullptr && ! entry->isPlayable())
         return;
@@ -772,7 +810,7 @@ void WaveformEditorComponent::paintList (juce::Graphics& g)
     // Everything below the last row is the drop zone. Hiding the empty slots left
     // this space behind, and it is exactly the affordance their absence removed:
     // somewhere to aim a file, that says where the file will land.
-    const bool hasRoom = ! library.bank().slot (fallbackImportSlot()).isPlayable();
+    const bool hasRoom = ! library.bank().slot (group, fallbackImportSlot()).isPlayable();
 
     auto list = listBounds().reduced (groupPadding, 0);
 
@@ -827,7 +865,7 @@ void WaveformEditorComponent::paintDetail (juce::Graphics& g)
     }
 
     const int slot = slotForRow (row);
-    const UserWaveSlot* entry = slot >= 0 ? &library.bank().slot (slot) : nullptr;
+    const UserWaveSlot* entry = slot >= 0 ? &library.bank().slot (group, slot) : nullptr;
 
     //==========================================================================
     auto readout = content.removeFromTop (24);
@@ -974,11 +1012,17 @@ void WaveformEditorWindow::allowFileDropsFromLowerPrivilege()
 }
 
 void WaveformEditorWindow::showFor (juce::ComboBox* targetCombo, int userBase,
-                                    WaveformEditorComponent::BuiltInKind kind, int slotIndex)
+                                    WaveformEditorComponent::BuiltInKind kind,
+                                    UserWave::Group group, int slotIndex)
 {
+    // The five lists are separate, so the title bar says which one is open. The
+    // window is reused, and without this a second Edit button would raise a
+    // window that looks identical to the one just closed.
+    setName ("Space Dust - " + juce::String (UserWave::groupName (group)) + " Waveforms");
+
     if (content != nullptr)
     {
-        content->setTarget (targetCombo, userBase, kind);
+        content->setTarget (targetCombo, userBase, kind, group);
 
         // The list that opened this may be longer or shorter than the last one,
         // and the content has just resized itself to suit. The window has to

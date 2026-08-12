@@ -8,10 +8,15 @@
 /**
     The Waveforms window -- the waveform list, and where a sample joins it.
 
-    Opened by the small button beside each of the three waveform dropdowns. The
+    Opened by the small button beside each of the five waveform dropdowns. The
     list it shows IS that dropdown's list, in the same order: the built-in shapes
-    first, then the eight import slots. Clicking any row selects it, exactly as
-    choosing it from the dropdown would.
+    first, then that dropdown's own eight import slots. Clicking any row selects
+    it, exactly as choosing it from the dropdown would.
+
+    Each of the five dropdowns keeps its own eight slots, so loading a sample
+    here changes one waveform and no other. Update All is the one control that
+    reaches across: it puts the slot on screen into the same numbered slot of all
+    five lists.
 
     That equivalence is deliberate and is held by construction rather than by
     being kept in step by hand. The dropdown's item ids run 1..N in list order and
@@ -71,9 +76,11 @@ public:
         lists to disagree about what is selected.
 
         userBase is where that dropdown's User entries start, which is also how
-        many built-in entries it has in front of them, and kind says what those
-        entries are so they can be drawn. */
-    void setTarget (juce::ComboBox* targetCombo, int userBase, BuiltInKind kind);
+        many built-in entries it has in front of them, kind says what those
+        entries are so they can be drawn, and group says whose eight import slots
+        are being shown -- every import made here goes into that list alone. */
+    void setTarget (juce::ComboBox* targetCombo, int userBase, BuiltInKind kind,
+                    UserWave::Group group);
 
     /** Show and select the given import slot. */
     void selectSlot (int slotIndex);
@@ -160,6 +167,12 @@ private:
 
     BuiltInKind builtInKind = BuiltInKind::Shapes;
 
+    /** Whose eight import slots are on screen. Each of the five dropdowns has its
+        own set, so everything this window loads, renames, re-modes or clears
+        touches that one list -- except Update All, which is the deliberate way to
+        put a slot into all five. */
+    UserWave::Group group = UserWave::Group::Osc1;
+
     /** Import slot the detail panel acts on. Held apart from the row selection so
         that showing a built-in still leaves a sensible target for a dropped file. */
     int activeSlot = 0;
@@ -172,6 +185,7 @@ private:
 
     juce::TextButton loadButton { "Load File..." };
     juce::TextButton clearButton { "Clear Slot" };
+    juce::TextButton updateAllButton { "Update All" };
     juce::TextButton singleCycleButton { "Single Cycle" };
     juce::TextButton fullSampleButton { "Full Sample" };
     juce::TextEditor nameEditor;
@@ -201,7 +215,8 @@ public:
 
     /** Bring the window up, pointed at the dropdown that asked for it. */
     void showFor (juce::ComboBox* targetCombo, int userBase,
-                  WaveformEditorComponent::BuiltInKind kind, int slotIndex);
+                  WaveformEditorComponent::BuiltInKind kind, UserWave::Group group,
+                  int slotIndex);
 
     /** Redraw after the library changed under it. */
     void refreshContent();

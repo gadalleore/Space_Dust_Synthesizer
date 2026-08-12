@@ -761,10 +761,16 @@ void SynthVoice::refreshUserWaveSelection() noexcept
 
     // The sub reads the same base as the two oscillators: it offers the same four
     // shapes in the same order, so a slot sits at the same index in all three.
-    osc1UserSlot = userWaveBank->slotForChoice(osc1Waveform, UserWave::oscUserBase);
-    osc2UserSlot = userWaveBank->slotForChoice(osc2Waveform, UserWave::oscUserBase);
-    subOscUserSlot = userWaveBank->slotForChoice(subOscWaveform, UserWave::oscUserBase);
-    noiseUserSlot = userWaveBank->slotForChoice(noiseType, UserWave::noiseUserBase);
+    // The GROUP still differs for all four -- each keeps its own eight slots, so
+    // a sample imported for Oscillator 1 does not become the sub's waveform too.
+    osc1UserSlot = userWaveBank->slotForChoice(osc1Waveform, UserWave::oscUserBase,
+                                               UserWave::Group::Osc1);
+    osc2UserSlot = userWaveBank->slotForChoice(osc2Waveform, UserWave::oscUserBase,
+                                               UserWave::Group::Osc2);
+    subOscUserSlot = userWaveBank->slotForChoice(subOscWaveform, UserWave::oscUserBase,
+                                                 UserWave::Group::Sub);
+    noiseUserSlot = userWaveBank->slotForChoice(noiseType, UserWave::noiseUserBase,
+                                                UserWave::Group::Noise);
 
     if (osc1UserSlot != nullptr) osc1PhaseScale = osc1UserSlot->phaseIncrementScale;
     if (osc2UserSlot != nullptr) osc2PhaseScale = osc2UserSlot->phaseIncrementScale;

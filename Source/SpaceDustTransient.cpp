@@ -166,7 +166,8 @@ const UserWaveSlot* SpaceDustTransient::resolveUserSlot() const noexcept
     if (userWaveBank_ == nullptr)
         return nullptr;
 
-    return userWaveBank_->slotForChoice(params_.type, UserWave::transientUserBase);
+    return userWaveBank_->slotForChoice(params_.type, UserWave::transientUserBase,
+                                        UserWave::Group::Transient);
 }
 
 void SpaceDustTransient::initUserSlot(const UserWaveSlot& slot)
