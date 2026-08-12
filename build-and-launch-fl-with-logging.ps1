@@ -16,9 +16,17 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $projectRoot
 
+# The bundle is named after the product, which differs between the
+# v1-maintenance line and main. This script DELETES the destination before
+# copying, so a literal name here would have wiped the installed V1 plugin and
+# replaced it with a V2 build under V1's name. See product-name.ps1.
+. "$projectRoot\product-name.ps1"
+$product = Get-SpaceDustProductName -ProjectRoot $projectRoot
+Write-Host "[Space Dust] Product: $product" -ForegroundColor Gray
+
 $buildDir = "build-safety"
 $config   = "RelWithDebInfo"
-$source   = "$buildDir\SpaceDust_artefacts\$config\VST3\Space Dust.vst3"
+$source   = "$buildDir\SpaceDust_artefacts\$config\VST3\$product.vst3"
 
 # --- Step 1: Build the RelWithDebInfo + logging bundle ---
 if (-not $NoBuild) {
@@ -39,7 +47,7 @@ if (-not (Test-Path $source)) {
 Write-Host "[Space Dust] Source: $source" -ForegroundColor Green
 
 # --- Step 2: Verify the logging needle in the source DLL ---
-$srcDll = Join-Path $source "Contents\x86_64-win\Space Dust.vst3"
+$srcDll = Join-Path $source "Contents\x86_64-win\$product.vst3"
 $bytes  = [System.IO.File]::ReadAllBytes($srcDll)
 $nb     = [System.Text.Encoding]::ASCII.GetBytes("SpaceDust_Safety_")
 $found  = $false
@@ -61,13 +69,13 @@ Write-Host "[Space Dust] Logging needle confirmed in source." -ForegroundColor G
 # this is a 64-bit-only plugin, and FL scans both folders, so a copy there shows up
 # as a confusing duplicate ("Space Dust_2") in FL's plugin database.
 $adminDests = @(
-    "C:\Program Files\Common Files\VST3\Space Dust.vst3"
+    "C:\Program Files\Common Files\VST3\$product.vst3"
 )
 $userDests  = @(
-    "$env:USERPROFILE\Documents\Ableton\User Library\VST3\Space Dust.vst3",
-    "$env:USERPROFILE\Documents\VST3\Space Dust.vst3",
-    "$env:USERPROFILE\VST3\Space Dust.vst3",
-    "$env:APPDATA\VST3\Space Dust.vst3"
+    "$env:USERPROFILE\Documents\Ableton\User Library\VST3\$product.vst3",
+    "$env:USERPROFILE\Documents\VST3\$product.vst3",
+    "$env:USERPROFILE\VST3\$product.vst3",
+    "$env:APPDATA\VST3\$product.vst3"
 )
 
 # --- Step 4: User-scope copies (no elevation) ---
@@ -87,7 +95,7 @@ $elevatedScript = @"
 `$ErrorActionPreference = 'Stop'
 `$src = '$srcAbs'
 `$dests = @(
-    'C:\Program Files\Common Files\VST3\Space Dust.vst3'
+    'C:\Program Files\Common Files\VST3\$product.vst3'
 )
 foreach (`$d in `$dests) {
     `$dir = Split-Path -Parent `$d
@@ -102,7 +110,7 @@ Start-Process powershell -Verb RunAs -Wait -ArgumentList "-NoProfile","-Executio
 Remove-Item $elevatedPath -ErrorAction SilentlyContinue
 
 foreach ($d in $adminDests) {
-    if (Test-Path (Join-Path $d "Contents\x86_64-win\Space Dust.vst3")) {
+    if (Test-Path (Join-Path $d "Contents\x86_64-win\$product.vst3")) {
         Write-Host "  Updated: $d" -ForegroundColor Green
     } else {
         Write-Host "  MISSING: $d" -ForegroundColor Red

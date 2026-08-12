@@ -6,7 +6,10 @@
 
 [CmdletBinding()]
 param(
-    [string]$ExePath  = (Join-Path $PSScriptRoot 'build/SpaceDust_artefacts/Release/Standalone/Space Dust.exe'),
+    # Left empty and filled in below, because the default depends on the product
+    # name and a script's param block has to be its first statement -- so the
+    # helper that reads the name cannot be dot-sourced before this point.
+    [string]$ExePath,
     [int]   $DurationSec = 60,
     [int]   $IntervalSec = 2,
     [string]$LogFile  = (Join-Path $PSScriptRoot 'build/runtime-monitor.csv'),
@@ -16,6 +19,15 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# The standalone is named after the product, which differs between the
+# v1-maintenance line and main. Read it rather than writing it out: a literal
+# name monitors nothing on the branch it was not written for. See product-name.ps1.
+if (-not $ExePath) {
+    . "$PSScriptRoot\product-name.ps1"
+    $product = Get-SpaceDustProductName -ProjectRoot $PSScriptRoot
+    $ExePath = Join-Path $PSScriptRoot "build/SpaceDust_artefacts/Release/Standalone/$product.exe"
+}
 
 Write-Host ''
 Write-Host ('=' * 70) -ForegroundColor DarkCyan

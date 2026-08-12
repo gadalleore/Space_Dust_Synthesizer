@@ -60,9 +60,19 @@ $installArgs = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$Sandbo
 Start-Process -FilePath $installer.FullName -ArgumentList $installArgs -Wait
 
 # 4) Expected artefacts
+#
+# Named after the product, which differs between the v1-maintenance line and
+# main -- and package-installer.ps1 already reads it from CMakeLists.txt to
+# decide what to stage, so this must read it from the same place or the two
+# disagree. A literal "Space Dust.vst3" here checked the INSTALLED V1 plugin and
+# passed on its files, reporting a green installer test for a V2 build that had
+# never been installed at all. See product-name.ps1.
+. "$PSScriptRoot\product-name.ps1"
+$product = Get-SpaceDustProductName -ProjectRoot $PSScriptRoot
+
 $expected = @(
-    'Space Dust.vst3/Contents/x86_64-win/Space Dust.vst3',
-    'Space Dust.vst3/Contents/Resources/moduleinfo.json'
+    "$product.vst3/Contents/x86_64-win/$product.vst3",
+    "$product.vst3/Contents/Resources/moduleinfo.json"
 )
 
 $missing = @()
@@ -82,7 +92,7 @@ if ($missing.Count -gt 0) {
 }
 
 # 5) Sanity: try loading the VST3 manifest helper output exists
-$moduleInfo = 'C:\Program Files\Common Files\VST3\Space Dust.vst3\Contents\Resources\moduleinfo.json'
+$moduleInfo = "C:\Program Files\Common Files\VST3\$product.vst3\Contents\Resources\moduleinfo.json"
 if (Test-Path $moduleInfo) {
     try {
         $json = Get-Content $moduleInfo -Raw | ConvertFrom-Json

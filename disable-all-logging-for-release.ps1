@@ -59,7 +59,14 @@ if ($LASTEXITCODE -ne 0) { throw "Release build failed (exit $LASTEXITCODE)." }
 
 Write-Host ""
 Write-Host "[3/3] Sanity check: confirm no Safety-Logger symbols remain..." -ForegroundColor Yellow
-$vst3 = Get-ChildItem -Path $BuildDir -Recurse -Filter "Space Dust.vst3" -File `
+# Named after the product, which differs between the v1-maintenance line and
+# main. A literal name here found nothing on the other branch, and the check
+# below is skipped when nothing is found -- so this safety scan reported success
+# without ever having scanned anything. See product-name.ps1.
+. "$PSScriptRoot\product-name.ps1"
+$product = Get-SpaceDustProductName -ProjectRoot $PSScriptRoot
+
+$vst3 = Get-ChildItem -Path $BuildDir -Recurse -Filter "$product.vst3" -File `
         -ErrorAction SilentlyContinue | Select-Object -First 1
 if ($vst3) {
     $bytes  = [System.IO.File]::ReadAllBytes($vst3.FullName)
@@ -78,7 +85,10 @@ if ($vst3) {
         Write-Host "Clean: no logger symbols in shipped binary." -ForegroundColor Green
     }
 } else {
-    Write-Host "(VST3 not found under $BuildDir - skipping symbol scan.)" -ForegroundColor DarkYellow
+    # Was a skip-with-a-note, which is how a wrong bundle name turned this into a
+    # scan that passed without reading anything. There is no build here to ship,
+    # so there is nothing this step can honestly report but failure.
+    throw "No $product.vst3 under $BuildDir - the Safety-Logger scan had nothing to read."
 }
 
 Write-Host ""

@@ -23,7 +23,14 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $projectRoot
 
-$sharedLib = Join-Path $projectRoot "build\SpaceDust_artefacts\Release\Space Dust_SharedCode.lib"
+# Every file this script names is named after the product, which differs between
+# the v1-maintenance line and main. Read, never written out: see product-name.ps1
+# for what a literal name here would have done to the installed V1 plugin.
+. "$projectRoot\product-name.ps1"
+$product = Get-SpaceDustProductName -ProjectRoot $projectRoot
+Write-Host "[Space Dust] Product: $product" -ForegroundColor Gray
+
+$sharedLib = Join-Path $projectRoot "build\SpaceDust_artefacts\Release\${product}_SharedCode.lib"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -44,7 +51,7 @@ function Get-DllLockers {
     return ($holders | Sort-Object -Unique)
 }
 
-$dllRel = "Contents\x86_64-win\Space Dust.vst3"
+$dllRel = "Contents\x86_64-win\$product.vst3"
 
 # SHA256 of a file, retrying through transient locks. Right after the linker
 # writes the DLL, antivirus (Windows Defender) opens it to scan, briefly locking
@@ -60,7 +67,7 @@ function Get-FileHashSafe {
 
 # Mirror a VST3 bundle from $Source to $Dest using robocopy /MIR.
 # /MIR replaces changed files AND purges extras, so it also cleans up any
-# nested "Space Dust.vst3\Space Dust.vst3" left by an earlier botched copy.
+# bundle nested inside itself by an earlier botched copy.
 #
 # Success is judged by whether the deployed plugin binary matches the build
 # (content hash $SrcHash) - NOT by robocopy's exit code. A running DAW's plugin
@@ -167,22 +174,22 @@ Write-Host "[Space Dust] Build succeeded." -ForegroundColor Green
 # installer test and had to be cleaned up by hand. One location = no
 # duplicates, no shadowing. (Elevate + lock-check Program Files.)
 # ---------------------------------------------------------------------------
-$source = Join-Path $projectRoot "build\SpaceDust_artefacts\Release\VST3\Space Dust.vst3"
+$source = Join-Path $projectRoot "build\SpaceDust_artefacts\Release\VST3\$product.vst3"
 if (-not (Test-Path $source)) {
     Write-Host "[Space Dust] VST3 not found at $source" -ForegroundColor Red
     exit 1
 }
 
-$programFilesDest = "C:\Program Files\Common Files\VST3\Space Dust.vst3"
+$programFilesDest = "C:\Program Files\Common Files\VST3\$product.vst3"
 
 # Legacy user-profile VST3 folders this script USED to mirror into. They are no
 # longer deploy targets; we PURGE them every run so a build-and-launch leaves
 # exactly one copy (Program Files, below) and never resurrects a stray.
 $legacyStrayDests = @(
-    "$env:USERPROFILE\Documents\Ableton\User Library\VST3\Space Dust.vst3",
-    "$env:USERPROFILE\Documents\VST3\Space Dust.vst3",
-    "$env:USERPROFILE\VST3\Space Dust.vst3",
-    "$env:APPDATA\VST3\Space Dust.vst3"
+    "$env:USERPROFILE\Documents\Ableton\User Library\VST3\$product.vst3",
+    "$env:USERPROFILE\Documents\VST3\$product.vst3",
+    "$env:USERPROFILE\VST3\$product.vst3",
+    "$env:APPDATA\VST3\$product.vst3"
 )
 
 Write-Host "[Space Dust] Deploying fresh VST3 bundle..." -ForegroundColor Cyan
@@ -206,7 +213,7 @@ foreach ($stray in $legacyStrayDests) {
 
 # Program Files needs admin, and a running DAW locks the loaded DLL. Detect the
 # lock up front so we never nest the bundle or leave a half-written copy.
-$pfDll = Join-Path $programFilesDest "Contents\x86_64-win\Space Dust.vst3"
+$pfDll = Join-Path $programFilesDest $dllRel
 $lockers = Get-DllLockers -DllPath $pfDll
 if ($lockers) {
     Write-Host ""
