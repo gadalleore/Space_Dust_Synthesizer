@@ -211,6 +211,20 @@ public:
                       juce::ComboBox& box) override;
     void drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                           bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
+
+    /** The toggles' look, with the ToggleButton taken out of it.
+
+        Everything drawToggleButton used to do inline. It is public and takes a
+        plain rectangle so that a control which is NOT a toggle can wear the same
+        skin -- the Edit buttons beside the waveform menus do, and they sit among
+        toggles, where JUCE's default flat button box was the one thing on the
+        panel with no bloom on it.
+
+        One definition rather than a second copy of these fills, so the two can
+        never drift apart. isLit is the toggle's "on" state: a real toggle passes
+        its toggle state, a momentary button passes whether it is pressed. */
+    void drawToggleStyleButton(juce::Graphics& g, juce::Rectangle<float> bounds,
+                               const juce::String& text, bool isLit);
     void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
                           float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
                           juce::Slider& slider) override;
@@ -276,6 +290,51 @@ private:
     static constexpr float kLagFollow = 0.35f;
 
     juce::Typeface::Ptr glitchGoblinTypeface;
+};
+
+//==============================================================================
+/**
+    A momentary button drawn exactly like the panel's toggles.
+
+    The five Edit buttons beside the waveform menus sit in among toggles and were
+    the only controls there drawn by JUCE's default button painter -- a flat blue
+    box, with none of the bloom every neighbour has (Giuseppe, 2026-08-11).
+
+    Not a second copy of that look: it calls the same drawToggleStyleButton the
+    toggles themselves are drawn by, so the two cannot drift apart.
+
+    A toggle is lit when it is on. This has no on, so it lights while the pointer
+    is over it or it is held down -- which gives a momentary button the press
+    feedback it needs, in the panel's own language.
+*/
+class SpaceDustToggleStyleButton : public juce::Button
+{
+public:
+    explicit SpaceDustToggleStyleButton(const juce::String& componentName = {})
+        : juce::Button(componentName) {}
+
+    void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted,
+                     bool shouldDrawButtonAsDown) override
+    {
+        const bool lit = shouldDrawButtonAsHighlighted || shouldDrawButtonAsDown;
+
+        if (auto* spaceDust = dynamic_cast<SpaceDustLookAndFeel*>(&getLookAndFeel()))
+        {
+            spaceDust->drawToggleStyleButton(g, getLocalBounds().toFloat(),
+                                             getButtonText(), lit);
+            return;
+        }
+
+        // Every panel that holds one of these sets the LookAndFeel above, so this
+        // is unreachable in the plugin. It exists so that a button dropped into a
+        // bare component is still visible rather than invisible.
+        g.setColour(juce::Colour(lit ? 0xff1a4a5f : 0xff1a1a2f));
+        g.fillRoundedRectangle(getLocalBounds().toFloat(), 3.0f);
+        g.setColour(juce::Colour(0xffa0d8ff));
+        g.drawText(getButtonText(), getLocalBounds(), juce::Justification::centred, false);
+    }
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpaceDustToggleStyleButton)
 };
 
 

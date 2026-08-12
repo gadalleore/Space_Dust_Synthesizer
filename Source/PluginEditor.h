@@ -625,11 +625,12 @@ private:
     // they differ only in which list is shown around them and which slot it
     // lands on. The sub oscillator's and the Transient's live in other sections
     // of the panel, but they are the same button doing the same thing.
-    juce::TextButton osc1WaveformEditButton;
-    juce::TextButton osc2WaveformEditButton;
-    juce::TextButton noiseWaveformEditButton;
-    juce::TextButton subOscWaveformEditButton;
-    juce::TextButton transientTypeEditButton;
+    // Drawn like the toggles they sit among -- see SpaceDustToggleStyleButton.
+    SpaceDustToggleStyleButton osc1WaveformEditButton;
+    SpaceDustToggleStyleButton osc2WaveformEditButton;
+    SpaceDustToggleStyleButton noiseWaveformEditButton;
+    SpaceDustToggleStyleButton subOscWaveformEditButton;
+    SpaceDustToggleStyleButton transientTypeEditButton;
     
     // Oscillator tuning controls (simple, intuitive system)
     juce::Slider osc1CoarseTuneSlider;

@@ -125,6 +125,33 @@ WaveformEditorComponent::WaveformEditorComponent (UserWaveLibrary& libraryToUse,
     clearButton.onClick = [this]
     {
         const int slot = activeSlot;
+        const int row = userBase + slot;
+
+        // Move the selection off the row BEFORE the slot is emptied, not after.
+        //
+        // The dropdown only lists slots that hold something, so a cleared slot
+        // has no entry left to sit on -- and the parameter would still be
+        // pointing at it. That is what used to leave "User n (missing)" in the
+        // menu. Stepping up to the row above first means that by the time the
+        // menus are rebuilt the parameter already names something real, and the
+        // cleared entry simply goes.
+        //
+        // The row above, not the slot above: an empty slot in between is not
+        // drawn, so what the player sees above this row may be an earlier slot
+        // or the last built-in shape. Row 0 is always a built-in, so the search
+        // below always finds one.
+        if (targetCombo != nullptr && targetCombo->getSelectedId() == row + 1)
+        {
+            for (int above = row - 1; above >= 0; --above)
+            {
+                if (isRowVisible (above))
+                {
+                    selectRow (above);
+                    break;
+                }
+            }
+        }
+
         library.clearSlot (group, slot);
         setStatus ("Slot " + juce::String (slot + 1) + " cleared from "
                    + UserWave::groupName (group) + ".", false);

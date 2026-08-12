@@ -233,10 +233,18 @@ void SpaceDustLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height
 void SpaceDustLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButton& button,
                                             bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
 {
-    auto bounds = button.getLocalBounds().toFloat();
+    juce::ignoreUnused(shouldDrawButtonAsHighlighted, shouldDrawButtonAsDown);
+
+    drawToggleStyleButton(g, button.getLocalBounds().toFloat(), button.getButtonText(),
+                          button.getToggleState());
+}
+
+void SpaceDustLookAndFeel::drawToggleStyleButton(juce::Graphics& g, juce::Rectangle<float> bounds,
+                                                 const juce::String& text, bool isLit)
+{
     auto cornerSize = 3.0f;
 
-    bool isToggled = button.getToggleState();
+    const bool isToggled = isLit;
 
     // Meter-driven bloom OUTSIDE the button, drawn first so the button's own fills
     // cover its inner half and only the outward spill survives.
@@ -289,7 +297,7 @@ void SpaceDustLookAndFeel::drawToggleButton(juce::Graphics& g, juce::ToggleButto
     
     // Draw text with shadow
     g.setFont(getBodyFont(12.0f, true));
-    drawTextWithShadow(g, button.getButtonText(),
+    drawTextWithShadow(g, text,
                       static_cast<int>(textArea.getX()),
                       static_cast<int>(textArea.getY()),
                       static_cast<int>(textArea.getWidth()),

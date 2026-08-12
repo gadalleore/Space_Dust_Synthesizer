@@ -3949,7 +3949,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
 
         struct EditButtonTarget
         {
-            juce::TextButton* button;
+            SpaceDustToggleStyleButton* button;
             juce::ComboBox* combo;
             int userBase;
             Kind kind;
@@ -3980,11 +3980,11 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
 
         for (const auto& target : targets)
         {
+            // No colours set here. The button paints itself through the same
+            // routine that draws the toggles beside it, so its navy, its border
+            // and its bloom all come from that one place.
             target.button->setButtonText(safeString("Edit"));
             target.button->setTooltip(safeString(target.tip));
-            target.button->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff1a1a45));
-            target.button->setColour(juce::TextButton::textColourOffId, juce::Colour(0xff6dd5fa));
-            target.button->setColour(juce::TextButton::textColourOnId, juce::Colours::white);
 
             auto* combo = target.combo;
             const int userBase = target.userBase;
