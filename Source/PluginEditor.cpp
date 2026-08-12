@@ -917,6 +917,7 @@ MainPageComponent::MainPageComponent(SpaceDustAudioProcessorEditor& editor)
     addAndMakeVisible(parentEditor.pitchEnvPitchLabel);
     addAndMakeVisible(parentEditor.subOscToggleButton);
     addAndMakeVisible(parentEditor.subOscWaveformCombo);
+    addAndMakeVisible(parentEditor.subOscWaveformEditButton);
     addAndMakeVisible(parentEditor.subOscLevelSlider);
     addAndMakeVisible(parentEditor.subOscCoarseSlider);
     addAndMakeVisible(parentEditor.subOscWaveformLabel);
@@ -980,6 +981,7 @@ void MainPageComponent::updateSubOscVisibility()
 {
     bool on = parentEditor.safeGetParam("subOscOn") > 0.5f;
     parentEditor.subOscWaveformCombo.setVisible(on);
+    parentEditor.subOscWaveformEditButton.setVisible(on);
     parentEditor.subOscLevelSlider.setVisible(on);
     parentEditor.subOscCoarseSlider.setVisible(on);
     parentEditor.subOscWaveformLabel.setVisible(on);
@@ -1320,12 +1322,23 @@ void MainPageComponent::resized()
         parentEditor.subOscLevelSlider.getBottom(),
         parentEditor.subOscCoarseSlider.getBottom());
     // Row 2: Wave â€” topBottomGap after Level/Coarse value text, then label + combo
+    // The combo and its Edit button are centred as one unit, so the pair sits
+    // under the Level/Coarse knobs rather than the combo alone sitting off to one
+    // side of them. The label stays over the combo, which is what it names.
     int subOscWaveLabelTop = subOscValueBottom + topBottomGap;
-    int subOscWaveWidth = 80;  // Wide enough for "Triangle", centered - avoids overlap with Level/Coarse columns
-    int subOscWaveX = ampEnvContent.getCentreX() - subOscWaveWidth / 2;
+    int subOscWaveWidth = 80;  // Wide enough for "Triangle" and for a User slot name
+    const int subOscEditWidth = 40;
+    const int subOscEditHeight = 22;
+    const int subOscEditGap = 6;
+    int subOscWaveTotalWidth = subOscWaveWidth + subOscEditGap + subOscEditWidth;
+    int subOscWaveX = ampEnvContent.getCentreX() - subOscWaveTotalWidth / 2;
     parentEditor.subOscWaveformLabel.setBounds(subOscWaveX, subOscWaveLabelTop, subOscWaveWidth, labelHeight);
     int subOscWaveComboY = subOscWaveLabelTop + labelHeight + 1;
     parentEditor.subOscWaveformCombo.setBounds(subOscWaveX, subOscWaveComboY, subOscWaveWidth, comboHeight);
+    parentEditor.subOscWaveformEditButton.setBounds(
+        subOscWaveX + subOscWaveWidth + subOscEditGap,
+        subOscWaveComboY + (comboHeight - subOscEditHeight) / 2,
+        subOscEditWidth, subOscEditHeight);
     
     // Amp Envelope box height: shrink when Sub Osc off, expand when on (like Filter in Effects tab)
     // Bottom inset below last control matches Modulation tab LFO1 box: after the Filter toggle row,
@@ -2960,6 +2973,7 @@ SaturationColorPageComponent::SaturationColorPageComponent(SpaceDustAudioProcess
     addAndMakeVisible(parentEditor.transientEnabledButton);
     addAndMakeVisible(parentEditor.transientEnabledLabel);
     addAndMakeVisible(parentEditor.transientTypeCombo);
+    addAndMakeVisible(parentEditor.transientTypeEditButton);
     addAndMakeVisible(parentEditor.transientTypeLabel);
     addAndMakeVisible(parentEditor.transientMixSlider);
     addAndMakeVisible(parentEditor.transientMixLabel);
@@ -3124,10 +3138,17 @@ void SaturationColorPageComponent::resized()
     parentEditor.transientEnabledButton.setBounds(leftColX + pad, tfy, bOnBtnW, bOnBtnH);
     tfy += bOnBtnH + gap;
 
-    // Type combo
-    parentEditor.transientTypeCombo.setBounds(tCx - tComboW / 2, tfy, tComboW, 22);
+    // Type combo, with the Edit button that opens the Waveforms window beside it.
+    // The two are centred as one unit; the "Sound" label stays under the combo,
+    // which is what it names.
+    const int tEditW = 40;
+    const int tEditH = 22;
+    const int tEditGap = 6;
+    const int tComboLeft = tCx - (tComboW + tEditGap + tEditW) / 2;
+    parentEditor.transientTypeCombo.setBounds(tComboLeft, tfy, tComboW, 22);
+    parentEditor.transientTypeEditButton.setBounds(tComboLeft + tComboW + tEditGap, tfy, tEditW, tEditH);
     tfy += 24 + gap;
-    parentEditor.transientTypeLabel.setBounds(tCx - tComboW / 2, tfy, tComboW, labelH);
+    parentEditor.transientTypeLabel.setBounds(tComboLeft, tfy, tComboW, labelH);
     tfy += labelH + labelGap;
 
     // Post Effect toggle
@@ -3916,16 +3937,34 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // same window; the only difference is which slot it lands on, taken from what
     // that dropdown is currently set to.
     {
-        struct EditButtonTarget { juce::TextButton* button; juce::ComboBox* combo; int userBase; const char* tip; };
+        using Kind = WaveformEditorComponent::BuiltInKind;
 
+        struct EditButtonTarget
+        {
+            juce::TextButton* button;
+            juce::ComboBox* combo;
+            int userBase;
+            Kind kind;
+            const char* tip;
+        };
+
+        // The sub oscillator's and the Transient's buttons are set up here too,
+        // even though their dropdowns are built further down and in other
+        // sections of the panel: what makes these five one thing is that they all
+        // open the same window on the same eight slots, and that is easier to see
+        // when they are written out together.
         const EditButtonTarget targets[] =
         {
-            { &osc1WaveformEditButton,  &osc1WaveformCombo, UserWave::oscUserBase,
+            { &osc1WaveformEditButton,   &osc1WaveformCombo,   UserWave::oscUserBase,       Kind::Shapes,
               "Import a sample as an Oscillator 1 waveform" },
-            { &osc2WaveformEditButton,  &osc2WaveformCombo, UserWave::oscUserBase,
+            { &osc2WaveformEditButton,   &osc2WaveformCombo,   UserWave::oscUserBase,       Kind::Shapes,
               "Import a sample as an Oscillator 2 waveform" },
-            { &noiseWaveformEditButton, &noiseColorCombo,   UserWave::noiseUserBase,
+            { &noiseWaveformEditButton,  &noiseColorCombo,     UserWave::noiseUserBase,     Kind::Noise,
               "Import a sample as a Noize source" },
+            { &subOscWaveformEditButton, &subOscWaveformCombo, UserWave::oscUserBase,       Kind::Shapes,
+              "Import a sample as the Sub Oscillator waveform" },
+            { &transientTypeEditButton,  &transientTypeCombo,  UserWave::transientUserBase, Kind::Drums,
+              "Import a sample to play as the Transient hit" },
         };
 
         for (const auto& target : targets)
@@ -3938,21 +3977,13 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
 
             auto* combo = target.combo;
             const int userBase = target.userBase;
-            target.button->onClick = [this, combo, userBase]
+            const Kind kind = target.kind;
+            target.button->onClick = [this, combo, userBase, kind]
             {
-                openWaveformWindow(combo, userBase);
+                openWaveformWindow(combo, userBase, kind);
             };
         }
     }
-
-    // The dropdowns follow whatever has been imported, and keep following it: the
-    // library calls back whenever a slot changes.
-    rebuildWaveformMenus();
-
-    audioProcessor.getUserWaveLibrary().onChange = [this]
-    {
-        rebuildWaveformMenus();
-    };
 
 
     noiseLevelSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
@@ -4209,13 +4240,16 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     subOscToggleButton.setButtonText(safeString("Sub Oscillator"));
     subOscToggleAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "subOscOn", subOscToggleButton);
+    // Items come from rebuildWaveformMenus below, like the other waveform menus:
+    // it is the one place that knows which User slots hold anything.
     subOscWaveformCombo.addItem(safeString("Sine"), 1);
     subOscWaveformCombo.addItem(safeString("Triangle"), 2);
     subOscWaveformCombo.addItem(safeString("Saw"), 3);
     subOscWaveformCombo.addItem(safeString("Square"), 4);
-    subOscWaveformCombo.setSelectedId(2);  // Default Triangle
-    subOscWaveformAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        audioProcessor.getValueTreeState(), "subOscWaveform", subOscWaveformCombo);
+    subOscWaveformCombo.setLookAndFeel(&customLookAndFeel);
+    if (auto* subOscWaveformParam = audioProcessor.getValueTreeState().getParameter("subOscWaveform"))
+        subOscWaveformAttachment = std::make_unique<WaveformChoiceAttachment>(
+            *subOscWaveformParam, subOscWaveformCombo);
     subOscLevelSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     subOscLevelSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
     subOscLevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
@@ -5447,6 +5481,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     transientEnabledLabel.setJustificationType(juce::Justification::centred);
     transientEnabledLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     transientEnabledLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+    // The ten drums, and then whichever User slots hold a sample -- filled in by
+    // rebuildWaveformMenus, as for every other menu that can select an import.
     transientTypeCombo.addItem(safeString("808 Kick"), 1);
     transientTypeCombo.addItem(safeString("808 Snare"), 2);
     transientTypeCombo.addItem(safeString("808 Hat"), 3);
@@ -5457,9 +5493,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     transientTypeCombo.addItem(safeString("808 Cowbell"), 8);
     transientTypeCombo.addItem(safeString("909 Kick"), 9);
     transientTypeCombo.addItem(safeString("909 Snare"), 10);
-    transientTypeCombo.setSelectedId(1);
-    transientTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        audioProcessor.getValueTreeState(), "transientType", transientTypeCombo);
+    if (auto* transientTypeParam = audioProcessor.getValueTreeState().getParameter("transientType"))
+        transientTypeAttachment = std::make_unique<WaveformChoiceAttachment>(
+            *transientTypeParam, transientTypeCombo);
     transientTypeLabel.setText(safeString("Sound"), juce::dontSendNotification);
     transientTypeLabel.setJustificationType(juce::Justification::centred);
     transientTypeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
@@ -6155,6 +6191,19 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     }
 
     //==============================================================================
+    // -- Waveform Menus --
+    // Last, because every dropdown this fills and every attachment it reads the
+    // selection from has to exist first -- and they are created in five different
+    // sections of this constructor. The menus then follow whatever has been
+    // imported and keep following it: the library calls back on every change.
+    rebuildWaveformMenus();
+
+    audioProcessor.getUserWaveLibrary().onChange = [this]
+    {
+        rebuildWaveformMenus();
+    };
+
+    //==============================================================================
     // -- Start Timer for LFO Rate Display Updates --
     startTimer(50);  // Update every 50ms for smooth rate display
     
@@ -6208,24 +6257,25 @@ void SpaceDustAudioProcessorEditor::rebuildWaveformMenus()
 {
     auto& library = audioProcessor.getUserWaveLibrary();
 
+    // The built-in entries, in the order the parameter declares them. Their ids
+    // are their parameter index plus one, exactly like the User slots. Taken from
+    // the menu's own current contents rather than written out again here: the
+    // built-ins were added when the box was created and never change, so reading
+    // them back is one fewer list that could fall out of step with the parameter.
     struct MenuToBuild
     {
         juce::ComboBox* combo;
         WaveformChoiceAttachment* attachment;
         int userBase;
-        const char* builtIns[4];
     };
 
-    // The built-in entries, in the order the parameter declares them. Their ids
-    // are their parameter index plus one, exactly like the User slots.
     const MenuToBuild menus[] =
     {
-        { &osc1WaveformCombo, osc1WaveformAttachment.get(), UserWave::oscUserBase,
-          { "Sine", "Triangle", "Saw", "Square" } },
-        { &osc2WaveformCombo, osc2WaveformAttachment.get(), UserWave::oscUserBase,
-          { "Sine", "Triangle", "Saw", "Square" } },
-        { &noiseColorCombo,   noiseColorAttachment.get(),   UserWave::noiseUserBase,
-          { "White", "Pink", nullptr, nullptr } },
+        { &osc1WaveformCombo,   osc1WaveformAttachment.get(),   UserWave::oscUserBase },
+        { &osc2WaveformCombo,   osc2WaveformAttachment.get(),   UserWave::oscUserBase },
+        { &subOscWaveformCombo, subOscWaveformAttachment.get(), UserWave::oscUserBase },
+        { &noiseColorCombo,     noiseColorAttachment.get(),     UserWave::noiseUserBase },
+        { &transientTypeCombo,  transientTypeAttachment.get(),  UserWave::transientUserBase },
     };
 
     for (const auto& menu : menus)
@@ -6238,10 +6288,31 @@ void SpaceDustAudioProcessorEditor::rebuildWaveformMenus()
         // since been cleared and so has no entry left to report.
         const int selectedIndex = menu.attachment->currentIndex();
 
+        // Keep the built-in names before emptying the box. They were put there
+        // when the box was created and never change, so carrying them over is
+        // one fewer copy of the list to fall out of step with the parameter.
+        juce::StringArray builtIns;
+
+        for (int i = 0; i < menu.userBase; ++i)
+        {
+            const int index = menu.combo->indexOfItemId(i + 1);
+            juce::String text = index >= 0 ? menu.combo->getItemText(index) : juce::String();
+
+            // Cannot happen: the box is filled with its built-ins when it is
+            // created, and every rebuild puts them straight back. Named anyway,
+            // because a ComboBox refuses an item with no name at all.
+            jassert(text.isNotEmpty());
+
+            if (text.isEmpty())
+                text = "Item " + juce::String(i + 1);
+
+            builtIns.add(text);
+        }
+
         menu.combo->clear(juce::dontSendNotification);
 
         for (int i = 0; i < menu.userBase; ++i)
-            menu.combo->addItem(menu.builtIns[i], i + 1);
+            menu.combo->addItem(builtIns[i], i + 1);
 
         for (int slot = 0; slot < UserWave::numSlots; ++slot)
         {
@@ -6272,7 +6343,8 @@ void SpaceDustAudioProcessorEditor::rebuildWaveformMenus()
         waveformWindow->refreshContent();
 }
 
-void SpaceDustAudioProcessorEditor::openWaveformWindow(juce::ComboBox* combo, int userBase)
+void SpaceDustAudioProcessorEditor::openWaveformWindow(juce::ComboBox* combo, int userBase,
+                                                      WaveformEditorComponent::BuiltInKind kind)
 {
     auto& library = audioProcessor.getUserWaveLibrary();
 
@@ -6285,7 +6357,7 @@ void SpaceDustAudioProcessorEditor::openWaveformWindow(juce::ComboBox* combo, in
     // sound by itself.
     const int slot = combo->getSelectedId() - 1 - userBase;
 
-    waveformWindow->showFor(combo, userBase,
+    waveformWindow->showFor(combo, userBase, kind,
                             (slot >= 0 && slot < UserWave::numSlots) ? slot : -1);
 }
 

@@ -543,10 +543,12 @@ private:
         own, so choosing a waveform in the window and choosing it in the menu are
         the same act, and the two can never disagree about what is selected.
         userBase says where that dropdown's User entries start, which differs
-        between the oscillators and the noise source. */
-    void openWaveformWindow(juce::ComboBox* combo, int userBase);
+        between the oscillators, the noise source and the Transient, and kind
+        says what the entries before them are so the window can draw them. */
+    void openWaveformWindow(juce::ComboBox* combo, int userBase,
+                            WaveformEditorComponent::BuiltInKind kind);
 
-    /** Rebuild the three waveform dropdowns from the imported waveforms.
+    /** Rebuild the five waveform dropdowns from the imported waveforms.
 
         The menus list the built-in shapes and then only the User slots that hold
         something, so the player never scrolls past entries they cannot choose.
@@ -616,11 +618,15 @@ private:
     juce::ComboBox osc2WaveformCombo;
 
     // Opens the Waveforms window, one beside each dropdown that can select an
-    // imported sample. All three open the same window; they differ only in which
-    // slot it lands on.
+    // imported sample. All five open the same window on the same eight slots;
+    // they differ only in which list is shown around them and which slot it
+    // lands on. The sub oscillator's and the Transient's live in other sections
+    // of the panel, but they are the same button doing the same thing.
     juce::TextButton osc1WaveformEditButton;
     juce::TextButton osc2WaveformEditButton;
     juce::TextButton noiseWaveformEditButton;
+    juce::TextButton subOscWaveformEditButton;
+    juce::TextButton transientTypeEditButton;
     
     // Oscillator tuning controls (simple, intuitive system)
     juce::Slider osc1CoarseTuneSlider;
@@ -1134,7 +1140,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pitchEnvTimeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pitchEnvPitchAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> subOscToggleAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> subOscWaveformAttachment;
+    std::unique_ptr<WaveformChoiceAttachment> subOscWaveformAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> subOscLevelAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> subOscCoarseAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> voiceModeAttachment;
@@ -1285,7 +1291,7 @@ private:
 
     // Transient Attachments (Saturation Color tab)
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> transientEnabledAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> transientTypeAttachment;
+    std::unique_ptr<WaveformChoiceAttachment> transientTypeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> transientMixAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> transientPostEffectAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> transientKaDonkAttachment;

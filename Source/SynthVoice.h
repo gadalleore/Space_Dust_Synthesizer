@@ -290,7 +290,7 @@ private:
     
     // Sub oscillator (one octave down)
     bool subOscOn = false;
-    int subOscWaveform = 1;          // 0=Sine, 1=Triangle, 2=Saw, 3=Square
+    int subOscWaveform = 1;          // 0=Sine, 1=Triangle, 2=Saw, 3=Square, 4+=imported waveform
     float subOscLevel = 0.5f;
     float subOscCoarse = 0.0f;      // Semitones
     double subOscAngle = 0.0;
@@ -303,16 +303,18 @@ private:
     // borrowed pointer, valid for the block it was handed over in.
     const UserWaveBank* userWaveBank = nullptr;
 
-    // Resolved once per block from the bank and the three waveform choices, so the
+    // Resolved once per block from the bank and the four waveform choices, so the
     // per-sample path is a null check rather than a lookup.
     const UserWaveSlot* osc1UserSlot = nullptr;
     const UserWaveSlot* osc2UserSlot = nullptr;
+    const UserWaveSlot* subOscUserSlot = nullptr;
     const UserWaveSlot* noiseUserSlot = nullptr;
 
     // 1.0 for the built-in shapes and for Single Cycle slots. Full Sample slots
     // stretch one turn of the phase to cover the whole file instead of one period.
     double osc1PhaseScale = 1.0;
     double osc2PhaseScale = 1.0;
+    double subOscPhaseScale = 1.0;
     double noisePhaseScale = 1.0;
 
     // The noise source has no pitch of its own, so an imported waveform in that

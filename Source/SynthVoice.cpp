@@ -749,20 +749,26 @@ void SynthVoice::refreshUserWaveSelection() noexcept
 {
     osc1UserSlot = nullptr;
     osc2UserSlot = nullptr;
+    subOscUserSlot = nullptr;
     noiseUserSlot = nullptr;
     osc1PhaseScale = 1.0;
     osc2PhaseScale = 1.0;
+    subOscPhaseScale = 1.0;
     noisePhaseScale = 1.0;
 
     if (userWaveBank == nullptr)
         return;
 
+    // The sub reads the same base as the two oscillators: it offers the same four
+    // shapes in the same order, so a slot sits at the same index in all three.
     osc1UserSlot = userWaveBank->slotForChoice(osc1Waveform, UserWave::oscUserBase);
     osc2UserSlot = userWaveBank->slotForChoice(osc2Waveform, UserWave::oscUserBase);
+    subOscUserSlot = userWaveBank->slotForChoice(subOscWaveform, UserWave::oscUserBase);
     noiseUserSlot = userWaveBank->slotForChoice(noiseType, UserWave::noiseUserBase);
 
     if (osc1UserSlot != nullptr) osc1PhaseScale = osc1UserSlot->phaseIncrementScale;
     if (osc2UserSlot != nullptr) osc2PhaseScale = osc2UserSlot->phaseIncrementScale;
+    if (subOscUserSlot != nullptr) subOscPhaseScale = subOscUserSlot->phaseIncrementScale;
     if (noiseUserSlot != nullptr) noisePhaseScale = noiseUserSlot->phaseIncrementScale;
 }
 
@@ -1382,6 +1388,11 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         
         // Update oscillator angle deltas with modulated frequencies
         double noiseWaveFreq = osc1Freq;
+        // The pitch the sub is actually running at. Kept out here so the generator
+        // below can be told the truth about it -- an imported waveform picks how
+        // much bandwidth to read from the frequency it is handed, and the sub's
+        // own Coarse knob can put it two octaves away from half of Osc 1.
+        double subOscFreq = osc1Freq * 0.5;
         if (sampleRate > 0.0)
         {
             osc1AngleDelta = (osc1Freq / sampleRate) * 2.0 * juce::MathConstants<double>::pi * osc1PhaseScale;
@@ -1389,7 +1400,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             double baseFreq = osc1Freq / osc1TuneRatio;
             double subFreq = baseFreq * 0.5 * subCoarseRatio;
             subFreq = juce::jlimit(20.0, 20000.0, subFreq);
-            subOscAngleDelta = (subFreq / sampleRate) * 2.0 * juce::MathConstants<double>::pi;
+            subOscFreq = subFreq;
+            subOscAngleDelta = (subFreq / sampleRate) * 2.0 * juce::MathConstants<double>::pi * subOscPhaseScale;
 
             // An imported waveform in the noise slot has no tuning controls of its
             // own, so it runs at the played note before Osc 1's coarse and detune
@@ -1406,7 +1418,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             // Base rate. Phases are advanced at the bottom of the loop, as always.
             osc1Sample = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq);
             osc2Sample = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq);
-            subOscSample = subOscOn ? generateWaveform(subOscAngle, subOscWaveform, nullptr, osc1Freq * 0.5) * subOscLevel : 0.0f;
+            subOscSample = subOscOn ? generateWaveform(subOscAngle, subOscWaveform, subOscUserSlot, subOscFreq) * subOscLevel : 0.0f;
         }
         else
         {
@@ -1448,7 +1460,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             {
                 subOscSample = oscSubOS.process(0, 0.0f, [&] (float) -> float
                 {
-                    const float v = generateWaveform(subOscAngle, subOscWaveform, nullptr, osc1Freq * 0.5);
+                    const float v = generateWaveform(subOscAngle, subOscWaveform, subOscUserSlot, subOscFreq);
                     subOscAngle += ds; wrap(subOscAngle);
                     return v;
                 }) * subOscLevel;
@@ -2366,7 +2378,7 @@ void SynthVoice::setSubOscOn(bool on)
 
 void SynthVoice::setSubOscWaveform(int waveform)
 {
-    subOscWaveform = juce::jlimit(0, 3, waveform);
+    subOscWaveform = juce::jlimit(0, kHighestOscWaveformIndex, waveform);
 }
 
 void SynthVoice::setSubOscLevel(float level)

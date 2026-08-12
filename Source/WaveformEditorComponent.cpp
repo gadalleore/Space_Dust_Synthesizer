@@ -36,10 +36,13 @@ namespace
     constexpr int groupPadding = 10;
     constexpr int statusHeight = 22;
 
-    /** The list area is always tall enough for every row it could ever hold, so
-        the window does not change size as waveforms are imported and cleared. The
-        space under the last row is not wasted -- it is the drop zone. */
-    constexpr int maxRows = UserWave::oscUserBase + UserWave::numSlots;
+    /** The list area is always tall enough for every row THIS list could hold, so
+        it does not change size as waveforms are imported and cleared. The space
+        under the last row is not wasted -- it is the drop zone. */
+    int maxRowsFor (int userBase)
+    {
+        return userBase + UserWave::numSlots;
+    }
 
     juce::String modeName (UserWave::Mode mode)
     {
@@ -66,6 +69,17 @@ namespace
             default: return 0.0f;
         }
     }
+
+    /** How loud a drum is, as a fraction of the way through its hit.
+
+        The ten built-in drums have no waveform to draw and no two of them look
+        alike, so the row shows the one thing they all are: a burst that starts
+        at full and falls away. Drawing a specific shape would be a guess; this
+        is what a scope would show of any of them at this size. */
+    float drumEnvelopeValue (double across)
+    {
+        return (float) std::exp (-4.5 * juce::jlimit (0.0, 1.0, across));
+    }
 }
 
 //==============================================================================
@@ -74,9 +88,9 @@ int WaveformEditorComponent::preferredWidth()
     return margin + listWidth + margin + detailWidth + margin;
 }
 
-int WaveformEditorComponent::preferredHeight()
+int WaveformEditorComponent::preferredHeight (int userBase)
 {
-    return margin + groupTitleInset + maxRows * rowHeight + groupPadding
+    return margin + groupTitleInset + maxRowsFor (userBase) * rowHeight + groupPadding
          + margin + statusHeight + margin;
 }
 
@@ -85,7 +99,7 @@ WaveformEditorComponent::WaveformEditorComponent (UserWaveLibrary& libraryToUse,
                                                   SpaceDustLookAndFeel& lookAndFeelToUse)
     : library (libraryToUse), lookAndFeel (lookAndFeelToUse)
 {
-    setSize (preferredWidth(), preferredHeight());
+    setSize (preferredWidth(), preferredHeight (userBase));
 
     // One call and every button, editor and group in here is drawn by the same
     // code that draws the main panel -- same fonts, same cyan, same rounded
@@ -166,10 +180,16 @@ WaveformEditorComponent::~WaveformEditorComponent()
 }
 
 //==============================================================================
-void WaveformEditorComponent::setTarget (juce::ComboBox* combo, int base)
+void WaveformEditorComponent::setTarget (juce::ComboBox* combo, int base, BuiltInKind kind)
 {
     targetCombo = combo;
     userBase = base;
+    builtInKind = kind;
+
+    // A list with more built-ins needs more room for them. The window follows
+    // this; see WaveformEditorWindow::showFor.
+    setSize (preferredWidth(), preferredHeight (userBase));
+
     refresh();
 }
 
@@ -602,7 +622,7 @@ void WaveformEditorComponent::paintRowWaveform (juce::Graphics& g, juce::Rectang
     //==========================================================================
     // Noise has no repeating shape. Drawing one would be a lie, so it gets a
     // scatter that reads as noise at a glance instead.
-    if (slot < 0 && userBase == UserWave::noiseUserBase)
+    if (slot < 0 && builtInKind == BuiltInKind::Noise)
     {
         juce::Random random (row == 0 ? 1234 : 5678);
 
@@ -615,6 +635,25 @@ void WaveformEditorComponent::paintRowWaveform (juce::Graphics& g, juce::Rectang
             const float px = (float) (area.getX() + x);
 
             g.drawLine (px, centreY, px, centreY - value * halfHeight, thickness);
+        }
+
+        return;
+    }
+
+    //==========================================================================
+    // A drum has no repeating shape either. It gets the outline of a hit: full
+    // at the front, gone by the end. See drumEnvelopeValue.
+    if (slot < 0 && builtInKind == BuiltInKind::Drums)
+    {
+        const int width = area.getWidth();
+
+        for (int x = 0; x < width; ++x)
+        {
+            const double across = (double) x / (double) juce::jmax (1, width - 1);
+            const float value = drumEnvelopeValue (across) * halfHeight;
+            const float px = (float) (area.getX() + x);
+
+            g.drawLine (px, centreY - value, px, centreY + value, thickness * 0.7f);
         }
 
         return;
@@ -800,9 +839,22 @@ void WaveformEditorComponent::paintDetail (juce::Graphics& g)
     if (entry == nullptr)
     {
         detail = "Built in, always available";
-        note = (userBase == UserWave::noiseUserBase)
-             ? "One of the two noise colours. Nothing to import or change here."
-             : "One of the four basic shapes. Always in tune, at every pitch.";
+
+        switch (builtInKind)
+        {
+            case BuiltInKind::Noise:
+                note = "One of the two noise colours. Nothing to import or change here.";
+                break;
+
+            case BuiltInKind::Drums:
+                note = "One of the ten synthesised drums. Nothing to import or change here.";
+                break;
+
+            case BuiltInKind::Shapes:
+            default:
+                note = "One of the four basic shapes. Always in tune, at every pitch.";
+                break;
+        }
     }
     else
     {
@@ -921,11 +973,18 @@ void WaveformEditorWindow::allowFileDropsFromLowerPrivilege()
 #endif
 }
 
-void WaveformEditorWindow::showFor (juce::ComboBox* targetCombo, int userBase, int slotIndex)
+void WaveformEditorWindow::showFor (juce::ComboBox* targetCombo, int userBase,
+                                    WaveformEditorComponent::BuiltInKind kind, int slotIndex)
 {
     if (content != nullptr)
     {
-        content->setTarget (targetCombo, userBase);
+        content->setTarget (targetCombo, userBase, kind);
+
+        // The list that opened this may be longer or shorter than the last one,
+        // and the content has just resized itself to suit. The window has to
+        // follow, or the rows past the old bottom would have nowhere to be drawn.
+        // Size only: where the player put the window is theirs to keep.
+        setContentComponentSize (content->getWidth(), content->getHeight());
 
         // Only jump to a slot that has something in it. Opening the window must
         // never change the sound by itself.

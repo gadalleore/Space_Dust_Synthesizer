@@ -32,6 +32,23 @@ class WaveformEditorComponent : public juce::Component,
                                 public juce::FileDragAndDropTarget
 {
 public:
+    /** What sits above the import slots in the list that opened this window.
+
+        Only drawing depends on it. An imported row is drawn from what was
+        imported, but a built-in row has no data behind it, so its picture has to
+        be known in advance -- and the four oscillator shapes, the two noise
+        colours and the ten drums are three different kinds of picture.
+
+        Told to the window rather than worked out from userBase, so that a fourth
+        list can never quietly inherit the wrong drawing by happening to have the
+        same number of built-ins as one of these. */
+    enum class BuiltInKind
+    {
+        Shapes,   // Sine, Triangle, Saw, Square -- the oscillators and the sub
+        Noise,    // White and Pink
+        Drums     // the ten 808 and 909 hits
+    };
+
     WaveformEditorComponent (UserWaveLibrary& library, SpaceDustLookAndFeel& lookAndFeel);
     ~WaveformEditorComponent() override;
 
@@ -54,8 +71,9 @@ public:
         lists to disagree about what is selected.
 
         userBase is where that dropdown's User entries start, which is also how
-        many built-in entries it has in front of them. */
-    void setTarget (juce::ComboBox* targetCombo, int userBase);
+        many built-in entries it has in front of them, and kind says what those
+        entries are so they can be drawn. */
+    void setTarget (juce::ComboBox* targetCombo, int userBase, BuiltInKind kind);
 
     /** Show and select the given import slot. */
     void selectSlot (int slotIndex);
@@ -63,10 +81,18 @@ public:
     /** Rebuild every control from the library and the target dropdown. */
     void refresh();
 
-    /** Widest the window ever needs to be, so it does not resize when opened from
-        a dropdown with a different number of built-in shapes. */
+    /** Widest the window ever needs to be, so it does not change width when
+        opened from a dropdown with a different number of built-in entries. */
     static int preferredWidth();
-    static int preferredHeight();
+
+    /** Tall enough for every row this list could ever hold: its built-ins plus
+        all eight import slots.
+
+        Height DOES follow the list, unlike width. The oscillators have four
+        built-in shapes and the Transient has ten, and a window sized for ten
+        would stand two thirds empty every time it was opened on an oscillator.
+        The space under the last row is not wasted -- it is the drop zone. */
+    static int preferredHeight (int userBase);
 
 private:
     //==========================================================================
@@ -127,9 +153,12 @@ private:
 
     juce::ComboBox* targetCombo = nullptr;
 
-    /** Built-in entries in front of the import slots: 4 for the oscillators
-        (Sine, Triangle, Saw, Square), 2 for the noise source (White, Pink). */
+    /** Built-in entries in front of the import slots: 4 for the oscillators and
+        the sub (Sine, Triangle, Saw, Square), 2 for the noise source (White,
+        Pink), 10 for the Transient (the 808 and 909 drums). */
     int userBase = UserWave::oscUserBase;
+
+    BuiltInKind builtInKind = BuiltInKind::Shapes;
 
     /** Import slot the detail panel acts on. Held apart from the row selection so
         that showing a built-in still leaves a sensible target for a dropped file. */
@@ -171,7 +200,8 @@ public:
     void closeButtonPressed() override { setVisible (false); }
 
     /** Bring the window up, pointed at the dropdown that asked for it. */
-    void showFor (juce::ComboBox* targetCombo, int userBase, int slotIndex);
+    void showFor (juce::ComboBox* targetCombo, int userBase,
+                  WaveformEditorComponent::BuiltInKind kind, int slotIndex);
 
     /** Redraw after the library changed under it. */
     void refreshContent();

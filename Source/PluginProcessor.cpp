@@ -1503,6 +1503,11 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // during GUI edits -- which is exactly when an import lands.
     userWaveLibrary.exchangeBank(audioUserWaveBank);
 
+    // The Transient can play an imported sample as its hit, so it needs the same
+    // set the voices get. Handed over here, before anything can trigger it, and
+    // for this block only -- it never keeps the pointer.
+    transient_.setUserWaveBank(audioUserWaveBank);
+
     //==============================================================================
     // -- CRITICAL: Bulletproof Buffer Guard for Ableton/Reaper Compatibility --
     // 
@@ -3568,10 +3573,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{"subOscOn", 1}, "Sub Oscillator", false),
         safeString("subOscOn"));
+    // The same list as Osc 1 and Osc 2, User slots and all: the sub plays a
+    // waveform exactly as they do, so there is no reason it should be offered a
+    // smaller choice of them.
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"subOscWaveform", 1}, "Sub Osc Waveform",
-            juce::StringArray(safeString("Sine"), safeString("Triangle"), safeString("Saw"), safeString("Square")), 1),
+            waveformChoices, 1),
         safeString("subOscWaveform"));
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -4318,12 +4326,32 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{"transientEnabled", 1}, "Transient On", false),
         "transientEnabled");
+    // The ten drums, then the same eight User slots the oscillators offer, for
+    // the same reason and on the same terms: the count can never change, and the
+    // ten built-ins keep their positions so every preset written before this
+    // still picks the drum it always picked. Choosing a User slot plays that
+    // sample as the hit instead of a synthesised drum.
+    juce::StringArray transientChoices;
+    transientChoices.add(safeString("808 Kick"));
+    transientChoices.add(safeString("808 Snare"));
+    transientChoices.add(safeString("808 Hat"));
+    transientChoices.add(safeString("808 Open Hat"));
+    transientChoices.add(safeString("808 Clap"));
+    transientChoices.add(safeString("808 Tom"));
+    transientChoices.add(safeString("808 Rim"));
+    transientChoices.add(safeString("808 Cowbell"));
+    transientChoices.add(safeString("909 Kick"));
+    transientChoices.add(safeString("909 Snare"));
+
+    jassert(transientChoices.size() == UserWave::transientUserBase);
+
+    for (int i = 1; i <= UserWave::numSlots; ++i)
+        transientChoices.add("User " + juce::String(i));
+
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"transientType", 1}, "Transient Type",
-            juce::StringArray("808 Kick", "808 Snare", "808 Hat", "808 Open Hat",
-                              "808 Clap", "808 Tom", "808 Rim", "808 Cowbell",
-                              "909 Kick", "909 Snare"), 0),
+            transientChoices, 0),
         safeString("transientType"));
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(

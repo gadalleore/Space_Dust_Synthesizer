@@ -49,12 +49,27 @@ namespace UserWave
     inline constexpr int numSlots = 8;
 
     /** First dropdown index that means "user slot" for the two oscillators.
-        0-3 are Sine, Triangle, Saw and Square. */
+        0-3 are Sine, Triangle, Saw and Square.
+
+        The sub oscillator shares this base, because it offers the same four
+        shapes in the same order and plays them through the same code. */
     inline constexpr int oscUserBase = 4;
 
     /** First dropdown index that means "user slot" for the noise source.
         0-1 are White and Pink. */
     inline constexpr int noiseUserBase = 2;
+
+    /** First dropdown index that means "user slot" for the Transient effect.
+        0-9 are the ten built-in 808 and 909 drums.
+
+        Written here rather than taken from SpaceDustTransient::NumTypes so that
+        this header stays free of the effect; SpaceDustTransient.cpp holds a
+        static_assert that the two agree. */
+    inline constexpr int transientUserBase = 10;
+
+    /** The largest of the bases above, so anything that has to be big enough for
+        every list -- the Waveforms window's row area -- can be sized once. */
+    inline constexpr int maxUserBase = transientUserBase;
 
     /** Longest sample kept for Full Sample mode. Past this the file is truncated,
         because eight slots of unbounded audio would be unbounded memory in every

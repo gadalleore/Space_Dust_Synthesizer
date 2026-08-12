@@ -31,7 +31,35 @@ namespace
     {
         return std::pow(2.0f, semitones / 12.0f);
     }
+
+    // The fade that closes an imported hit, in seconds.
+    constexpr double kUserTailFadeSec = 0.005;
+
+    // Linear read of a raw sample buffer. Deliberately not UserWaveSlot::read:
+    // that one starts at the loop point and crossfades the seam, which is right
+    // for a sustained oscillator and wrong for a one-shot, where the first
+    // milliseconds are the attack and there is no seam to hide.
+    inline float readSample(const std::vector<float>& data, double position)
+    {
+        const int size = static_cast<int>(data.size());
+
+        if (size <= 0 || position < 0.0 || position >= static_cast<double>(size - 1))
+            return 0.0f;
+
+        const int index = static_cast<int>(position);
+        const float fraction = static_cast<float>(position - static_cast<double>(index));
+
+        return data[static_cast<std::size_t>(index)]
+             + fraction * (data[static_cast<std::size_t>(index + 1)]
+                           - data[static_cast<std::size_t>(index)]);
+    }
 }
+
+// The drum list and the dropdown must agree on where the User slots begin, or a
+// preset would select the wrong sound. Neither header can include the other, so
+// the agreement is checked here, where both are visible.
+static_assert(SpaceDustTransient::NumTypes == UserWave::transientUserBase,
+              "UserWave::transientUserBase must be the number of built-in drums");
 
 //==============================================================================
 void SpaceDustTransient::prepare(const juce::dsp::ProcessSpec& spec)
@@ -72,6 +100,10 @@ void SpaceDustTransient::reset()
     clapBurstCount_ = 0;
     clapBurstTimer_ = 0;
     clapBurstEnv_ = 0.0f;
+    userPos_ = 0.0;
+    userRate_ = 0.0;
+    userFadeStart_ = 0.0;
+    userFadeLength_ = 0.0;
     bpFilter_.reset();
     hpFilter_.reset();
 }
@@ -113,7 +145,88 @@ void SpaceDustTransient::trigger(int midiNoteNumber)
     bpFilter_.reset();
     hpFilter_.reset();
 
+    // A User type has no synthesised drum behind it, so it takes the other path
+    // entirely. If the slot is empty the note simply makes no transient, which is
+    // what the dropdown already showed the player by naming the slot "missing".
+    if (const auto* slot = resolveUserSlot())
+    {
+        initUserSlot(*slot);
+        return;
+    }
+
+    userPos_ = 0.0;
+    userRate_ = 0.0;
+
     initDrumEnvelopes(params_.type);
+}
+
+//==============================================================================
+const UserWaveSlot* SpaceDustTransient::resolveUserSlot() const noexcept
+{
+    if (userWaveBank_ == nullptr)
+        return nullptr;
+
+    return userWaveBank_->slotForChoice(params_.type, UserWave::transientUserBase);
+}
+
+void SpaceDustTransient::initUserSlot(const UserWaveSlot& slot)
+{
+    const double sr = sampleRate_ > 0.0 ? sampleRate_ : 44100.0;
+
+    // The knob curve the drums use, so Length feels the same wherever it is
+    // pointed. See initDrumEnvelopes.
+    const float len = juce::jmax(0.02f, params_.length * params_.length);
+
+    userPos_ = 0.0;
+    pitchEnv_ = 0.0f;
+    pitchDecayRate_ = 0.0f;
+    noiseEnv_ = 0.0f;
+    noiseDecayRate_ = 0.0f;
+    ampEnv_ = 1.0f;
+
+    if (slot.mode == UserWave::Mode::SingleCycle)
+    {
+        // One period, so there is no end to run into: the sound is a pitched
+        // burst at the played note, closed by the envelope alone. 0.30 s at
+        // Length 1 puts it alongside the open hat and the tom.
+        userRate_ = static_cast<double>(noteFreq_) / sr;
+        userFadeStart_ = 0.0;
+        userFadeLength_ = 0.0;
+        ampDecayRate_ = std::exp(-1.0f / (static_cast<float>(sr) * 0.30f * len));
+        return;
+    }
+
+    // Full Sample. The file is played at the speed that puts its recorded pitch
+    // on the played note -- the same tuning rule the oscillators follow, so a
+    // sample sounds the same wherever it is used. A file with no pitch worth
+    // trusting was never re-tuned, and middle C plays it at its recorded speed.
+    const double rootHz = (slot.retuned && slot.fundamentalHz > 0.0)
+                        ? slot.fundamentalHz
+                        : WaveAnalysis::middleCHz;
+
+    const double fileRate = slot.fileSampleRate > 0.0 ? slot.fileSampleRate : sr;
+
+    userRate_ = (static_cast<double>(noteFreq_) / rootHz) * (fileRate / sr);
+
+    const double size = static_cast<double>(slot.sample.size());
+    userFadeLength_ = juce::jmin(kUserTailFadeSec * fileRate, size * 0.25);
+    userFadeStart_ = juce::jmax(0.0, size - 1.0 - userFadeLength_);
+
+    // Length 1 is the file as it was recorded, untouched. Below that a decay
+    // closes it down, its time constant a fraction of the file's own duration --
+    // so the knob shortens the hit by the same proportion whatever was imported.
+    if (params_.length >= 0.999f || userRate_ <= 0.0)
+    {
+        ampDecayRate_ = 1.0f;
+    }
+    else
+    {
+        // How long this hit lasts as it will actually be played: the file is
+        // consumed userRate_ samples at a time, one output sample at a time.
+        const double durationSec = size / userRate_ / sr;
+        const float base = juce::jmax(0.005f, static_cast<float>(durationSec));
+        ampDecayRate_ = std::exp(-1.0f / (static_cast<float>(sr) * base * len));
+    }
 }
 
 void SpaceDustTransient::initDrumEnvelopes(int type)
@@ -518,6 +631,53 @@ float SpaceDustTransient::generateSnare909()
 }
 
 //==============================================================================
+// An imported sample, played once. Nothing here is a drum: the file IS the sound,
+// and the only shaping is the tail the Length knob asked for.
+float SpaceDustTransient::generateUserSlot(const UserWaveSlot& slot)
+{
+    float value = 0.0f;
+
+    if (slot.mode == UserWave::Mode::SingleCycle)
+    {
+        // A pitched burst. The phase wraps, so this ends only when the envelope
+        // does -- which is why Length always applies a decay in this mode.
+        userPos_ -= std::floor(userPos_);
+        value = slot.read(userPos_, static_cast<double>(noteFreq_), sampleRate_);
+        userPos_ += userRate_;
+    }
+    else
+    {
+        const double size = static_cast<double>(slot.sample.size());
+
+        if (userPos_ >= size - 1.0 || userRate_ <= 0.0)
+        {
+            // Run off the end. Report it the way every drum reports being over,
+            // so process() stops on its next block without a second flag to keep
+            // in step with this one.
+            ampEnv_ = 0.0f;
+            return 0.0f;
+        }
+
+        value = readSample(slot.sample, userPos_);
+
+        // Close the last few milliseconds down. A file almost never ends on a
+        // zero crossing, and stopping mid-swing is a click on every note.
+        if (userFadeLength_ > 0.0 && userPos_ > userFadeStart_)
+        {
+            const double through = (userPos_ - userFadeStart_) / userFadeLength_;
+            value *= static_cast<float>(juce::jlimit(0.0, 1.0, 1.0 - through));
+        }
+
+        userPos_ += userRate_;
+    }
+
+    value *= ampEnv_;
+    ampEnv_ *= ampDecayRate_;
+
+    return value;
+}
+
+//==============================================================================
 void SpaceDustTransient::process(juce::AudioBuffer<float>& buffer)
 {
     if (!params_.enabled || !triggered_)
@@ -534,25 +694,45 @@ void SpaceDustTransient::process(juce::AudioBuffer<float>& buffer)
         return;
     }
 
+    // Looked up here, once per block, and never held across one: the bank this
+    // points into is replaced whole when the player imports something, and the
+    // one it replaced is freed on the message thread. If the slot went away mid
+    // hit -- cleared, or its mode changed -- the hit stops rather than reading
+    // memory that has been handed back.
+    const UserWaveSlot* userSlot = resolveUserSlot();
+
+    if (params_.type >= UserWave::transientUserBase && userSlot == nullptr)
+    {
+        triggered_ = false;
+        return;
+    }
+
     for (int i = 0; i < numSamples; ++i)
     {
         const float mix = smoothedMix_.getNextValue();
 
         float sample = 0.0f;
 
-        switch (params_.type)
+        if (userSlot != nullptr)
         {
-            case Kick808:     sample = generateKick808();     break;
-            case Snare808:    sample = generateSnare808();    break;
-            case ClosedHat808:sample = generateClosedHat808();break;
-            case OpenHat808:  sample = generateOpenHat808();  break;
-            case Clap808:     sample = generateClap808();     break;
-            case Tom808:      sample = generateTom808();      break;
-            case Rim808:      sample = generateRim808();      break;
-            case Cowbell808:  sample = generateCowbell808();  break;
-            case Kick909:     sample = generateKick909();     break;
-            case Snare909:    sample = generateSnare909();    break;
-            default: break;
+            sample = generateUserSlot(*userSlot);
+        }
+        else
+        {
+            switch (params_.type)
+            {
+                case Kick808:     sample = generateKick808();     break;
+                case Snare808:    sample = generateSnare808();    break;
+                case ClosedHat808:sample = generateClosedHat808();break;
+                case OpenHat808:  sample = generateOpenHat808();  break;
+                case Clap808:     sample = generateClap808();     break;
+                case Tom808:      sample = generateTom808();      break;
+                case Rim808:      sample = generateRim808();      break;
+                case Cowbell808:  sample = generateCowbell808();  break;
+                case Kick909:     sample = generateKick909();     break;
+                case Snare909:    sample = generateSnare909();    break;
+                default: break;
+            }
         }
 
         sample *= mix;
