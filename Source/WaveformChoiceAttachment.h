@@ -31,8 +31,10 @@
 
     The one case the caller must handle is a parameter pointing at a slot that is
     now empty: there is no item to select, so the box would go blank. See
-    SpaceDustAudioProcessorEditor::rebuildWaveformMenus, which keeps that one
-    entry visible rather than letting the selection disappear.
+    SpaceDustAudioProcessorEditor::rebuildWaveformMenus, which steps the selection
+    back to the nearest entry that exists and writes that to the parameter -- an
+    empty slot plays a plain sine, so leaving the parameter there would mean the
+    menu naming one thing while another is heard.
 */
 class WaveformChoiceAttachment : private juce::ComboBox::Listener
 {

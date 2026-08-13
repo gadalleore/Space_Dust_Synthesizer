@@ -6118,26 +6118,51 @@ void SpaceDustAudioProcessorEditor::rebuildWaveformMenus()
         for (int slot = 0; slot < UserWave::numSlots; ++slot)
         {
             const int id = menu.userBase + slot + 1;
-            const bool filled = library.bank().slot(menu.group, slot).isPlayable();
 
-            if (filled)
-            {
+            if (library.bank().slot(menu.group, slot).isPlayable())
                 menu.combo->addItem(library.choiceNameForSlot(menu.group, slot), id);
-            }
-            else if (selectedIndex == id - 1)
+        }
+
+        //======================================================================
+        // Where the parameter points, and whether the menu has an entry for it.
+        //
+        // It may not: a song can be opened whose imported waveforms did not
+        // travel with it -- a Full Sample slot whose copy is gone from the
+        // Wavetables folder, or a preset written on another machine.
+        //
+        // That case used to add an entry reading "User n (missing)", on the
+        // grounds that it kept the state visible and recoverable. That reasoning
+        // does not survive contact with what is actually heard: a choice
+        // pointing at an empty slot resolves to a null slot, and
+        // SynthVoice::generateWaveform falls through to `default: sin(angle)`.
+        // So the oscillator was ALREADY playing a plain sine while the menu
+        // announced a waveform that was missing -- the state was neither
+        // preserved nor recoverable, only mislabelled.
+        //
+        // Stepping back to the nearest entry that does exist at least makes the
+        // menu agree with the sound. Item id 1 is always a built-in and always
+        // present, so the search below cannot fall off the end.
+        int idToSelect = selectedIndex + 1;
+        const bool haveEntry = menu.combo->indexOfItemId(idToSelect) >= 0;
+
+        if (! haveEntry)
+        {
+            for (int id = idToSelect - 1; id >= 1; --id)
             {
-                // This slot is empty but the parameter still points at it, which
-                // happens when a song is loaded whose waveforms did not come with
-                // it. Showing the entry keeps the state visible and recoverable;
-                // dropping it would leave the box blank with nothing to explain
-                // why there is no sound.
-                menu.combo->addItem("User " + juce::String(slot + 1) + " (missing)", id);
+                if (menu.combo->indexOfItemId(id) >= 0)
+                {
+                    idToSelect = id;
+                    break;
+                }
             }
         }
 
-        // dontSendNotification: restoring what the parameter already says, so
-        // writing it back would be a redundant gesture in the host's undo history.
-        menu.combo->setSelectedId(selectedIndex + 1, juce::dontSendNotification);
+        // sendNotificationSync only when the selection had to MOVE, so the
+        // parameter follows the menu. When it did not, dontSendNotification:
+        // writing back what the parameter already says would be a redundant
+        // gesture in the host's undo history.
+        menu.combo->setSelectedId(idToSelect, haveEntry ? juce::dontSendNotification
+                                                        : juce::sendNotificationSync);
     }
 
     if (waveformWindow != nullptr)
