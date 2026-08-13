@@ -55,10 +55,76 @@ namespace
             v *= gain;
     }
 
-    juce::String sanitiseFileName (const juce::String& name)
+    //==========================================================================
+    // -- The audio a slot keeps --
+    //
+    // A slot carries the audio it was built from, compressed, and that is the only
+    // place it is kept: nothing is copied into the user's folders, so importing a
+    // hundred files leaves nothing behind but the slots that hold them.
+    //
+    // FLAC at 16 bits. It is about half the size of the raw samples, so fifteen
+    // seconds -- the most a slot ever keeps -- costs roughly a megabyte inside a
+    // preset instead of three, and a short file costs almost nothing. 16 bits
+    // rather than 24 for the same reason; the noise floor it puts under an
+    // imported sample is far below anything the synth then does to it.
+
+    juce::MemoryBlock encodeSlotAudio (const std::vector<float>& mono, double sampleRate)
     {
-        auto cleaned = juce::File::createLegalFileName (name);
-        return cleaned.isEmpty() ? juce::String ("sample") : cleaned;
+        juce::MemoryBlock block;
+
+        if (mono.empty() || sampleRate <= 0.0)
+            return block;
+
+        juce::FlacAudioFormat flac;
+
+        // The writer takes the stream: released to it below, deleted with it.
+        auto stream = std::make_unique<juce::MemoryOutputStream> (block, false);
+
+        std::unique_ptr<juce::AudioFormatWriter> writer (
+            flac.createWriterFor (stream.get(), sampleRate, 1, 16, {}, 0));
+
+        if (writer == nullptr)
+            return {};
+
+        stream.release();
+
+        const float* channels[1] = { mono.data() };
+
+        if (! writer->writeFromFloatArrays (channels, 1, (int) mono.size()))
+        {
+            writer.reset();
+            return {};
+        }
+
+        writer.reset();   // finishes the stream, so the block is complete here
+        return block;
+    }
+
+    bool decodeSlotAudio (const juce::MemoryBlock& block, std::vector<float>& mono,
+                          double& sampleRate)
+    {
+        if (block.getSize() == 0)
+            return false;
+
+        juce::FlacAudioFormat flac;
+
+        std::unique_ptr<juce::AudioFormatReader> reader (
+            flac.createReaderFor (new juce::MemoryInputStream (block, false), true));
+
+        if (reader == nullptr || reader->sampleRate <= 0.0 || reader->lengthInSamples <= 0)
+            return false;
+
+        const auto cap = (juce::int64) (UserWave::maxSampleSeconds * reader->sampleRate);
+        const int length = (int) juce::jmin (reader->lengthInSamples, cap);
+
+        juce::AudioBuffer<float> buffer (1, length);
+
+        if (! reader->read (&buffer, 0, length, 0, true, true))
+            return false;
+
+        sampleRate = reader->sampleRate;
+        mono.assign (buffer.getReadPointer (0), buffer.getReadPointer (0) + length);
+        return true;
     }
 }
 
@@ -378,40 +444,27 @@ bool UserWaveLibrary::importFile (const juce::File& file, UserWave::Group group,
     if (! readFileAsMono (file, mono, sampleRate, errorMessage))
         return false;
 
-    // Keep our own copy before anything else. A song saved today has to still
-    // load when the user has tidied their Downloads folder.
-    auto folder = wavetableFolder().getChildFile ("Samples");
-    folder.createDirectory();
-
-    // The list's tag leads the name, because slot 3 of the Transient and slot 3
-    // of Oscillator 1 are now different slots and can hold different files.
-    const auto copyName = juce::String (UserWave::groupTag (group))
-                        + "_slot" + juce::String (slotIndex + 1) + "_"
-                        + sanitiseFileName (file.getFileNameWithoutExtension())
-                        + file.getFileExtension();
-
-    auto destination = folder.getChildFile (copyName);
-
-    if (destination != file)
-    {
-        destination.deleteFile();
-
-        if (! file.copyFileTo (destination))
-        {
-            errorMessage = "Could not copy the file into the Wavetables folder.";
-            return false;
-        }
-    }
-
     auto& slot = editable->editableSlot (group, slotIndex);
     slot.name = file.getFileNameWithoutExtension();
-    slot.sourceFile = copyName;
+    slot.sourceFile = file.getFileName();
 
     buildSlot (slot, mono, sampleRate, mode);
 
     if (! slot.active)
     {
         errorMessage = "Nothing pitched could be found in that file.";
+        clearSlot (group, slotIndex);
+        return false;
+    }
+
+    // The slot keeps the audio, not the user's disk: the imported file is never
+    // copied anywhere, and this is what a preset, a saved song and a later change
+    // of Mode are all built from. Encoded after buildSlot, which does not touch it.
+    slot.encodedAudio = encodeSlotAudio (mono, sampleRate);
+
+    if (slot.encodedAudio.getSize() == 0)
+    {
+        errorMessage = "That file could not be stored in the slot.";
         clearSlot (group, slotIndex);
         return false;
     }
@@ -442,17 +495,27 @@ bool UserWaveLibrary::setSlotMode (UserWave::Group group, int slotIndex, UserWav
     if (slot.mode == mode)
         return true;
 
-    // Both modes are built from the source audio, and only one of them is kept in
-    // memory at a time, so switching means reading the copy again.
-    auto source = wavetableFolder().getChildFile ("Samples").getChildFile (slot.sourceFile);
-
+    // Both modes are built from the same audio and only one of them is held ready
+    // to play, so switching means decoding the slot's own copy again. It is in the
+    // slot, so this works with the imported file long gone.
     std::vector<float> mono;
     double sampleRate = 0.0;
 
-    if (! readFileAsMono (source, mono, sampleRate, errorMessage))
+    if (! decodeSlotAudio (slot.encodedAudio, mono, sampleRate))
     {
-        errorMessage = "The copy of \"" + slot.name + "\" is missing, so it cannot be rebuilt.";
-        return false;
+        // Only reachable for a slot imported before the audio travelled with it,
+        // whose file in the Wavetables folder has since been removed.
+        auto legacy = wavetableFolder().getChildFile ("Samples").getChildFile (slot.sourceFile);
+
+        if (! readFileAsMono (legacy, mono, sampleRate, errorMessage))
+        {
+            errorMessage = "The audio for \"" + slot.name + "\" is missing, so it cannot be rebuilt.";
+            return false;
+        }
+
+        // Take it into the slot while we have it, so this is the last time it is
+        // ever looked for on disk.
+        slot.encodedAudio = encodeSlotAudio (mono, sampleRate);
     }
 
     buildSlot (slot, mono, sampleRate, mode);
@@ -598,14 +661,25 @@ std::unique_ptr<juce::XmlElement> UserWaveLibrary::createStateXml() const
 
             // Only the richest table is stored. The other ten are a transform
             // away, and eight kilobytes per slot is small enough to sit inside a
-            // preset -- which is what makes a Single Cycle waveform travel with
-            // the song.
+            // preset -- which is what makes a Single Cycle waveform load without
+            // having to decode the audio below.
             if (slot.mode == UserWave::Mode::SingleCycle && ! slot.tables.empty())
             {
                 juce::MemoryOutputStream encoded;
                 juce::Base64::convertToBase64 (encoded, slot.tables.data(),
                                                sizeof (float) * (std::size_t) WaveAnalysis::tableSize);
                 element->setAttribute ("table", encoded.toString());
+            }
+
+            // The audio itself, so the waveform travels whole. This is what makes a
+            // preset self contained -- in either mode, on any machine, with the
+            // imported file long since deleted.
+            if (slot.encodedAudio.getSize() > 0)
+            {
+                juce::MemoryOutputStream encoded;
+                juce::Base64::convertToBase64 (encoded, slot.encodedAudio.getData(),
+                                               slot.encodedAudio.getSize());
+                element->setAttribute ("audio", encoded.toString());
             }
         }
     }
@@ -626,54 +700,76 @@ void UserWaveLibrary::restoreSlotFromXml (const juce::XmlElement& element, UserW
     slot.pitchLabel = element.getStringAttribute ("pitchLabel");
     slot.retuned = element.getBoolAttribute ("retuned", false);
 
+    // The slot's own audio, written by everything saved from this version on. It
+    // is kept whatever the mode is, because it is what a later change of mode is
+    // rebuilt from.
+    if (const auto stored = element.getStringAttribute ("audio"); stored.isNotEmpty())
+    {
+        juce::MemoryOutputStream decoded;
+
+        if (juce::Base64::convertFromBase64 (decoded, stored))
+            slot.encodedAudio.append (decoded.getData(), decoded.getDataSize());
+    }
+
     if (slot.mode == UserWave::Mode::SingleCycle)
     {
         const auto encoded = element.getStringAttribute ("table");
 
-        if (encoded.isEmpty())
-            return;
+        if (encoded.isNotEmpty())
+        {
+            juce::MemoryOutputStream decoded;
 
-        juce::MemoryOutputStream decoded;
+            if (juce::Base64::convertFromBase64 (decoded, encoded)
+                && decoded.getDataSize() == sizeof (float) * (std::size_t) WaveAnalysis::tableSize)
+            {
+                // Rebuild the ladder rather than storing it. Reading the harmonics
+                // back out of the stored table is exact, so this loses nothing.
+                std::vector<float> table ((std::size_t) WaveAnalysis::tableSize);
+                std::memcpy (table.data(), decoded.getData(), decoded.getDataSize());
 
-        if (! juce::Base64::convertFromBase64 (decoded, encoded))
-            return;
+                const auto harmonics = WaveAnalysis::harmonicsFromTable (table.data());
 
-        if (decoded.getDataSize() != sizeof (float) * (std::size_t) WaveAnalysis::tableSize)
-            return;
+                slot.tables.resize ((std::size_t) (WaveAnalysis::mipLevels * WaveAnalysis::tableSize));
+                WaveAnalysis::renderMipmaps (harmonics, slot.tables.data());
 
-        // Rebuild the ladder rather than storing it. Reading the harmonics
-        // back out of the stored table is exact, so this loses nothing.
-        std::vector<float> table ((std::size_t) WaveAnalysis::tableSize);
-        std::memcpy (table.data(), decoded.getData(), decoded.getDataSize());
+                slot.active = true;
+                return;
+            }
+        }
 
-        const auto harmonics = WaveAnalysis::harmonicsFromTable (table.data());
-
-        slot.tables.resize ((std::size_t) (WaveAnalysis::mipLevels * WaveAnalysis::tableSize));
-        WaveAnalysis::renderMipmaps (harmonics, slot.tables.data());
-
-        slot.active = true;
-        return;
+        // No usable table: fall through and rebuild the whole slot from the audio.
     }
 
-    // A whole sample is too big to carry inside a song, so it is reloaded from
-    // the copy kept in the Wavetables folder. A song moved to a different
-    // machine needs that folder to come with it.
-    auto source = wavetableFolder().getChildFile ("Samples").getChildFile (slot.sourceFile);
-
+    // Rebuild from the slot's own audio. Nothing on disk is consulted, so this
+    // works on a machine that has never seen the file the slot came from.
     std::vector<float> mono;
     double sampleRate = 0.0;
-    juce::String ignored;
 
-    if (readFileAsMono (source, mono, sampleRate, ignored))
+    if (! decodeSlotAudio (slot.encodedAudio, mono, sampleRate))
     {
-        const auto keptName = slot.name;
-        const auto keptSource = slot.sourceFile;
+        // Written before the audio travelled in the slot: the only place left to
+        // look is the copy that version kept in the Wavetables folder.
+        auto legacy = wavetableFolder().getChildFile ("Samples").getChildFile (slot.sourceFile);
+        juce::String ignored;
 
-        buildSlot (slot, mono, sampleRate, UserWave::Mode::FullSample);
+        if (! readFileAsMono (legacy, mono, sampleRate, ignored))
+            return;
 
-        slot.name = keptName;
-        slot.sourceFile = keptSource;
+        // Take it into the slot, so re-saving this preset makes it self contained
+        // and that folder is never needed again.
+        slot.encodedAudio = encodeSlotAudio (mono, sampleRate);
     }
+
+    // buildSlot rewrites what it plays from and takes the mode as an argument, so
+    // the mode read out of the XML is taken first.
+    const auto keptMode = slot.mode;
+    const auto keptName = slot.name;
+    const auto keptSource = slot.sourceFile;
+
+    buildSlot (slot, mono, sampleRate, keptMode);
+
+    slot.name = keptName;
+    slot.sourceFile = keptSource;
 }
 
 void UserWaveLibrary::restoreFromStateXml (const juce::XmlElement& xml)
@@ -724,6 +820,41 @@ void UserWaveLibrary::saveToDisk() const
 
     if (auto xml = createStateXml())
         xml->writeTo (folder.getChildFile ("index.xml"));
+
+    pruneUnusedSampleCopies();
+}
+
+void UserWaveLibrary::pruneUnusedSampleCopies() const
+{
+    auto folder = wavetableFolder().getChildFile ("Samples");
+
+    if (! folder.isDirectory())
+        return;
+
+    // What is still wanted there. A slot that carries its own audio -- every slot
+    // imported by this version -- wants nothing, so this list is empty on any
+    // library built from here on, and the folder empties itself.
+    juce::StringArray stillWanted;
+
+    for (int g = 0; g < UserWave::numGroups; ++g)
+    {
+        for (int i = 0; i < UserWave::numSlots; ++i)
+        {
+            const auto& slot = editable->slot ((UserWave::Group) g, i);
+
+            if (slot.active && slot.encodedAudio.getSize() == 0 && slot.sourceFile.isNotEmpty())
+                stillWanted.addIfNotAlreadyThere (slot.sourceFile);
+        }
+    }
+
+    for (const auto& file : folder.findChildFiles (juce::File::findFiles, false))
+        if (! stillWanted.contains (file.getFileName()))
+            file.deleteFile();
+
+    // The plugin keeps no copies any more, so an empty Samples folder is a
+    // leftover of its own.
+    if (folder.getNumberOfChildFiles (juce::File::findFilesAndDirectories) == 0)
+        folder.deleteFile();
 }
 
 void UserWaveLibrary::loadFromDisk()

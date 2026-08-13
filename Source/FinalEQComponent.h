@@ -53,12 +53,19 @@ public:
         its Node dropdown (and the Quality / Frequency / Gain knobs) to that band. */
     std::function<void(int band)> onBandSelected;
 
+    /** Puts a band back where it started: its default frequency, no gain, and its
+        default Q. The band's Type is left alone -- that is a choice, not a
+        position. Both the editor's Reset button and a double-click on the band's
+        dot come here, so the two cannot drift apart. */
+    void resetBand(int band);
+
     void paint(juce::Graphics& g) override;
     void resized() override;
 
     void mouseDown(const juce::MouseEvent& e) override;
     void mouseDrag(const juce::MouseEvent& e) override;
     void mouseUp(const juce::MouseEvent& e) override;
+    void mouseDoubleClick(const juce::MouseEvent& e) override;
     void mouseWheelMove(const juce::MouseEvent& e,
                         const juce::MouseWheelDetails& wheel) override;
 

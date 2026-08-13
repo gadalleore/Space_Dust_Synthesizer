@@ -3070,11 +3070,10 @@ void SpaceDustAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
             // a different LFO rate range and gets its rates rescaled on load.
             xml->setAttribute("stateVersion", currentStateVersion);
 
-            // Imported waveforms travel with the song. Single Cycle slots carry
-            // their table inline and are fully self contained; Full Sample slots
-            // carry a reference to their copy in the user's Wavetables folder,
-            // because embedding fifteen seconds of audio eight times over would
-            // add tens of megabytes to every save.
+            // Imported waveforms travel with the song, audio and all, in either
+            // mode. Nothing here points at a file on the user's disk, so a song
+            // opened on another machine -- or after the imported files are gone --
+            // still plays what it was saved with.
             if (auto waves = userWaveLibrary.createStateXml())
                 xml->addChildElement(waves.release());
 

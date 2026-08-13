@@ -572,6 +572,11 @@ private:
     juce::Component mainView;         // scalable container parenting the entire UI
     bool cheezeGuyTabAdded = false;
 
+    /** Takes the Cheeze Guy tab back off the bar and forgets it was ever earned.
+        Initialize Preset calls it: the easter egg is not part of a patch, so a
+        fresh start starts fresh. Safe to call when the tab is not there. */
+    void hideCheezeGuyTab();
+
     //==============================================================================
     // -- Preset Management --
     std::unique_ptr<PresetManager> presetManager;

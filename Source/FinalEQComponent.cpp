@@ -434,6 +434,39 @@ void FinalEQComponent::mouseUp(const juce::MouseEvent&)
     draggedBand_ = -1;
 }
 
+void FinalEQComponent::mouseDoubleClick(const juce::MouseEvent& e)
+{
+    const int b = getBandNearPos(e.position);
+
+    if (b < 0)
+        return;
+
+    // Double-clicking a control to put it back to its default is the convention
+    // the knobs already follow, so the dots follow it too.
+    setSelectedBand(b);
+    if (onBandSelected)
+        onBandSelected(b);
+
+    resetBand(b);
+}
+
+void FinalEQComponent::resetBand(int band)
+{
+    band = juce::jlimit(0, numBands - 1, band);
+
+    for (const auto& id : { freqId(band), gainId(band), qId(band) })
+    {
+        if (auto* p = apvts_.getParameter(id))
+        {
+            // Balanced gesture per edit, as everywhere else this component writes
+            // parameters, so hosts see one clean move rather than a naked write.
+            p->beginChangeGesture();
+            p->setValueNotifyingHost(p->getDefaultValue());
+            p->endChangeGesture();
+        }
+    }
+}
+
 void FinalEQComponent::mouseWheelMove(const juce::MouseEvent& e,
                                        const juce::MouseWheelDetails& wheel)
 {

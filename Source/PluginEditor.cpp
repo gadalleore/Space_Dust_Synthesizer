@@ -3963,6 +3963,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         // the slots calls back into rebuildWaveformMenus, which then finds the
         // menus and the parameters already agreeing.
         audioProcessor.getUserWaveLibrary().clearAllSlots();
+        hideCheezeGuyTab();
 
         audioProcessor.currentPresetName = "Init";
         audioProcessor.updateVoicesWithParameters();
@@ -5870,24 +5871,13 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
 
     finalEQResetButton.setButtonText(safeString("Reset"));
     finalEQResetButton.setTooltip(safeString(
-        "Puts the chosen node back where it started: its default frequency, "
-        "no gain, and its default Quality. The node's Type is left as you set it."));
+        "Puts the chosen node back where it started: its default frequency, no gain, "
+        "and its default Quality. The node's Type is left as you set it. "
+        "Double-clicking the node in the display does the same thing."));
     finalEQResetButton.onClick = [this]
     {
-        auto& vts = audioProcessor.getValueTreeState();
-        const juce::String n(finalEQEditedBand_ + 1);
-        // Freq, Gain and Q only -- the Type is a deliberate choice, not a position.
-        for (const char* suffix : { "Freq", "Gain", "Q" })
-        {
-            if (auto* p = vts.getParameter("finalEQB" + n + suffix))
-            {
-                // Balanced gesture per edit, as everywhere else this editor writes
-                // parameters, so hosts see one clean move rather than a naked write.
-                p->beginChangeGesture();
-                p->setValueNotifyingHost(p->getDefaultValue());
-                p->endChangeGesture();
-            }
-        }
+        if (finalEQComponent != nullptr)
+            finalEQComponent->resetBand(finalEQEditedBand_);
     };
 
     {
@@ -7062,6 +7052,38 @@ void SpaceDustAudioProcessorEditor::sliderDragEnded(juce::Slider* slider)
             pitchBendSlider.setValue(0.0, juce::sendNotificationSync);
         }
     }
+}
+
+//==============================================================================
+// -- Easter egg: put the tab away --
+
+void SpaceDustAudioProcessorEditor::hideCheezeGuyTab()
+{
+    if (! cheezeGuyTabAdded)
+        return;
+
+    const int index = tabbedComponent.getTabNames().indexOf("Cheeze Guy");
+
+    if (index >= 0)
+    {
+        // Step off it first. The tab was added with "do not delete the component",
+        // so removing it only unparents the game -- which is what lets us destroy
+        // it here, in that order and not the other way round.
+        if (tabbedComponent.getCurrentTabIndex() == index)
+            tabbedComponent.setCurrentTabIndex(0);
+
+        tabbedComponent.removeTab(index);
+    }
+
+    cheezeGuyGame.reset();
+    cheezeGuyTabAdded = false;
+    // Cleared in the processor too, or the tab would come back the next time the
+    // editor is opened -- that flag is what survives closing the window.
+    audioProcessor.cheezeGuyActivated = false;
+
+    // The game held the keyboard focus for its arrow keys; hand it back.
+    if (standaloneKeyboard != nullptr)
+        standaloneKeyboard->grabKeyboardFocus();
 }
 
 //==============================================================================

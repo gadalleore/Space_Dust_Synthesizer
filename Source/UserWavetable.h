@@ -172,9 +172,22 @@ struct UserWaveSlot
     bool active = false;
     juce::String name;
 
-    /** File this came from, as copied into the user's Wavetables folder. The copy
-        is what makes a saved song still work after the original is moved. */
+    /** Name of the file this came from. Kept to show the user where a slot came
+        from; nothing is ever looked up by it. Slots imported before the audio was
+        carried in the slot itself name a copy in the Wavetables\Samples folder,
+        and those are still read from there once, on load. */
     juce::String sourceFile;
+
+    /** The audio this slot was built from: mono, no longer than
+        UserWave::maxSampleSeconds, FLAC-compressed.
+
+        This is the slot's own copy of its material, and the only one there is. It
+        travels inside a preset and inside a saved song, so a waveform cannot be
+        lost by deleting, moving or renaming the file it was imported from, and no
+        copy of that file is left anywhere on the user's disk. It is also what a
+        change of Mode is rebuilt from, since the two modes are two different
+        readings of the same audio and only one is held ready to play at a time. */
+    juce::MemoryBlock encodedAudio;
 
     UserWave::Mode mode = UserWave::Mode::SingleCycle;
 
@@ -394,27 +407,37 @@ public:
 
     /** The slots as XML, for embedding in a preset or a saved song.
 
-        Single Cycle slots carry their table inline, so a preset is self contained
-        -- eight kilobytes each, and the other ten levels are rebuilt on load.
-        Full Sample slots carry only a reference to their copy in the Wavetables
-        folder, because embedding fifteen seconds of audio eight times over would
-        add tens of megabytes to every saved song. */
+        Every slot carries its own audio, so a preset is self contained: it plays
+        on a machine that has never seen the file it was imported from, and no
+        copy of that file exists anywhere for the user to lose. A Single Cycle
+        slot also carries its table, which is what it is rebuilt from -- the other
+        ten levels are a transform away, and it saves decoding the audio on load.
+
+        The size that costs is real: about a megabyte for a slot holding the full
+        fifteen seconds, far less for a short one. It is the price of a preset
+        that cannot be broken by tidying a Downloads folder. */
     std::unique_ptr<juce::XmlElement> createStateXml() const;
 
     /** Rebuild the slots from XML written by createStateXml().
 
         A slot with no group attribute was written before the lists were split,
         when there was one shared set, and so goes into all five -- which is
-        exactly what that song sounded like when it was saved. */
+        exactly what that song sounded like when it was saved.
+
+        A slot with no audio was written before the audio travelled inside it, and
+        is read once from the copy that version left in the Wavetables folder;
+        saving again makes it self contained. */
     void restoreFromStateXml (const juce::XmlElement& xml);
 
     /** Write the slots to the user's Wavetables folder, and read them back. This
         is what makes an imported waveform available in the next session and in
-        every other instance of the plugin. */
+        every other instance of the plugin. One index file, holding the slots and
+        their audio -- imported files are never copied anywhere. */
     void saveToDisk() const;
     void loadFromDisk();
 
-    /** Where the copies and the index live. */
+    /** Where the index lives. Older versions also kept a copy of every imported
+        file in a Samples folder here; see pruneUnusedSampleCopies(). */
     static juce::File wavetableFolder();
 
     /** Called on the message thread whenever the slots change, so the editor can
@@ -422,6 +445,21 @@ public:
     std::function<void()> onChange;
 
 private:
+    /** Delete the file copies that no slot needs any more.
+
+        Earlier versions copied every imported file into Wavetables\Samples and
+        never removed any of them, so re-importing a slot ten times left ten files
+        behind for good. Nothing is copied there now, and a copy is only still
+        wanted by a slot that was imported before the audio travelled inside the
+        slot; everything else in that folder is a leftover and goes. When the last
+        one goes, so does the folder.
+
+        Run from saveToDisk(), which means when the user changes a slot -- not on
+        load. A song saved by an older version can still be pointing at one of
+        those copies, and opening that song is what bakes its audio into the slot
+        for good; pruning at startup would take the file away first. */
+    void pruneUnusedSampleCopies() const;
+
     /** Hand the current slots to the audio thread as a fresh bank. */
     void publish();
 

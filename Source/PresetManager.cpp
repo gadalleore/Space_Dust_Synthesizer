@@ -35,6 +35,13 @@ void PresetManager::savePreset(const juce::String& presetName)
     // Add preset name as an attribute on the root element
     xml->setAttribute("presetName", presetName);
 
+    // The imported waveforms go in with it, audio and all. A preset that named a
+    // parameter for a user slot but did not carry the slot was a preset that
+    // sounded different on the next machine, or after the user tidied up.
+    if (auto* spaceDust = dynamic_cast<SpaceDustAudioProcessor*>(&valueTreeState.processor))
+        if (auto waves = spaceDust->getUserWaveLibrary().createStateXml())
+            xml->addChildElement(waves.release());
+
     auto presetFile = presetFolder.getChildFile(presetName + presetExtension);
     xml->writeTo(presetFile);
 
@@ -59,12 +66,32 @@ void PresetManager::loadPreset(const juce::File& presetFile)
     auto name = xml->getStringAttribute("presetName",
                     presetFile.getFileNameWithoutExtension());
 
+    // Lift the waveforms OUT before the rest becomes the parameter tree. Left in
+    // place they would become a child of the APVTS state and be written out again
+    // by the next save, doubling in size on every round trip.
+    std::unique_ptr<juce::XmlElement> waves;
+
+    if (auto* stored = xml->getChildByName("USERWAVES"))
+    {
+        // The false says "do not delete it" - ownership passes to us here.
+        xml->removeChildElement(stored, false);
+        waves.reset(stored);
+    }
+
     // Presets saved before the LFO free-rate range was widened to 2000 Hz store a knob
     // position that meant a different frequency. Rescale so they sound as recorded.
     auto restored = juce::ValueTree::fromXml(*xml);
     SpaceDustAudioProcessor::migrateLfoRatesIfOld(restored, xml->getIntAttribute("stateVersion", 1));
 
     valueTreeState.replaceState(restored);
+
+    // After the parameters, so the waveform choices they restored already point at
+    // the slots this is about to fill. A preset from before waveforms travelled
+    // has no block here at all, and leaves the user's slots exactly as they were.
+    if (waves != nullptr)
+        if (auto* spaceDust = dynamic_cast<SpaceDustAudioProcessor*>(&valueTreeState.processor))
+            spaceDust->getUserWaveLibrary().restoreFromStateXml(*waves);
+
     currentPresetName = name;
 }
 
