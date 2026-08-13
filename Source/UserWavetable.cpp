@@ -634,6 +634,14 @@ std::unique_ptr<juce::XmlElement> UserWaveLibrary::createStateXml() const
 {
     auto root = std::make_unique<juce::XmlElement> ("USERWAVES");
 
+    // Slots holding the same audio store it once. "Update All" puts one sample in
+    // all five lists, and that used to write five copies of it into every preset
+    // and every saved song. The first slot to carry a block gets an id and the
+    // bytes; the others name the id and carry nothing.
+    struct WrittenAudio { const juce::MemoryBlock* bytes; int id; };
+    std::vector<WrittenAudio> written;
+    int nextAudioId = 1;
+
     for (int g = 0; g < UserWave::numGroups; ++g)
     {
         const auto group = (UserWave::Group) g;
@@ -676,10 +684,37 @@ std::unique_ptr<juce::XmlElement> UserWaveLibrary::createStateXml() const
             // imported file long since deleted.
             if (slot.encodedAudio.getSize() > 0)
             {
-                juce::MemoryOutputStream encoded;
-                juce::Base64::convertToBase64 (encoded, slot.encodedAudio.getData(),
-                                               slot.encodedAudio.getSize());
-                element->setAttribute ("audio", encoded.toString());
+                int sharedWith = 0;
+
+                // Compares the bytes, not a hash: a slot's audio is compressed the
+                // same way every time, so two slots holding one sample hold two
+                // identical blocks, and MemoryBlock's == checks the size first.
+                for (const auto& seen : written)
+                {
+                    if (*seen.bytes == slot.encodedAudio)
+                    {
+                        sharedWith = seen.id;
+                        break;
+                    }
+                }
+
+                if (sharedWith != 0)
+                {
+                    element->setAttribute ("audioRef", sharedWith);
+                }
+                else
+                {
+                    const int id = nextAudioId++;
+
+                    juce::MemoryOutputStream encoded;
+                    juce::Base64::convertToBase64 (encoded, slot.encodedAudio.getData(),
+                                                   slot.encodedAudio.getSize());
+                    element->setAttribute ("audioId", id);
+                    element->setAttribute ("audio", encoded.toString());
+
+                    // The slot outlives this function, so the pointer stays good.
+                    written.push_back ({ &slot.encodedAudio, id });
+                }
             }
         }
     }
@@ -687,7 +722,8 @@ std::unique_ptr<juce::XmlElement> UserWaveLibrary::createStateXml() const
     return root;
 }
 
-void UserWaveLibrary::restoreSlotFromXml (const juce::XmlElement& element, UserWaveSlot& slot)
+void UserWaveLibrary::restoreSlotFromXml (const juce::XmlElement& element, UserWaveSlot& slot,
+                                          const std::map<int, juce::MemoryBlock>& sharedAudio)
 {
     slot = UserWaveSlot();
 
@@ -702,13 +738,21 @@ void UserWaveLibrary::restoreSlotFromXml (const juce::XmlElement& element, UserW
 
     // The slot's own audio, written by everything saved from this version on. It
     // is kept whatever the mode is, because it is what a later change of mode is
-    // rebuilt from.
+    // rebuilt from. Either it is written here, or another slot holding the same
+    // sample carries it and this one names it by id.
     if (const auto stored = element.getStringAttribute ("audio"); stored.isNotEmpty())
     {
         juce::MemoryOutputStream decoded;
 
         if (juce::Base64::convertFromBase64 (decoded, stored))
             slot.encodedAudio.append (decoded.getData(), decoded.getDataSize());
+    }
+    else if (const int shared = element.getIntAttribute ("audioRef", 0); shared != 0)
+    {
+        const auto found = sharedAudio.find (shared);
+
+        if (found != sharedAudio.end())
+            slot.encodedAudio = found->second;
     }
 
     if (slot.mode == UserWave::Mode::SingleCycle)
@@ -785,6 +829,25 @@ void UserWaveLibrary::restoreFromStateXml (const juce::XmlElement& xml)
             editable->editableSlot (group, i) = UserWaveSlot();
     }
 
+    // Audio written once and named by the other slots that share it. Gathered up
+    // front, because the slot that names a block can come before the one that
+    // carries it -- and decoded once here rather than once per slot sharing it.
+    std::map<int, juce::MemoryBlock> sharedAudio;
+
+    for (auto* element : xml.getChildWithTagNameIterator ("SLOT"))
+    {
+        const int id = element->getIntAttribute ("audioId", 0);
+        const auto stored = element->getStringAttribute ("audio");
+
+        if (id == 0 || stored.isEmpty() || sharedAudio.count (id) != 0)
+            continue;
+
+        juce::MemoryOutputStream decoded;
+
+        if (juce::Base64::convertFromBase64 (decoded, stored))
+            sharedAudio[id].append (decoded.getData(), decoded.getDataSize());
+    }
+
     for (auto* element : xml.getChildWithTagNameIterator ("SLOT"))
     {
         const int index = element->getIntAttribute ("index", -1);
@@ -793,7 +856,7 @@ void UserWaveLibrary::restoreFromStateXml (const juce::XmlElement& xml)
             continue;
 
         UserWaveSlot rebuilt;
-        restoreSlotFromXml (*element, rebuilt);
+        restoreSlotFromXml (*element, rebuilt, sharedAudio);
 
         UserWave::Group group;
 

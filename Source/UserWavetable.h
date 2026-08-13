@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <functional>
+#include <map>
 #include <vector>
 
 /**
@@ -415,7 +416,9 @@ public:
 
         The size that costs is real: about a megabyte for a slot holding the full
         fifteen seconds, far less for a short one. It is the price of a preset
-        that cannot be broken by tidying a Downloads folder. */
+        that cannot be broken by tidying a Downloads folder. Slots holding the
+        same sample -- what "Update All" makes -- pay it once between them: the
+        first carries the audio under an id, the rest name that id. */
     std::unique_ptr<juce::XmlElement> createStateXml() const;
 
     /** Rebuild the slots from XML written by createStateXml().
@@ -480,8 +483,12 @@ private:
     /** Read one SLOT element into a loose slot, doing whichever rebuild its mode
         needs. Kept apart from where the result is stored so that a slot with no
         group -- which belongs in all five lists -- is decoded once and copied,
-        rather than being decoded five times. */
-    void restoreSlotFromXml (const juce::XmlElement& element, UserWaveSlot& slot);
+        rather than being decoded five times.
+
+        sharedAudio holds the blocks written once and named by id, for the slots
+        that share a sample rather than carrying their own copy of it. */
+    void restoreSlotFromXml (const juce::XmlElement& element, UserWaveSlot& slot,
+                             const std::map<int, juce::MemoryBlock>& sharedAudio);
 
     /** Read any audio file the host can decode into mono, truncated to the cap. */
     bool readFileAsMono (const juce::File& file, std::vector<float>& mono,
