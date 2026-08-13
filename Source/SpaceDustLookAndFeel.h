@@ -26,6 +26,15 @@ public:
         clipping must use this rather than picking its own. */
     static constexpr juce::uint32 kClipRed = 0xffff0000;
 
+    /** THE trace blue. Every drawn waveform in the plugin is this colour: the
+        oscilloscope, the Lissajous figure, the goniometer's outside path and the
+        Waveforms window's pictures.
+
+        Named here so that anything new which draws a signal can find the colour
+        the others already use, rather than picking a fourth blue -- which is how
+        the reds above got to seven. */
+    static constexpr juce::uint32 kTraceBlue = 0xff48bde8;
+
     /** When true, meter-linked glow (groups, knobs, EQ curve) uses red tones (matches peak clipping). */
     void setOutputMeterClipping(bool clipping) noexcept { outputMeterClipping = clipping; }
     bool isOutputMeterClipping() const noexcept { return outputMeterClipping; }
@@ -198,6 +207,20 @@ public:
     juce::Colour getMeterResponsiveKnobArcColour() const;
     juce::Colour getMeterResponsiveKnobGlowColour() const;
 
+    /** kTraceBlue, or the clip red while the output is in the red zone. What a
+        drawn waveform should be painted in. */
+    juce::Colour getMeterResponsiveTraceColour() const;
+
+    /** The plugin's background: the real sky over Costa Mesa on the night Space
+        Dust was finished, brightened a little by the output level.
+
+        Public and static because it is the background of more than one window.
+        The main panel paints it behind its controls and the Waveforms window
+        paints it behind its list, and they have to be the same sky -- a second
+        window on a flat fill was the one place that did not look like the
+        instrument (Giuseppe, 2026-08-12). */
+    static void drawStarfield(juce::Graphics& g, int w, int h, float meterLevel = 0.0f);
+
     //==============================================================================
     // -- Typography Enhancements --
     
@@ -222,9 +245,13 @@ public:
 
         One definition rather than a second copy of these fills, so the two can
         never drift apart. isLit is the toggle's "on" state: a real toggle passes
-        its toggle state, a momentary button passes whether it is pressed. */
+        its toggle state, a momentary button passes whether it is pressed.
+
+        A disabled button neither lights nor blooms, and its text drops well back
+        -- the Waveforms window turns four of its buttons off whenever a built-in
+        shape is shown, and they have to read as dead rather than merely unlit. */
     void drawToggleStyleButton(juce::Graphics& g, juce::Rectangle<float> bounds,
-                               const juce::String& text, bool isLit);
+                               const juce::String& text, bool isLit, bool isEnabled = true);
     void drawRotarySlider(juce::Graphics& g, int x, int y, int width, int height,
                           float sliderPos, float rotaryStartAngle, float rotaryEndAngle,
                           juce::Slider& slider) override;
@@ -316,12 +343,16 @@ public:
     void paintButton(juce::Graphics& g, bool shouldDrawButtonAsHighlighted,
                      bool shouldDrawButtonAsDown) override
     {
-        const bool lit = shouldDrawButtonAsHighlighted || shouldDrawButtonAsDown;
+        // Serves both kinds of button. Given setClickingTogglesState it is a
+        // toggle and lights when it is on, exactly like the panel's toggles;
+        // without it there is no on, so it lights under the pointer instead.
+        const bool lit = getToggleState() || shouldDrawButtonAsHighlighted
+                      || shouldDrawButtonAsDown;
 
         if (auto* spaceDust = dynamic_cast<SpaceDustLookAndFeel*>(&getLookAndFeel()))
         {
             spaceDust->drawToggleStyleButton(g, getLocalBounds().toFloat(),
-                                             getButtonText(), lit);
+                                             getButtonText(), lit, isEnabled());
             return;
         }
 

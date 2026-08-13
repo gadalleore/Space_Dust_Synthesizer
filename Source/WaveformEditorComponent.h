@@ -145,10 +145,38 @@ private:
     void paintList (juce::Graphics&);
     void paintDetail (juce::Graphics&);
 
+    /** How much halo a picture carries.
+
+        Wide is the Final EQ curve's: one open curve, alone in a big box, with
+        room for the light to fall off. Tight is the scopes': half the spread,
+        for a figure made of many short strokes whose halos would otherwise run
+        into each other and merge into a slab of light.
+
+        The size of the picture decides it, not the kind. Eighteen thumbnails
+        each wearing the EQ's halo add up to far more glow than the EQ itself
+        ever shows, however right any one of them looks on its own. */
+    enum class Bloom
+    {
+        Wide,
+        Tight
+    };
+
     /** Draw any row's waveform, built-in or imported, into an area. One function
         for both so the list reads as one kind of thing. */
     void paintRowWaveform (juce::Graphics&, juce::Rectangle<int> area, int row,
-                           juce::Colour colour, float thickness, int repeats) const;
+                           juce::Colour colour, float thickness, int repeats,
+                           Bloom bloom) const;
+
+    /** Stroke a built picture, with the bloom the rest of the plugin carries.
+        One place, so two pictures of the same size cannot end up glowing
+        differently. */
+    void strokeWaveformPath (juce::Graphics&, const juce::Path& path,
+                             juce::Colour colour, float thickness, Bloom bloom) const;
+
+    /** The colour a waveform is drawn in here: the Final EQ curve's cyan, going
+        red while the output clips. Read from the LookAndFeel so the two lines
+        move together. */
+    juce::Colour traceColour() const;
 
     void setStatus (const juce::String& message, bool isError);
 
@@ -183,11 +211,15 @@ private:
     juce::GroupComponent listGroup;
     juce::GroupComponent detailGroup;
 
-    juce::TextButton loadButton { "Load File..." };
-    juce::TextButton clearButton { "Clear Slot" };
-    juce::TextButton updateAllButton { "Update All" };
-    juce::TextButton singleCycleButton { "Single Cycle" };
-    juce::TextButton fullSampleButton { "Full Sample" };
+    /** The panel's buttons, not JUCE's. Same navy, same border, same
+        meter-driven bloom -- see SpaceDustToggleStyleButton. The two mode
+        buttons are toggles and light when they are on; the other three are
+        momentary and light under the pointer. */
+    SpaceDustToggleStyleButton loadButton;
+    SpaceDustToggleStyleButton clearButton;
+    SpaceDustToggleStyleButton updateAllButton;
+    SpaceDustToggleStyleButton singleCycleButton;
+    SpaceDustToggleStyleButton fullSampleButton;
     juce::TextEditor nameEditor;
     juce::Label nameLabel;
 
@@ -220,6 +252,14 @@ public:
 
     /** Redraw after the library changed under it. */
     void refreshContent();
+
+    /** Redraw only, with no rebuild of the controls.
+
+        The editor's meter timer calls this so the window's waveforms and buttons
+        bloom with the output like everything on the main panel. refreshContent()
+        would do it too, but it re-reads the library and re-sets every control on
+        each frame to paint the same pixels. */
+    void repaintContent();
 
 private:
     /** Let a file dragged out of Explorer reach this window even when the host is

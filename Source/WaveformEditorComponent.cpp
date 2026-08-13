@@ -17,10 +17,15 @@ namespace
     // Straight from the main panel, so the window reads as part of the same
     // instrument rather than as a utility that happens to be attached to it.
     const juce::Colour backgroundNavy { 0xff0a0a1f };
-    const juce::Colour panelNavy      { 0xff10102a };
-    const juce::Colour rowNavy        { 0xff1a1a30 };
-    const juce::Colour rowSelected    { 0xff21365c };
     const juce::Colour rowDropTarget  { 0xff1e4a5e };
+
+    // The toggle's own colours, so a row and a toggle are the same object drawn
+    // twice rather than two things that merely look similar. Taken from
+    // drawToggleStyleButton; if that changes, these follow.
+    const juce::Colour toggleNavy      { 0xff1a1a2f };
+    const juce::Colour toggleBorder    { 0xff3a3a5f };
+    const juce::Colour toggleLitNavy   { 0xff1a4a5f };
+    const juce::Colour toggleLitBorder { 0xff00b4ff };
     const juce::Colour labelCyan      { 0xffa0d8ff };
     const juce::Colour valueCyan      { 0xff6dd5fa };
     const juce::Colour knobArcCyan    { 0xff00d4ff };
@@ -28,13 +33,23 @@ namespace
     const juce::Colour warningAmber   { 0xffffc266 };
     const juce::Colour errorRed       { 0xffff8080 };
 
-    constexpr int margin = 12;
-    constexpr int listWidth = 268;
-    constexpr int detailWidth = 470;
-    constexpr int rowHeight = 38;
+    constexpr int margin = 10;
+    constexpr int listWidth = 240;
+    constexpr int detailWidth = 400;
+    constexpr int rowHeight = 32;
     constexpr int groupTitleInset = 26;
     constexpr int groupPadding = 10;
-    constexpr int statusHeight = 22;
+    constexpr int statusHeight = 20;
+
+    /** Button size, taken from the main panel: every toggle there is 22 high and
+        between 86 and 130 wide. A utility window that used its own sizes was the
+        giveaway that it was a utility window. */
+    constexpr int buttonHeight = 22;
+    constexpr int buttonWidth = 90;
+    constexpr int buttonGap = 6;
+
+    /** Height of the two control rows plus the gap between them. */
+    constexpr int controlStripHeight = buttonHeight * 2 + 8 + 4;
 
     /** The list area is always tall enough for every row THIS list could hold, so
         it does not change size as waveforms are imported and cleared. The space
@@ -109,8 +124,22 @@ WaveformEditorComponent::WaveformEditorComponent (UserWaveLibrary& libraryToUse,
 
     listGroup.setText ("Waveforms");
     detailGroup.setText ("Detail");
+
+    // The property every group box on the main panel sets. It is what gives them
+    // their cyan boundary and the inward glow behind it; without it a box falls
+    // back to JUCE's default outline, which is the grey that made this window
+    // look like it came from a different plugin (Giuseppe, 2026-08-12).
+    listGroup.getProperties().set ("viewportGlow", true);
+    detailGroup.getProperties().set ("viewportGlow", true);
+
     addAndMakeVisible (listGroup);
     addAndMakeVisible (detailGroup);
+
+    loadButton.setButtonText ("Load File...");
+    clearButton.setButtonText ("Clear Slot");
+    updateAllButton.setButtonText ("Update All");
+    singleCycleButton.setButtonText ("Single Cycle");
+    fullSampleButton.setButtonText ("Full Sample");
 
     addAndMakeVisible (loadButton);
     addAndMakeVisible (clearButton);
@@ -184,13 +213,14 @@ WaveformEditorComponent::WaveformEditorComponent (UserWaveLibrary& libraryToUse,
     singleCycleButton.onClick = [this] { applyMode (UserWave::Mode::SingleCycle); };
     fullSampleButton.onClick  = [this] { applyMode (UserWave::Mode::FullSample); };
 
-    // The two mode buttons are one control with two positions.
+    // The two mode buttons are one control with two positions. Drawn as two lit
+    // or unlit toggles rather than joined into a single box: that is how every
+    // pair of exclusive choices reads on the main panel, and joining them was
+    // the one place in the plugin where a button had square edges.
     singleCycleButton.setClickingTogglesState (true);
     fullSampleButton.setClickingTogglesState (true);
     singleCycleButton.setRadioGroupId (1);
     fullSampleButton.setRadioGroupId (1);
-    singleCycleButton.setConnectedEdges (juce::Button::ConnectedOnRight);
-    fullSampleButton.setConnectedEdges (juce::Button::ConnectedOnLeft);
 
     nameLabel.setText ("Name", juce::dontSendNotification);
     nameLabel.setFont (lookAndFeel.getBodyFont (12.0f, true));
@@ -199,9 +229,11 @@ WaveformEditorComponent::WaveformEditorComponent (UserWaveLibrary& libraryToUse,
 
     nameEditor.setFont (lookAndFeel.getBodyFont (13.0f, false));
     nameEditor.setTextToShowWhenEmpty ("waveform name", dimText);
-    nameEditor.setColour (juce::TextEditor::backgroundColourId, rowNavy);
+    // The dropdowns' colours, from the LookAndFeel's constructor. A box you type
+    // into and a box you choose from should not be two different greys.
+    nameEditor.setColour (juce::TextEditor::backgroundColourId, toggleNavy);
     nameEditor.setColour (juce::TextEditor::textColourId, labelCyan);
-    nameEditor.setColour (juce::TextEditor::outlineColourId, juce::Colour (0xff303050));
+    nameEditor.setColour (juce::TextEditor::outlineColourId, toggleBorder);
     nameEditor.setColour (juce::TextEditor::focusedOutlineColourId, knobArcCyan);
 
     nameEditor.onReturnKey = [this]
@@ -215,14 +247,9 @@ WaveformEditorComponent::WaveformEditorComponent (UserWaveLibrary& libraryToUse,
         refresh();
     };
 
-    for (auto* button : { &loadButton, &clearButton, &updateAllButton,
-                          &singleCycleButton, &fullSampleButton })
-    {
-        button->setColour (juce::TextButton::buttonColourId, juce::Colour (0xff1a1a30));
-        button->setColour (juce::TextButton::buttonOnColourId, juce::Colour (0xff1e5f7a));
-        button->setColour (juce::TextButton::textColourOffId, labelCyan);
-        button->setColour (juce::TextButton::textColourOnId, juce::Colours::white);
-    }
+    // No colours set on the buttons. They paint themselves through the same
+    // routine that draws every toggle on the main panel, so their navy, their
+    // border and their bloom all come from that one place.
 
     refresh();
 }
@@ -244,7 +271,11 @@ void WaveformEditorComponent::setTarget (juce::ComboBox* combo, int base, BuiltI
     // Named, because the five lists are separate and what is on screen is one of
     // them. Without this the window looks the same whichever button opened it,
     // and a slot loaded into the wrong list is invisible until it is played.
-    listGroup.setText (juce::String (UserWave::groupName (group)) + " Waveforms");
+    //
+    // The name alone, with no "Waveforms" after it: three of the five are called
+    // Waveform 1, Waveform 2 and Sub, and appending the word gave "Waveform 2
+    // Waveforms". The rows are plainly waveforms without being told.
+    listGroup.setText (UserWave::groupName (group));
 
     // A list with more built-ins needs more room for them. The window follows
     // this; see WaveformEditorWindow::showFor.
@@ -632,24 +663,26 @@ void WaveformEditorComponent::resized()
 
     // Two rows of controls. One row could not hold the name box at a width worth
     // typing into once the four buttons had taken what they need.
-    auto controls = detail.removeFromBottom (72);
+    auto controls = detail.removeFromBottom (controlStripHeight);
 
-    auto upper = controls.removeFromTop (30);
-    auto modes = upper.removeFromLeft (200);
-    singleCycleButton.setBounds (modes.removeFromLeft (100));
+    auto upper = controls.removeFromTop (buttonHeight);
+    auto modes = upper.removeFromLeft (buttonWidth * 2 + buttonGap);
+    singleCycleButton.setBounds (modes.removeFromLeft (buttonWidth));
+    modes.removeFromLeft (buttonGap);  // the two are separate toggles now, not one joined box
     fullSampleButton.setBounds (modes);
 
-    clearButton.setBounds (upper.removeFromRight (92));
-    upper.removeFromRight (6);
-    loadButton.setBounds (upper.removeFromRight (100));
+    clearButton.setBounds (upper.removeFromRight (buttonWidth));
+    upper.removeFromRight (buttonGap);
+    loadButton.setBounds (upper.removeFromRight (buttonWidth));
 
     controls.removeFromTop (8);
 
     // Update All sits on the lower row rather than beside Clear Slot: the upper
-    // row is already full, and the name box has width to spare.
-    auto lower = controls.removeFromTop (28);
-    updateAllButton.setBounds (lower.removeFromRight (100));
-    lower.removeFromRight (6);
+    // row is already full, and the name box has width to spare. Same height as
+    // every other button, so the five read as one set.
+    auto lower = controls.removeFromTop (buttonHeight);
+    updateAllButton.setBounds (lower.removeFromRight (buttonWidth));
+    lower.removeFromRight (buttonGap);
     nameLabel.setBounds (lower.removeFromLeft (42));
     nameEditor.setBounds (lower);
 }
@@ -657,7 +690,12 @@ void WaveformEditorComponent::resized()
 //==============================================================================
 void WaveformEditorComponent::paint (juce::Graphics& g)
 {
+    // The same background as the main panel, not a flat fill: the same navy, and
+    // then the same sky over it, breathing with the output by the same law. This
+    // window is part of the instrument and has to look like it.
     g.fillAll (backgroundNavy);
+    SpaceDustLookAndFeel::drawStarfield (g, getWidth(), getHeight(),
+                                         lookAndFeel.getOutputMeterLevel());
 
     paintList (g);
     paintDetail (g);
@@ -673,16 +711,21 @@ void WaveformEditorComponent::paint (juce::Graphics& g)
 //==============================================================================
 void WaveformEditorComponent::paintRowWaveform (juce::Graphics& g, juce::Rectangle<int> area,
                                                 int row, juce::Colour colour, float thickness,
-                                                int repeats) const
+                                                int repeats, Bloom bloom) const
 {
     if (area.getWidth() < 4 || area.getHeight() < 4)
         return;
 
-    g.setColour (colour);
-
     const float centreY = (float) area.getCentreY();
     const float halfHeight = (float) area.getHeight() * 0.42f;
     const int slot = slotForRow (row);
+
+    // Every picture is built as a PATH and then stroked once at the end, rather
+    // than each kind drawing itself. That is what lets all three carry the same
+    // bloom: glowTrace widens a path, and there is nothing to widen behind a
+    // drawLine. It is also why the scatter and the drum burst are subpaths.
+    juce::Path path;
+    float strokeThickness = thickness;
 
     //==========================================================================
     // Noise has no repeating shape. Drawing one would be a lie, so it gets a
@@ -699,9 +742,13 @@ void WaveformEditorComponent::paintRowWaveform (juce::Graphics& g, juce::Rectang
             const float value = (random.nextFloat() * 2.0f - 1.0f) * spread;
             const float px = (float) (area.getX() + x);
 
-            g.drawLine (px, centreY, px, centreY - value * halfHeight, thickness);
+            path.startNewSubPath (px, centreY);
+            path.lineTo (px, centreY - value * halfHeight);
         }
 
+        // Always tight, whatever the caller asked for: this is a field of short
+        // separate strokes, and the wide spread turns it into one lit block.
+        strokeWaveformPath (g, path, colour, strokeThickness, Bloom::Tight);
         return;
     }
 
@@ -711,6 +758,7 @@ void WaveformEditorComponent::paintRowWaveform (juce::Graphics& g, juce::Rectang
     if (slot < 0 && builtInKind == BuiltInKind::Drums)
     {
         const int width = area.getWidth();
+        strokeThickness = thickness * 0.7f;
 
         for (int x = 0; x < width; ++x)
         {
@@ -718,9 +766,14 @@ void WaveformEditorComponent::paintRowWaveform (juce::Graphics& g, juce::Rectang
             const float value = drumEnvelopeValue (across) * halfHeight;
             const float px = (float) (area.getX() + x);
 
-            g.drawLine (px, centreY - value, px, centreY + value, thickness * 0.7f);
+            path.startNewSubPath (px, centreY - value);
+            path.lineTo (px, centreY + value);
         }
 
+        // Tight for the same reason as the noise scatter above: a column per
+        // pixel, so a wide halo fills the gaps between them rather than ringing
+        // the shape.
+        strokeWaveformPath (g, path, colour, strokeThickness, Bloom::Tight);
         return;
     }
 
@@ -729,7 +782,6 @@ void WaveformEditorComponent::paintRowWaveform (juce::Graphics& g, juce::Rectang
     if (entry != nullptr && ! entry->isPlayable())
         return;
 
-    juce::Path path;
     const int width = area.getWidth();
 
     for (int x = 0; x < width; ++x)
@@ -779,7 +831,52 @@ void WaveformEditorComponent::paintRowWaveform (juce::Graphics& g, juce::Rectang
             path.lineTo (px, y);
     }
 
-    g.strokePath (path, juce::PathStrokeType (thickness));
+    strokeWaveformPath (g, path, colour, strokeThickness, bloom);
+}
+
+juce::Colour WaveformEditorComponent::traceColour() const
+{
+    // The knob-arc cyan, which is the Final EQ curve's colour -- not the scopes'
+    // trace blue. The two are close but not the same, and the EQ curve is the
+    // line this window is meant to match.
+    return lookAndFeel.getMeterResponsiveKnobArcColour();
+}
+
+void WaveformEditorComponent::strokeWaveformPath (juce::Graphics& g, const juce::Path& path,
+                                                  juce::Colour colour, float thickness,
+                                                  Bloom bloom) const
+{
+    if (path.isEmpty())
+        return;
+
+    // Drawn as the Final EQ's response curve is drawn, because that is the line
+    // in this plugin that lights up (Giuseppe, 2026-08-12), and a waveform here
+    // should behave the same way.
+    //
+    // Two things make that curve what it is, and both are copied:
+    //
+    //   no halo at rest      the bloom is the meter's and nothing else, so the
+    //                        line genuinely lights UP as sound arrives instead
+    //                        of sitting permanently lit. An earlier cut of this
+    //                        had an always-on halo underneath; it swamped the
+    //                        part that moves.
+    //
+    //   curved and rounded   the same stroke type, so corners in a sampled
+    //                        waveform read like the EQ's curve rather than like
+    //                        mitred spikes.
+    //
+    // The spread is the one thing NOT copied everywhere -- see Bloom. The EQ is
+    // a single curve in a large box, and this window can have nineteen pictures
+    // on screen at once; all of them at the EQ's width was more light than the
+    // EQ has ever thrown.
+    if (bloom == Bloom::Wide)
+        lookAndFeel.glowPath (g, path, colour, thickness);
+    else
+        lookAndFeel.glowTrace (g, path, colour, thickness);
+
+    g.setColour (colour.withMultipliedAlpha (0.9f));
+    g.strokePath (path, juce::PathStrokeType (thickness, juce::PathStrokeType::curved,
+                                              juce::PathStrokeType::rounded));
 }
 
 //==============================================================================
@@ -799,37 +896,50 @@ void WaveformEditorComponent::paintList (juce::Graphics& g)
         const bool isDropTarget = dragActive && dragTargetRow == row && slot >= 0;
         const bool isSelected = (row == selected);
 
-        g.setColour (isDropTarget ? rowDropTarget : (isSelected ? rowSelected : rowNavy));
-        g.fillRoundedRectangle (bounds.toFloat(), 4.0f);
+        // A row is drawn as a toggle, because that is what it is: a choice that
+        // is either the one in force or not. Same navy, same border, same lit
+        // fill and same meter-driven bloom as every toggle on the main panel --
+        // which is why the colours below are the toggle's, not this window's.
+        const auto rowCorner = 4.0f;
+        const bool lit = isSelected || isDropTarget;
 
-        if (isDropTarget)
-        {
-            g.setColour (knobArcCyan);
-            g.drawRoundedRectangle (bounds.toFloat().reduced (1.0f), 4.0f, 2.0f);
-        }
-        else if (isSelected)
-        {
-            g.setColour (knobArcCyan.withAlpha (0.85f));
-            g.drawRoundedRectangle (bounds.toFloat().reduced (1.0f), 4.0f, 1.4f);
-        }
+        if (lit)
+            lookAndFeel.glowAround (g, bounds.toFloat().expanded (2.0f), rowCorner + 1.0f,
+                                    isDropTarget ? knobArcCyan
+                                                 : lookAndFeel.getMeterResponsiveKnobArcColour());
+
+        g.setColour (isDropTarget ? rowDropTarget : (isSelected ? toggleLitNavy : toggleNavy));
+        g.fillRoundedRectangle (bounds.toFloat(), rowCorner);
+
+        g.setColour (isDropTarget ? knobArcCyan
+                                  : (isSelected ? toggleLitBorder : toggleBorder));
+        g.drawRoundedRectangle (bounds.toFloat().reduced (0.5f), rowCorner,
+                                lit ? 1.5f : 1.0f);
 
         auto content = bounds.reduced (8, 4);
 
         // The same picture beside every entry, built-in or imported, because the
         // whole point of the list is that they are the same kind of thing.
+        //
+        // One hue for every row, at two weights: the scopes' blue, dropped back
+        // on the rows that are not selected. It used to be cyan when selected
+        // and a flat grey otherwise, which read as two different kinds of line.
+        // Tight: eighteen of these can be on screen together, and the wide spread
+        // that suits the single big picture below adds up to a glare here.
         paintRowWaveform (g, content.removeFromLeft (38), row,
-                          isSelected ? knobArcCyan : dimText, 1.2f, 2);
+                          isSelected ? traceColour() : traceColour().withAlpha (0.45f),
+                          1.2f, 2, Bloom::Tight);
 
         content.removeFromLeft (10);
 
         auto nameRow = content.removeFromTop (content.getHeight() / 2 + 1);
 
         g.setColour (isSelected ? juce::Colours::white : labelCyan);
-        g.setFont (lookAndFeel.getBodyFont (13.0f, true));
+        g.setFont (lookAndFeel.getBodyFont (12.0f, true));
         g.drawText (rowName (row), nameRow, juce::Justification::bottomLeft, true);
 
         g.setColour (isSelected ? valueCyan : dimText);
-        g.setFont (lookAndFeel.getBodyFont (11.0f, false));
+        g.setFont (lookAndFeel.getBodyFont (10.5f, false));
         g.drawText (rowDetail (row), content, juce::Justification::topLeft, true);
     }
 
@@ -861,7 +971,7 @@ void WaveformEditorComponent::paintList (juce::Graphics& g)
     juce::PathStrokeType (zoneIsTarget ? 2.0f : 1.0f).createDashedStroke (strokedDashes, dashed,
                                                                           dashes, 2);
 
-    g.setColour (zoneIsTarget ? knobArcCyan : juce::Colour (0xff303050));
+    g.setColour (zoneIsTarget ? knobArcCyan : toggleBorder);
     g.fillPath (strokedDashes);
 
     g.setColour (zoneIsTarget ? knobArcCyan : dimText);
@@ -877,7 +987,7 @@ void WaveformEditorComponent::paintDetail (juce::Graphics& g)
     auto content = detailBounds().reduced (groupPadding, 0);
     content.removeFromTop (groupTitleInset);
     content.removeFromBottom (groupPadding);
-    content.removeFromBottom (72);   // the control strip laid out in resized()
+    content.removeFromBottom (controlStripHeight);   // the strip laid out in resized()
 
     const int row = rowForSelection();
 
@@ -962,10 +1072,13 @@ void WaveformEditorComponent::paintDetail (juce::Graphics& g)
     g.drawFittedText (note, noteArea, juce::Justification::centredLeft, 2);
 
     //==========================================================================
-    g.setColour (juce::Colour (0xff08081a));
+    // The oscilloscope's own background and the panel's border, so the box a
+    // waveform is drawn in here and the box one is drawn in on the Spectral page
+    // are the same box.
+    g.setColour (backgroundNavy);
     g.fillRoundedRectangle (content.toFloat(), 4.0f);
 
-    g.setColour (juce::Colour (0xff2a2a50));
+    g.setColour (toggleBorder);
     g.drawRoundedRectangle (content.toFloat(), 4.0f, 1.0f);
     g.drawHorizontalLine (content.getCentreY(), (float) content.getX() + 2.0f,
                           (float) content.getRight() - 2.0f);
@@ -974,7 +1087,10 @@ void WaveformEditorComponent::paintDetail (juce::Graphics& g)
     // sample, because that is the thing itself.
     const bool wholeSample = (entry != nullptr && entry->mode == UserWave::Mode::FullSample);
 
-    paintRowWaveform (g, content.reduced (6, 8), row, knobArcCyan, 1.5f, wholeSample ? 1 : 2);
+    // The EQ curve's own weight and its own spread -- one open curve alone in a
+    // box, which is exactly what that treatment was drawn for.
+    paintRowWaveform (g, content.reduced (6, 8), row, traceColour(), 1.8f,
+                      wholeSample ? 1 : 2, Bloom::Wide);
 
     //==========================================================================
     // Mark the loop: the ends of a file are reserved for the crossfade, so what
@@ -1045,7 +1161,7 @@ void WaveformEditorWindow::showFor (juce::ComboBox* targetCombo, int userBase,
     // The five lists are separate, so the title bar says which one is open. The
     // window is reused, and without this a second Edit button would raise a
     // window that looks identical to the one just closed.
-    setName ("Space Dust - " + juce::String (UserWave::groupName (group)) + " Waveforms");
+    setName ("Space Dust - " + juce::String (UserWave::groupName (group)));
 
     if (content != nullptr)
     {
@@ -1077,4 +1193,10 @@ void WaveformEditorWindow::refreshContent()
 {
     if (content != nullptr)
         content->refresh();
+}
+
+void WaveformEditorWindow::repaintContent()
+{
+    if (content != nullptr)
+        content->repaint();
 }

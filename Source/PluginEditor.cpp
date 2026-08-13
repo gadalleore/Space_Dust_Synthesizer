@@ -16,225 +16,13 @@ namespace
         return juce::String(raw);
     }
 
-    // Astronomically accurate starfield: Costa Mesa, CA (33.66Â°N, 117.90Â°W)
-    // March 29, 2026 at midnight PDT â€” commemorating the completion of Space Dust.
-    // Star positions from Yale Bright Star Catalog (J2000.0 epoch), projected via
-    // horizontal coordinate transform for the exact date/time/location.
-    // Bortle 7-8 sky (moderate light pollution): ~mag 4.0 naked-eye limit.
+    // The starfield moved to SpaceDustLookAndFeel, because the Waveforms window
+    // needs the same sky behind it and could not reach a function private to this
+    // file. Kept as a forwarder rather than changing the call sites: the five
+    // pages below each paint their own background and all say drawStarfield.
     void drawStarfield(juce::Graphics& g, int w, int h, float meterLevel = 0.0f)
     {
-        if (w <= 0 || h <= 0) return;
-        // Stars breathe with the audio: up to 15% brighter at full level
-        const float meterBoost = 1.0f + 0.15f * juce::jlimit(0.0f, 1.0f, meterLevel);
-
-        // Star catalog: {RA (degrees), Dec (degrees), apparent magnitude}
-        struct CatStar { float ra, dec, mag; };
-        static const CatStar catalog[] = {
-            // -- Orion (setting in west) --
-            {88.79f,   7.41f, 0.50f},   // Betelgeuse (Î± Ori)
-            {78.63f,  -8.20f, 0.13f},   // Rigel (Î² Ori)
-            {81.28f,   6.35f, 1.64f},   // Bellatrix (Î³ Ori)
-            {83.00f,  -0.30f, 2.23f},   // Mintaka (Î´ Ori)
-            {84.05f,  -1.20f, 1.69f},   // Alnilam (Îµ Ori)
-            {85.19f,  -1.94f, 1.77f},   // Alnitak (Î¶ Ori)
-            {86.94f,  -9.67f, 2.09f},   // Saiph (Îº Ori)
-            // -- Canis Major --
-            {101.29f,-16.72f,-1.46f},   // Sirius (Î± CMa)
-            {95.68f, -17.96f, 1.98f},   // Mirzam (Î² CMa)
-            {107.10f,-26.39f, 1.84f},   // Adhara (Îµ CMa)
-            {104.66f,-28.97f, 1.50f},   // Wezen (Î´ CMa)
-            // -- Canis Minor --
-            {114.83f,  5.22f, 0.34f},   // Procyon (Î± CMi)
-            {111.79f,  8.29f, 2.90f},   // Gomeisa (Î² CMi)
-            // -- Gemini --
-            {116.33f, 28.03f, 1.14f},   // Pollux (Î² Gem)
-            {113.65f, 31.89f, 1.58f},   // Castor (Î± Gem)
-            {99.43f,  16.40f, 1.93f},   // Alhena (Î³ Gem)
-            {95.74f,  22.51f, 2.88f},   // Tejat (Î¼ Gem)
-            {100.98f, 25.13f, 2.98f},   // Mebsuta (Îµ Gem)
-            {110.03f, 21.98f, 3.53f},   // Wasat (Î´ Gem)
-            // -- Auriga --
-            {79.17f,  46.00f, 0.08f},   // Capella (Î± Aur)
-            {89.88f,  44.95f, 1.90f},   // Menkalinan (Î² Aur)
-            // -- Taurus --
-            {68.98f,  16.51f, 0.85f},   // Aldebaran (Î± Tau)
-            {81.57f,  28.61f, 1.65f},   // Elnath (Î² Tau)
-            // -- Leo --
-            {152.09f, 11.97f, 1.35f},   // Regulus (Î± Leo)
-            {177.27f, 14.57f, 2.14f},   // Denebola (Î² Leo)
-            {154.99f, 19.84f, 2.28f},   // Algieba (Î³ Leo)
-            {168.53f, 20.52f, 2.56f},   // Zosma (Î´ Leo)
-            {168.56f, 15.43f, 3.34f},   // Chertan (Î¸ Leo)
-            {154.17f, 23.42f, 3.44f},   // Adhafera (Î¶ Leo)
-            {151.83f, 16.76f, 3.52f},   // Î· Leo
-            // -- Virgo --
-            {201.30f,-11.16f, 0.97f},   // Spica (Î± Vir)
-            {190.42f, -1.45f, 2.74f},   // Porrima (Î³ Vir)
-            {195.54f, 10.96f, 2.83f},   // Vindemiatrix (Îµ Vir)
-            // -- BoÃ¶tes --
-            {213.92f, 19.18f,-0.05f},   // Arcturus (Î± Boo)
-            {221.25f, 27.07f, 2.70f},   // Izar (Îµ Boo)
-            {208.67f, 18.40f, 2.68f},   // Muphrid (Î· Boo)
-            {218.02f, 38.31f, 3.03f},   // Seginus (Î³ Boo)
-            {225.49f, 40.39f, 3.50f},   // Nekkar (Î² Boo)
-            // -- Ursa Major (Big Dipper high overhead) --
-            {165.93f, 61.75f, 1.79f},   // Dubhe (Î± UMa)
-            {165.46f, 56.38f, 2.37f},   // Merak (Î² UMa)
-            {178.46f, 53.69f, 2.44f},   // Phecda (Î³ UMa)
-            {183.86f, 57.03f, 3.31f},   // Megrez (Î´ UMa)
-            {193.51f, 55.96f, 1.77f},   // Alioth (Îµ UMa)
-            {200.98f, 54.93f, 2.27f},   // Mizar (Î¶ UMa)
-            {206.89f, 49.31f, 1.86f},   // Alkaid (Î· UMa)
-            {155.58f, 41.50f, 3.05f},   // Tania Australis (Î¼ UMa)
-            {154.27f, 42.91f, 3.45f},   // Tania Borealis (Î» UMa)
-            {169.62f, 33.09f, 3.49f},   // Alula Borealis (Î½ UMa)
-            {169.55f, 31.53f, 3.79f},   // Alula Australis (Î¾ UMa)
-            {201.31f, 54.99f, 4.01f},   // Alcor (80 UMa)
-            // -- Ursa Minor --
-            {37.95f,  89.26f, 1.98f},   // Polaris (Î± UMi)
-            {222.68f, 74.16f, 2.08f},   // Kochab (Î² UMi)
-            {230.18f, 71.83f, 3.05f},   // Pherkad (Î³ UMi)
-            // -- Hydra --
-            {141.90f, -8.66f, 1.98f},   // Alphard (Î± Hya)
-            // -- Cancer --
-            {124.13f,  9.19f, 3.52f},   // Al Tarf (Î² Cnc)
-            {131.17f, 18.15f, 3.94f},   // Asellus Australis (Î´ Cnc)
-            // -- Corvus --
-            {183.95f,-17.54f, 2.59f},   // Gienah (Î³ Crv)
-            {188.60f,-23.40f, 2.65f},   // Kraz (Î² Crv)
-            {187.47f,-16.52f, 2.95f},   // Algorab (Î´ Crv)
-            {182.53f,-22.62f, 3.02f},   // Minkar (Îµ Crv)
-            // -- Canes Venatici --
-            {194.01f, 38.32f, 2.90f},   // Cor Caroli (Î± CVn)
-            // -- Corona Borealis --
-            {233.67f, 26.71f, 2.23f},   // Alphecca (Î± CrB)
-            // -- Draco --
-            {269.15f, 51.49f, 2.23f},   // Eltanin (Î³ Dra)
-            {262.61f, 52.30f, 2.79f},   // Rastaban (Î² Dra)
-            {211.10f, 64.38f, 3.65f},   // Thuban (Î± Dra)
-            // -- Hercules --
-            {247.55f, 21.49f, 2.77f},   // Kornephoros (Î² Her)
-            {250.32f, 31.60f, 2.81f},   // Î¶ Her
-            {258.76f, 36.81f, 3.16f},   // Ï€ Her
-            {258.76f, 24.84f, 3.14f},   // Sarin (Î´ Her)
-            {258.66f, 14.39f, 3.48f},   // Rasalgethi (Î± Her)
-            {266.62f, 27.72f, 3.42f},   // Î¼ Her
-            {250.72f, 38.92f, 3.53f},   // Î· Her
-            // -- Serpens --
-            {236.07f,  6.43f, 2.65f},   // Unukalhai (Î± Ser)
-            // -- Libra --
-            {222.72f,-16.04f, 2.75f},   // Zubenelgenubi (Î± Lib)
-            {229.25f, -9.38f, 2.61f},   // Zubeneschamali (Î² Lib)
-            // -- Lyra --
-            {279.23f, 38.78f, 0.03f},   // Vega (Î± Lyr)
-            // -- Cygnus --
-            {310.36f, 45.28f, 1.25f},   // Deneb (Î± Cyg)
-            // -- Centaurus --
-            {211.67f,-36.37f, 2.06f},   // Menkent (Î¸ Cen)
-            // -- Perseus (low NW) --
-            {51.08f,  49.86f, 1.80f},   // Mirfak (Î± Per)
-            // -- Lynx --
-            {140.26f, 34.39f, 3.13f},   // Î± Lyn
-            // -- Leo Minor --
-            {163.33f, 34.22f, 3.83f},   // Praecipua (46 LMi)
-            // -- Cepheus --
-            {319.65f, 62.59f, 2.51f},   // Alderamin (Î± Cep)
-            // -- Ophiuchus --
-            {263.73f, 12.56f, 2.08f},   // Rasalhague (Î± Oph)
-            // -- Monoceros --
-            {107.99f, -0.49f, 3.93f},   // Î± Mon
-            // -- Cassiopeia (low north) --
-            {10.13f,  56.54f, 2.23f},   // Schedar (Î± Cas)
-            {2.29f,   59.15f, 2.27f},   // Caph (Î² Cas)
-        };
-        static const int catalogSize = sizeof(catalog) / sizeof(catalog[0]);
-
-        // Projected star cache (computed once, reused every paint)
-        struct ProjStar { float nx, ny, brightness; };
-        static ProjStar projected[200];
-        static int projCount = 0;
-        static bool computed = false;
-
-        if (!computed)
-        {
-            computed = true;
-            projCount = 0;
-
-            // Costa Mesa, CA: 33.6646Â°N, 117.9034Â°W
-            // March 29, 2026 midnight PDT (UTC-7) = 07:00 UTC
-            // GMST at 0h UTC: 188.81Â° + 7h sidereal rotation (105.29Â°) = 294.10Â°
-            // LST = GMST + longitude = 294.10 + (-117.90) = 176.20Â°
-            constexpr float lat       = 33.6646f;
-            constexpr float lst       = 176.20f;
-            constexpr float degToRad  = 3.14159265f / 180.0f;
-            constexpr float minAlt    = 5.0f;    // horizon cutoff (obstructions + haze)
-            constexpr float maxMag    = 4.2f;    // Bortle 7-8 naked-eye limit
-            constexpr float minMag    = -1.5f;
-            const float sinLat = std::sin(lat * degToRad);
-            const float cosLat = std::cos(lat * degToRad);
-            const float sinMinAlt = std::sin(minAlt * degToRad);
-
-            for (int i = 0; i < catalogSize && projCount < 200; ++i)
-            {
-                const auto& s = catalog[i];
-                if (s.mag > maxMag) continue;
-
-                float ha     = (lst - s.ra) * degToRad;
-                float sinDec = std::sin(s.dec * degToRad);
-                float cosDec = std::cos(s.dec * degToRad);
-
-                // Altitude
-                float sinAlt = sinDec * sinLat + cosDec * cosLat * std::cos(ha);
-                if (sinAlt < sinMinAlt) continue;  // below horizon / obstructed
-
-                float alt    = std::asin(sinAlt) / degToRad;
-                float cosAlt = std::cos(alt * degToRad);
-                if (cosAlt < 0.001f) cosAlt = 0.001f;  // zenith guard
-
-                // Azimuth (0Â°=N, 90Â°=E, 180Â°=S, 270Â°=W)
-                float sinAz = -cosDec * std::sin(ha) / cosAlt;
-                float cosAz = (sinDec - sinLat * sinAlt) / (cosLat * cosAlt);
-                float az    = std::atan2(sinAz, cosAz) / degToRad;
-                if (az < 0.0f) az += 360.0f;
-
-                // Cylindrical equidistant projection to normalized coords
-                float nx = az / 360.0f;
-                float ny = 1.0f - (alt / 90.0f);
-
-                // Brightness from magnitude (linear in perceptual range)
-                float brightness = (maxMag - s.mag) / (maxMag - minMag);
-                brightness = juce::jlimit(0.0f, 1.0f, brightness);
-
-                projected[projCount++] = { nx, ny, brightness };
-            }
-        }
-
-        // Draw catalog stars
-        for (int i = 0; i < projCount; ++i)
-        {
-            const auto& s = projected[i];
-            float alpha  = (60.0f + 130.0f * s.brightness) * meterBoost;
-            float radius = (0.6f + 1.5f * s.brightness) * meterBoost;
-            g.setColour(juce::Colour(255, 255, 255).withAlpha(
-                static_cast<juce::uint8>(juce::jlimit(0, 255, static_cast<int>(alpha)))));
-            float px = s.nx * static_cast<float>(w);
-            float py = s.ny * static_cast<float>(h);
-            g.fillEllipse(px - radius, py - radius, radius * 2.0f, radius * 2.0f);
-        }
-
-        // Faint filler stars (threshold-of-visibility, deterministic positions)
-        for (int i = 0; i < 35; ++i)
-        {
-            unsigned int hash = static_cast<unsigned int>((i + 500) * 2654435761u);
-            float sx = static_cast<float>(hash % static_cast<unsigned int>(w));
-            hash = (hash >> 13) ^ (hash * 1597334677u);
-            float sy = static_cast<float>(hash % static_cast<unsigned int>(h));
-            hash = (hash >> 7) ^ (hash * 2246822519u);
-            juce::uint8 alpha = static_cast<juce::uint8>(juce::jlimit(0, 255,
-                static_cast<int>((22 + (hash % 26)) * meterBoost)));
-            g.setColour(juce::Colour(255, 255, 255).withAlpha(alpha));
-            g.fillEllipse(sx - 0.5f, sy - 0.5f, 1.0f, 1.0f);
-        }
+        SpaceDustLookAndFeel::drawStarfield(g, w, h, meterLevel);
     }
 
     //==========================================================================
@@ -6998,6 +6786,15 @@ void SpaceDustAudioProcessorEditor::timerCallback()
         lastPaintedGlowLevel_ = glowMeterLevel_;
         lastPaintedClipping_  = nowClipping;
         repaint();
+
+        // The Waveforms window is a window of its own, so this editor's repaint
+        // does not reach it -- but it shares this LookAndFeel, and its waveforms
+        // and buttons bloom off the same level. Without this line they would
+        // hold whatever glow they had when they were last drawn for some other
+        // reason. Inside the guard, so it costs nothing at silence, and only
+        // while the window is actually open.
+        if (waveformWindow != nullptr && waveformWindow->isVisible())
+            waveformWindow->repaintContent();
     }
 
 
