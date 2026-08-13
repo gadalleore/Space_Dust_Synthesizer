@@ -456,9 +456,17 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
         // The same RGB dither the meters use, on the other thing in the UI that
         // moves by itself. Drawn BEFORE the arc so the arc lands on its own tail.
         //
-        // The head travels along a curve, but the streak is a straight offset, so
-        // this smears along the CHORD between where the head was and where it is.
-        // Over one frame's travel the difference is not visible.
+        // The head travels along a curve and the streak follows it, stamp by
+        // stamp, about the dial's own centre.
+        //
+        // It used to smear along the CHORD between where the head was and where
+        // it is, on the grounds that over one frame's travel the difference is
+        // not visible. That holds only while the travel is short. The lag
+        // follower can sit a long way behind the level when a note starts, and
+        // the chord between two widely separated points on a circle passes close
+        // to its centre -- so the smear was drawn straight across the face of the
+        // dial, on every knob at once, since they all move off the one shared
+        // level (Giuseppe, 2026-08-12).
         //
         // Fewer steps than the meters use: this runs once per knob and there are a
         // lot of knobs, where the meters are two bars.
@@ -481,18 +489,15 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
             const float lagAngle = rotaryStartAngle
                                  + (angle - rotaryStartAngle) * outputMeterLag;
 
-            auto pointAt = [&](float a)
-            {
-                return juce::Point<float>(centreX + std::sin(a) * arcRadius,
-                                          centreY - std::cos(a) * arcRadius);
-            };
-
-            const auto headP = pointAt(levelAngle);
-            const auto fromP = pointAt(lagAngle);
-            const auto disp  = fromP - headP;
+            // How far the head has travelled, measured ALONG the arc rather than
+            // across the chord. The two agree for small movements and diverge for
+            // large ones, and it is the arc that the stamps now follow, so the
+            // arc is what the threshold has to be tested against.
+            const float sweep     = lagAngle - levelAngle;
+            const float travelPx  = std::abs(sweep) * arcRadius;
 
             if (levelAngle - rotaryStartAngle > kMinSweep
-                && disp.getDistanceFromOrigin() >= kKnobTrailMinSmear)
+                && travelPx >= kKnobTrailMinSmear)
             {
                 // Only the last stroke-width of arc smears, matching the meters
                 // streaking just the top of the bar rather than the whole column.
@@ -508,8 +513,8 @@ void SpaceDustLookAndFeel::drawRotarySlider(juce::Graphics& g, int x, int y, int
                                      juce::PathStrokeType::butt)
                     .createStrokedPath(headShape, headArc);
 
-                SpaceDustDither::streakRgb(g, headShape, disp,
-                                           kKnobTrailSteps, kKnobTrailAlpha, *ditherTiles);
+                SpaceDustDither::streakRgbArc(g, headShape, { centreX, centreY }, sweep,
+                                              kKnobTrailSteps, kKnobTrailAlpha, *ditherTiles);
             }
         }
 

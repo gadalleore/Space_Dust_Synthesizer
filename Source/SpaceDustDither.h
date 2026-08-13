@@ -126,9 +126,9 @@ namespace SpaceDustDither
                 g.drawImageAt(tile, x, y);
     }
 
-    /** Stamps `shape`, displaced by `offset`, in one colour channel's stipple. */
+    /** Stamps `shape`, moved by `transform`, in one colour channel's stipple. */
     inline void fillPathChannel(juce::Graphics& g, const juce::Path& shape,
-                                juce::Point<float> offset, Chan c, float alpha,
+                                const juce::AffineTransform& transform, Chan c, float alpha,
                                 const Tiles& tiles)
     {
         if (shape.isEmpty() || alpha <= 0.0f)
@@ -136,12 +136,21 @@ namespace SpaceDustDither
 
         auto ghost = shape;
 
-        if (! offset.isOrigin())
-            ghost.applyTransform(juce::AffineTransform::translation(offset.x, offset.y));
+        if (! transform.isIdentity())
+            ghost.applyTransform(transform);
 
         juce::Graphics::ScopedSaveState saved(g);
         g.reduceClipRegion(ghost);
         tileOver(g, tiles.get(c), ghost.getBounds(), alpha);
+    }
+
+    /** Stamps `shape`, displaced by `offset`, in one colour channel's stipple. */
+    inline void fillPathChannel(juce::Graphics& g, const juce::Path& shape,
+                                juce::Point<float> offset, Chan c, float alpha,
+                                const Tiles& tiles)
+    {
+        fillPathChannel(g, shape, juce::AffineTransform::translation(offset.x, offset.y),
+                        c, alpha, tiles);
     }
 
     /** Ghost trail for a TRACE that redraws itself wholesale every frame -- the
@@ -211,6 +220,39 @@ namespace SpaceDustDither
             // Linear falloff with distance: far enough back to read as a tail,
             // without the aggressive curve that made it vanish entirely.
             fillPathChannel(g, shape, offset, order[i % 3], alpha * (1.0f - t * 0.75f), tiles);
+        }
+    }
+
+    /** As streakRgb, but the stamps travel along an ARC about `centre` rather
+        than along a straight line.
+
+        For anything that moves in a circle -- a knob's arc head -- a straight
+        streak is only right while the travel is short, because a chord and its
+        arc agree over a small angle and diverge fast after that. On a big jump,
+        such as the level slamming up when a note starts, the chord between where
+        the head was and where it is passes near the CENTRE of the dial, and the
+        smear was drawn straight across the knob's face (Giuseppe, 2026-08-12).
+
+        Rotating each stamp instead keeps every one of them on the arc, whatever
+        the distance travelled, so the tail follows the curve it belongs to. It
+        costs the same: one transform per stamp either way. */
+    inline void streakRgbArc(juce::Graphics& g, const juce::Path& shape,
+                             juce::Point<float> centre, float sweepRadians,
+                             int steps, float alpha, const Tiles& tiles)
+    {
+        if (shape.isEmpty() || steps <= 0 || alpha <= 0.0f)
+            return;
+
+        static constexpr Chan order[] = { Chan::r, Chan::g, Chan::b };
+
+        // Furthest-back first, so nearer and brighter stamps land on top.
+        for (int i = steps; i >= 1; --i)
+        {
+            const float t = (float) i / (float) steps;
+
+            fillPathChannel(g, shape,
+                            juce::AffineTransform::rotation(sweepRadians * t, centre.x, centre.y),
+                            order[i % 3], alpha * (1.0f - t * 0.75f), tiles);
         }
     }
 }
