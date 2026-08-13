@@ -3196,13 +3196,42 @@ void SpectralPageComponent::drawLissajous(juce::Graphics& g, juce::Rectangle<int
 // X = octave up to the default QWERTY note mapping. resetAnyKeysInUse() is called
 // before each shift so a key held across an octave change can't strand a note-on
 // (the note-off would otherwise be computed at the new octave and never match).
+//
+// It also paints itself, because JUCE's default keyboard is a plain white-and-black
+// piano and the panel above it is a dark sky with cyan light on it -- the keys were
+// the one part of the Standalone that did not look like the instrument (Giuseppe,
+// 2026-08-12). The keybed is dark, the keys are lit from their front edge, and every
+// glow here goes through the SAME SpaceDustLookAndFeel helpers the knobs and group
+// boxes use, so the keyboard blooms with the rest of the UI off one output level
+// and turns red with it on clipping. Nothing about the geometry or the playing
+// behaviour changes: only drawKeyboardBackground / drawWhiteNote / drawBlackNote /
+// drawUpDownButton are overridden.
 namespace
 {
     class StandaloneKeyboard : public juce::MidiKeyboardComponent
     {
     public:
         StandaloneKeyboard(juce::MidiKeyboardState& s, Orientation o)
-            : juce::MidiKeyboardComponent(s, o), kbState(s) {}
+            : juce::MidiKeyboardComponent(s, o), kbState(s)
+        {
+            // Switch off everything the base class paints that is NOT a key.
+            //
+            // MidiKeyboardComponent::drawKeyboardBackground is final, so the keybed
+            // cannot be replaced by overriding it; paint() below draws ours first and
+            // then lets the base run. Clearing these three colours is what stops the
+            // base painting its own white fill, top shadow and bottom rule straight
+            // over the top of it. The keys themselves are still ours -- drawWhiteNote
+            // and drawBlackNote are not final.
+            setColour(whiteNoteColourId,        juce::Colours::transparentBlack);
+            setColour(shadowColourId,           juce::Colours::transparentBlack);
+            setColour(keySeparatorLineColourId, juce::Colours::transparentBlack);
+
+            // colourChanged() has just made us non-opaque, because it judges that by
+            // the white-note colour we cleared above. paintKeybed() fills every pixel,
+            // so declare it back: an opaque component spares JUCE an alpha pass over
+            // the whole strip on every frame the glow moves.
+            setOpaque(true);
+        }
 
         bool keyPressed(const juce::KeyPress& key) override
         {
@@ -3235,7 +3264,348 @@ namespace
             juce::MidiKeyboardComponent::focusLost(cause);
         }
 
+        //======================================================================
+        // -- The keyboard, dressed as part of the panel --
+
+        void paint(juce::Graphics& g) override
+        {
+            paintKeybed(g, getLocalBounds().toFloat());
+
+            // The base draws the keys through drawWhiteNote / drawBlackNote below.
+            // Its own background pass is inert -- see the colours cleared in the ctor.
+            juce::MidiKeyboardComponent::paint(g);
+
+            paintHeldKeyBloom(g);
+        }
+
+        /** The light a played key throws over the keys around it (Giuseppe,
+            2026-08-12: "make the keys glow the same way everything else does when
+            I play").
+
+            It is glowAround() -- the same helper the toggles and combo boxes bloom
+            with -- so a played key breathes with the output level and goes red on
+            clipping exactly when they do. What is different here is only WHEN it is
+            drawn, and that is forced by the base class's paint order.
+
+            glowAround() wants to be drawn before the control's own fill, so the fill
+            covers the blurred core and only the outward spill survives. Inside
+            drawWhiteNote() that does not work: the base draws the naturals left to
+            right, so the neighbour drawn next paints over the right-hand half of the
+            halo and a held key ends up glowing on one side only. So the bloom runs
+            here, after every key is down, and each held key's own face is put back on
+            top of its halo -- glowAround()'s contract kept, just resequenced.
+
+            The three passes are the paint order the base itself uses, for the same
+            reason: a natural's rectangle runs UNDER the accidentals beside it, so
+            re-facing one erases them, and they have to go back before the accidentals
+            get their own light. */
+        void paintHeldKeyBloom(juce::Graphics& g)
+        {
+            auto* lf = getSpaceDust();
+
+            if (lf == nullptr || lf->getGlowAmount() <= 0.01f)
+                return;
+
+            const auto lit  = litColour(lf);
+            const int  mask = getMidiChannelsToDisplay();
+
+            const auto isHeld = [&](int note)
+            {
+                return kbState.isNoteOnForChannels(mask, note);
+            };
+
+            const auto bloomAndReface = [&](int note, bool isBlack)
+            {
+                const auto area = getRectangleForKey(note);
+
+                if (area.isEmpty())
+                    return;
+
+                lf->glowAround(g, keyBody(area), isBlack ? 2.5f : 3.0f, lit);
+
+                if (isBlack) drawBlackNote(note, g, area, true, false, {});
+                else         drawWhiteNote(note, g, area, true, false, {}, {});
+            };
+
+            // 1. Naturals, with their light over whatever is beside them.
+            for (int note = getRangeStart(); note <= getRangeEnd(); ++note)
+                if (isHeld(note) && ! juce::MidiMessage::isMidiNoteBlack(note))
+                    bloomAndReface(note, false);
+
+            // 2. The accidentals a re-faced natural has just painted over, put back in
+            //    the state they were already drawn in. A held one is skipped: pass 3
+            //    draws it, lit and blooming.
+            for (int note = getRangeStart(); note <= getRangeEnd(); ++note)
+            {
+                if (! isHeld(note) || juce::MidiMessage::isMidiNoteBlack(note))
+                    continue;
+
+                for (const int side : { -1, 1 })
+                {
+                    const int neighbour = note + side;
+
+                    if (neighbour >= getRangeStart() && neighbour <= getRangeEnd()
+                        && juce::MidiMessage::isMidiNoteBlack(neighbour) && ! isHeld(neighbour))
+                    {
+                        const auto area = getRectangleForKey(neighbour);
+
+                        if (! area.isEmpty())
+                            drawBlackNote(neighbour, g, area, false, false, {});
+                    }
+                }
+            }
+
+            // 3. Accidentals last, so their light lands on top of the naturals' --
+            //    the order the base draws them in, and the order they sit in.
+            for (int note = getRangeStart(); note <= getRangeEnd(); ++note)
+                if (isHeld(note) && juce::MidiMessage::isMidiNoteBlack(note))
+                    bloomAndReface(note, true);
+        }
+
+        /** The keybed the keys sit in.
+            The base class fills this with the white-note colour; here it is the dark
+            trough under the panel, closed at the top by a lit rail. That rail is the
+            seam between the layout above and the keys below, and it is the one line
+            in the strip that blooms with the output -- the same edge-of-a-lit-panel
+            idea the group boxes' outlines carry. */
+        void paintKeybed(juce::Graphics& g, juce::Rectangle<float> area)
+        {
+            auto* lf = getSpaceDust();
+
+            juce::ColourGradient trough(juce::Colour(kTroughTop),    area.getX(), area.getY(),
+                                        juce::Colour(kTroughBottom), area.getX(), area.getBottom(),
+                                        false);
+            g.setGradientFill(trough);
+            g.fillRect(area);
+
+            const auto edge = litColour(lf);
+            const auto rail = area.withHeight(1.0f);
+
+            if (lf != nullptr)
+                lf->glowRect(g, rail, edge);
+
+            g.setColour(edge.withAlpha(0.55f));
+            g.fillRect(rail);
+        }
+
+        /** A natural key: a dark slab, lighter towards the player, with a lit front
+            lip. The lip is what reads as "this is a key" on a dark keybed, so every
+            white note has one; a C has a brighter one, which is what makes the
+            octaves countable at a glance now that the keys are no longer white.
+
+            lineColour and textColour are ignored: the separator is the trough showing
+            through the gap between slabs, and the note names are drawn in the panel's
+            own label cyan rather than in a colour set on the component. */
+        void drawWhiteNote(int midiNoteNumber, juce::Graphics& g, juce::Rectangle<float> area,
+                           bool isDown, bool isOver, juce::Colour, juce::Colour) override
+        {
+            auto* lf = getSpaceDust();
+            const auto lit = litColour(lf);
+            const float bloom = bloomAmount(lf);
+
+            // Half a pixel off each side leaves the trough visible between slabs, so
+            // the keys are separated by the background rather than by a drawn line.
+            const auto body = keyBody(area);
+            const auto keyShape = bottomRounded(body, 3.0f);
+            const bool isC = (midiNoteNumber % 12) == 0;
+
+            if (isDown)
+            {
+                // The held key's own face brightens with the output, the way the knob
+                // arcs fill with it -- a key you are holding through a decayed note is
+                // still plainly held, but it is at its brightest while the note sounds.
+                const auto face = lit.withMultipliedBrightness(0.6f + 0.4f * bloom);
+
+                g.setGradientFill({ face.withMultipliedBrightness(0.45f), body.getX(), body.getY(),
+                                    face,                                body.getX(), body.getBottom(),
+                                    false });
+            }
+            else
+            {
+                g.setGradientFill({ juce::Colour(kWhiteTop),    body.getX(), body.getY(),
+                                    juce::Colour(kWhiteBottom), body.getX(), body.getBottom(),
+                                    false });
+            }
+
+            g.fillPath(keyShape);
+
+            if (isOver && ! isDown)
+            {
+                g.setColour(lit.withAlpha(0.12f));
+                g.fillPath(keyShape);
+            }
+
+            // The front lip: a quiet cyan on a resting key, brighter on a C, and none
+            // at all on a held one (the whole face is lit there). It lifts with the
+            // output as well, so the whole bed breathes rather than only the key being
+            // played.
+            const float lipAlpha = isDown ? 0.0f
+                                          : (isC ? 0.45f : 0.22f) * (1.0f + 0.6f * bloom);
+
+            if (lipAlpha > 0.0f)
+            {
+                g.setColour(lit.withAlpha(lipAlpha));
+                g.fillPath(bottomRounded(body.withTop(body.getBottom() - 2.0f), 1.0f));
+            }
+
+            // A hairline down the left side keeps neighbouring slabs apart when the
+            // gradient brings them close in tone.
+            g.setColour(juce::Colour(kSeamDark).withAlpha(isDown ? 0.35f : 0.8f));
+            g.fillRect(body.withWidth(1.0f));
+
+            if (const auto text = getWhiteNoteText(midiNoteNumber); text.isNotEmpty())
+            {
+                g.setFont(lf != nullptr ? lf->getBodyFont(9.0f, true)
+                                        : juce::Font(juce::FontOptions(9.0f)));
+
+                // Dark on a lit key, cyan on a dark one: the label keeps its contrast
+                // either way round.
+                g.setColour(isDown ? juce::Colour(kTroughBottom).withAlpha(0.85f)
+                                   : juce::Colour(kLabelCyan).withAlpha(0.6f));
+
+                g.drawText(text, body.withTrimmedBottom(4.0f).toNearestInt(),
+                           juce::Justification::centredBottom, false);
+            }
+        }
+
+        /** An accidental: near-black, so it still reads as the shorter, darker key on
+            a dark keybed, held apart from its neighbours by a cyan rim rather than by
+            being a different black. Lit, it is the same cyan a natural goes. */
+        void drawBlackNote(int, juce::Graphics& g, juce::Rectangle<float> area,
+                           bool isDown, bool isOver, juce::Colour) override
+        {
+            auto* lf = getSpaceDust();
+            const auto lit = litColour(lf);
+            const float bloom = bloomAmount(lf);
+
+            const auto body = keyBody(area);
+            const auto keyShape = bottomRounded(body, 2.5f);
+
+            if (isDown)
+            {
+                // Brightens with the output, exactly as a natural does.
+                const auto face = lit.withMultipliedBrightness(0.6f + 0.4f * bloom);
+
+                g.setGradientFill({ face.withMultipliedBrightness(0.35f), body.getX(), body.getY(),
+                                    face,                                body.getX(), body.getBottom(),
+                                    false });
+            }
+            else
+            {
+                g.setGradientFill({ juce::Colour(kBlackTop),    body.getX(), body.getY(),
+                                    juce::Colour(kBlackBottom), body.getX(), body.getBottom(),
+                                    false });
+            }
+
+            g.fillPath(keyShape);
+
+            if (isOver && ! isDown)
+            {
+                g.setColour(lit.withAlpha(0.15f));
+                g.fillPath(keyShape);
+            }
+
+            if (! isDown)
+            {
+                g.setColour(lit.withAlpha(0.22f));
+                g.strokePath(keyShape, juce::PathStrokeType(1.0f));
+            }
+        }
+
+        /** The octave-scroll buttons at the two ends of the strip. Drawn in the same
+            trough colours as the keybed with a cyan arrow, so the ends of the
+            keyboard do not fall back to JUCE's grey. */
+        void drawUpDownButton(juce::Graphics& g, int w, int h,
+                              bool isMouseOver, bool isButtonPressed, bool movesOctavesUp) override
+        {
+            auto* lf = getSpaceDust();
+            const auto lit = litColour(lf);
+            const auto bounds = juce::Rectangle<float>(0.0f, 0.0f, (float) w, (float) h);
+
+            g.setGradientFill({ juce::Colour(kTroughTop),    bounds.getX(), bounds.getY(),
+                                juce::Colour(kTroughBottom), bounds.getX(), bounds.getBottom(),
+                                false });
+            g.fillRect(bounds);
+
+            juce::Path arrow;
+            arrow.addTriangle(0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.5f);
+
+            if (! movesOctavesUp)
+                arrow.applyTransform(juce::AffineTransform::rotation(juce::MathConstants<float>::pi,
+                                                                    0.5f, 0.5f));
+
+            arrow.applyTransform(arrow.getTransformToScaleToFit(bounds.reduced(3.0f, (float) h * 0.4f),
+                                                                true));
+
+            g.setColour(lit.withAlpha(isButtonPressed ? 1.0f : (isMouseOver ? 0.75f : 0.4f)));
+            g.fillPath(arrow);
+        }
+
     private:
+        //======================================================================
+        // -- Keybed palette --
+        // The panel's own colours: the trough is the background the group boxes sit
+        // on, and every lit thing here is the knob-arc cyan reached through the
+        // LookAndFeel, so clipping turns the keys red with everything else.
+        static constexpr juce::uint32 kTroughTop    = 0xff0b0d1a;
+        static constexpr juce::uint32 kTroughBottom = 0xff05060e;
+        static constexpr juce::uint32 kWhiteTop     = 0xff1c2238;
+        static constexpr juce::uint32 kWhiteBottom  = 0xff333d64;
+        static constexpr juce::uint32 kBlackTop     = 0xff05060e;
+        static constexpr juce::uint32 kBlackBottom  = 0xff121729;
+        static constexpr juce::uint32 kSeamDark     = 0xff05060e;
+        static constexpr juce::uint32 kLabelCyan    = 0xffa0d8ff;
+
+        SpaceDustLookAndFeel* getSpaceDust()
+        {
+            return dynamic_cast<SpaceDustLookAndFeel*>(&getLookAndFeel());
+        }
+
+        /** The colour everything lit in the strip is drawn in. Taken from the
+            LookAndFeel so it goes red on clipping exactly when the knobs do; the
+            literal is only reached if this is ever dropped into a bare component. */
+        static juce::Colour litColour(SpaceDustLookAndFeel* lf)
+        {
+            return lf != nullptr ? lf->getMeterResponsiveKnobArcColour()
+                                 : juce::Colour(0xff00d4ff);
+        }
+
+        /** How brightly the strip is lit right now, 0..1.
+
+            getGlowAmount() is the law every glowing thing in the plugin obeys, but it
+            tops out at kGlowTrim rather than at 1 -- it is an ALPHA, and the trim is
+            the master pull-back on all of them. Dividing by the trim turns it back
+            into a plain "how loud is it" for the places here that scale a colour
+            rather than an alpha, so the keys follow the same curve as the knob arcs
+            without needing the trim's value baked in. */
+        static float bloomAmount(SpaceDustLookAndFeel* lf)
+        {
+            if (lf == nullptr)
+                return 0.0f;
+
+            return juce::jlimit(0.0f, 1.0f,
+                                lf->getGlowAmount() / SpaceDustLookAndFeel::kGlowTrim);
+        }
+
+        /** The part of a key's slot that is actually painted. Half a pixel off each
+            side leaves the trough showing between slabs, and a pixel off the top keeps
+            the keys clear of the lit rail. One definition, because the bloom pass has
+            to hand glowAround() the very same footprint the key was drawn in. */
+        static juce::Rectangle<float> keyBody(juce::Rectangle<float> keySlot)
+        {
+            return keySlot.reduced(0.5f, 0.0f).withTrimmedTop(1.0f);
+        }
+
+        /** A key: square where it meets the keybed, rounded at the front edge. */
+        static juce::Path bottomRounded(juce::Rectangle<float> r, float corner)
+        {
+            juce::Path p;
+            p.addRoundedRectangle(r.getX(), r.getY(), r.getWidth(), r.getHeight(),
+                                  corner, corner,
+                                  false, false, true, true);
+            return p;
+        }
+
         juce::MidiKeyboardState& kbState;
         int baseOctave = 4;  // matches setKeyPressBaseOctave(4) in the editor ctor
 
