@@ -73,8 +73,26 @@ public:
         boxes, the arcade edge glow) stays off -- see kGlowEnabled in PluginEditor.cpp. */
     float getGlowAmount() const noexcept
     {
-        return std::pow(juce::jlimit(0.0f, 1.0f, outputMeterLevel), 0.7f);
+        return kGlowTrim * std::pow(juce::jlimit(0.0f, 1.0f, outputMeterLevel), 0.7f);
     }
+
+    /** Master trim on every bloom in the plugin (Giuseppe, 2026-08-12: "the whole
+        glow ... is far too dramatic").
+
+        Turned here rather than at the sites because every glowing element in the
+        plugin reaches its alpha through getGlowAmount() -- the five helpers below,
+        the group outlines, the knob arcs, the spectrum, the scopes, and the
+        Waveforms window. One multiply therefore pulls all of them back by the SAME
+        proportion, which is the only way to take the heat out without disturbing
+        the balance between them that was tuned element by element.
+
+        Editing any individual site's alpha instead is what to avoid: that is how
+        the glow drifted out of agreement the first time. If it wants to be dimmer
+        or brighter again, change this number and nothing else.
+
+        NOTE this is the meter-driven bloom only. The group boxes' viewportGlow
+        outline is a fixed alpha that shows in silence too, and is not affected. */
+    static constexpr float kGlowTrim = 0.5f;
 
     /** Two-pass bloom behind a stroked path. Widening low-alpha passes rather than a
         real blur -- cheap, and at these weights it reads the same. Draws nothing at
