@@ -41,6 +41,23 @@ public:
         lineColour = isClipping ? juce::Colour(0xffdd3333) : juce::Colour(0xff6ba3d0);
     }
 
+    //==========================================================================
+    // -- Embedding the analyser inside another display --
+    // The Final EQ draws this same spectrum behind its response curve. There it is
+    // a backdrop, not a panel of its own: it must not paint a background over the
+    // EQ's, it must span the full width it is given (the EQ maps 20 Hz-20 kHz edge
+    // to edge, so any inset here would slide the bars off their frequencies), and
+    // it must sit back far enough for the curve and the band dots to stay legible.
+
+    /** false = paint the bars only, leaving whatever is behind them showing. */
+    void setDrawBackground(bool shouldDraw) { drawBackgroundEnabled = shouldDraw; }
+
+    /** Inset, in pixels, between the component edge and the drawn spectrum. */
+    void setEdgePadding(float newPadding) { edgePad = juce::jmax(0.0f, newPadding); }
+
+    /** Multiplies the bar/cap opacity. 1.0 is the standalone look. */
+    void setDisplayAlpha(float newAlpha) { displayAlpha = juce::jlimit(0.0f, 1.0f, newAlpha); }
+
 private:
     void timerCallback() override;
     void drawBackground(juce::Graphics& g);
@@ -79,6 +96,10 @@ private:
         advanced on it. Gates the history so repaints that carry no new audio do
         not flush the ghosts out with copies of the same curve. */
     bool spectrumMoved = false;
+
+    bool  drawBackgroundEnabled = true;
+    float edgePad      = 8.0f;
+    float displayAlpha = 1.0f;
 
     juce::Colour fillColour   { 0xff48bde8 };
     juce::Colour lineColour   { 0xff6ba3d0 };

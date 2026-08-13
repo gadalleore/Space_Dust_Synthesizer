@@ -7,11 +7,12 @@
 /**
     SpaceDust Final EQ – 5-band parametric EQ at the very end of the effects chain.
 
-    Bands (fixed types, draggable freq/gain, scrollable Q):
+    Every band picks its own shape (see BandType); freq/gain are draggable in the
+    editor and Q is scrollable. Defaults keep the classic layout:
       Band 1 – Low Shelf   (default  80 Hz, Q 0.707)
-      Band 2 – Peak        (default 250 Hz, Q 1.0)
-      Band 3 – Peak        (default 1000 Hz, Q 1.0)
-      Band 4 – Peak        (default 4000 Hz, Q 1.0)
+      Band 2 – Bell        (default 250 Hz, Q 1.0)
+      Band 3 – Bell        (default 1000 Hz, Q 1.0)
+      Band 4 – Bell        (default 4000 Hz, Q 1.0)
       Band 5 – High Shelf  (default 10000 Hz, Q 0.707)
 
     Uses JUCE IIR::Coefficients (RBJ / Audio EQ Cookbook biquad formulas).
@@ -20,14 +21,38 @@
 class SpaceDustFinalEQ
 {
 public:
-    enum class BandType { LowShelf, Peak, HighShelf };
+    /** Band shapes. The value doubles as the index of the "Type" dropdown choice
+        (see typeChoices()), and that index is what a preset saves -- so append new
+        shapes at the end of this list, never reorder it. */
+    enum class BandType { LowShelf = 0, HighShelf, LowPass, HighPass, Bell };
+
+    static constexpr int numTypes = 5;
+
+    /** Dropdown labels for BandType, in enum order. */
+    static juce::StringArray typeChoices()
+    {
+        return { "Low Shelf", "High Shelf", "Low Pass", "High Pass", "Bell" };
+    }
+
+    static BandType typeFromChoiceIndex(int index) noexcept
+    {
+        return static_cast<BandType>(juce::jlimit(0, numTypes - 1, index));
+    }
+
+    /** Low Pass and High Pass are cuts: they have a corner frequency and a slope
+        (Q), but no gain. The editor greys the Gain knob out for them and pins the
+        band's dot to the 0 dB line, and the DSP below ignores gainDb. */
+    static bool typeUsesGain(BandType t) noexcept
+    {
+        return t != BandType::LowPass && t != BandType::HighPass;
+    }
 
     struct BandParams
     {
         float freqHz = 1000.0f;   // 20 – 20000 Hz
         float gainDb = 0.0f;      // -15 to +15 dB
         float Q      = 1.0f;      // 0.1 to 10
-        BandType type = BandType::Peak;
+        BandType type = BandType::Bell;
     };
 
     struct Parameters
@@ -40,8 +65,8 @@ public:
             const float freqs[5] = { 80.0f, 250.0f, 1000.0f, 4000.0f, 10000.0f };
             const float qs[5]    = { 0.707f, 1.0f, 1.0f, 1.0f, 0.707f };
             const BandType types[5] = {
-                BandType::LowShelf, BandType::Peak, BandType::Peak,
-                BandType::Peak, BandType::HighShelf
+                BandType::LowShelf, BandType::Bell, BandType::Bell,
+                BandType::Bell, BandType::HighShelf
             };
             for (int i = 0; i < 5; ++i)
             {

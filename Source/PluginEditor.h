@@ -1058,6 +1058,25 @@ private:
     juce::Label          finalEQEnabledLabel;
     std::unique_ptr<FinalEQComponent> finalEQComponent;
 
+    // One set of controls edits one band at a time; the Node dropdown picks which,
+    // and clicking a dot in the display moves it. See setFinalEQEditedBand().
+    juce::ComboBox finalEQNodeCombo;
+    juce::Label    finalEQNodeLabel;
+    SpaceDustToggleStyleButton finalEQResetButton;   // puts the chosen node back
+    juce::ComboBox finalEQTypeCombo;
+    juce::Label    finalEQTypeLabel;
+    juce::Slider   finalEQQSlider;
+    juce::Label    finalEQQLabel;
+    juce::Slider   finalEQFreqSlider;
+    juce::Label    finalEQFreqLabel;
+    juce::Slider   finalEQGainSlider;
+    juce::Label    finalEQGainLabel;
+
+    /** Points the Type / Quality / Frequency / Gain controls at `band` (0-based),
+        rebuilding their parameter attachments, and syncs the Node dropdown and the
+        display's highlight to match. */
+    void setFinalEQEditedBand(int band);
+
     // Trance Gate Effect (Effects tab)
     juce::GroupComponent tranceGateGroup;
     juce::ToggleButton tranceGateEnabledButton;
@@ -1307,8 +1326,15 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lofiAmountAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> analogDriftAttachment;
 
-    // Final EQ Attachment (Saturation Color tab)
+    // Final EQ Attachments (Saturation Color tab)
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> finalEQEnabledAttachment;
+    // Rebuilt every time the edited band changes -- they follow the Node dropdown
+    // from one band's parameters to the next, so they are not fixed to any one ID.
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> finalEQTypeAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   finalEQQAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   finalEQFreqAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>   finalEQGainAttachment;
+    int finalEQEditedBand_ = 0;
 
     // Trance Gate attachments
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> tranceGateEnabledAttachment;

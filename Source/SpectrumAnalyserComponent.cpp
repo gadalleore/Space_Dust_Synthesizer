@@ -51,7 +51,7 @@ void SpectrumAnalyserComponent::paint(juce::Graphics& g)
 
     const float w = static_cast<float>(getWidth());
     const float h = static_cast<float>(getHeight());
-    const float pad = 8.0f;
+    const float pad = edgePad;
     const float drawW = w - 2.0f * pad;
     const float drawH = h - 2.0f * pad;
 
@@ -99,7 +99,7 @@ void SpectrumAnalyserComponent::paint(juce::Graphics& g)
     };
 
     // Ghosts of the previous few outlines, behind the bars.
-    SpaceDustDither::ghostTrail(g, outlineHistory, 2.0f, kTrailSpread, kTrailAlpha, *ditherTiles);
+    SpaceDustDither::ghostTrail(g, outlineHistory, 2.0f, kTrailSpread, kTrailAlpha * displayAlpha, *ditherTiles);
 
     // Bloom amount, from the inherited LookAndFeel. Read once for the whole frame
     // rather than per column -- there can be 512 of them.
@@ -139,7 +139,7 @@ void SpectrumAnalyserComponent::paint(juce::Graphics& g)
             for (int pass = 0; pass < 2; ++pass)
             {
                 const float widen = (pass == 0) ? 3.0f : 1.5f;
-                g.setColour(fillColour.withAlpha(glowAmount * (pass == 0 ? 0.10f : 0.18f)));
+                g.setColour(fillColour.withAlpha(displayAlpha * glowAmount * (pass == 0 ? 0.10f : 0.18f)));
                 g.fillRect(x - widen, y - widen, drawWidth + widen * 2.0f, barHeight + widen);
             }
         }
@@ -154,10 +154,10 @@ void SpectrumAnalyserComponent::paint(juce::Graphics& g)
             outline.lineTo(capX, y);
         }
 
-        g.setColour(fillColour);
+        g.setColour(fillColour.withMultipliedAlpha(displayAlpha));
         g.fillRect(x, y, drawWidth, barHeight);
         // Brighter cap on top for that crisp, futuristic edge.
-        g.setColour(lineColour);
+        g.setColour(lineColour.withMultipliedAlpha(displayAlpha));
         g.fillRect(x, y, drawWidth, juce::jmin(1.5f, barHeight));
     }
 
@@ -184,7 +184,8 @@ void SpectrumAnalyserComponent::resized()
 //==============================================================================
 void SpectrumAnalyserComponent::drawBackground(juce::Graphics& g)
 {
-    g.fillAll(bgColour);
+    if (drawBackgroundEnabled)
+        g.fillAll(bgColour);
 }
 
 //==============================================================================

@@ -46,7 +46,14 @@ void SpaceDustFinalEQ::updateCoefficients()
             case BandType::HighShelf:
                 newCoeffs = Coeffs::makeHighShelf(sampleRate_, freq, q, A);
                 break;
-            case BandType::Peak:
+            // The two cuts take no gain - the Q is their resonance at the corner.
+            case BandType::LowPass:
+                newCoeffs = Coeffs::makeLowPass(sampleRate_, freq, q);
+                break;
+            case BandType::HighPass:
+                newCoeffs = Coeffs::makeHighPass(sampleRate_, freq, q);
+                break;
+            case BandType::Bell:
             default:
                 newCoeffs = Coeffs::makePeakFilter(sampleRate_, freq, q, A);
                 break;

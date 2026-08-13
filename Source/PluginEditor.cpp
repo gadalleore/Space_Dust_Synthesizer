@@ -2757,6 +2757,17 @@ SaturationColorPageComponent::SaturationColorPageComponent(SpaceDustAudioProcess
     addAndMakeVisible(parentEditor.finalEQEnabledLabel);
     if (parentEditor.finalEQComponent)
         addAndMakeVisible(parentEditor.finalEQComponent.get());
+    addAndMakeVisible(parentEditor.finalEQNodeCombo);
+    addAndMakeVisible(parentEditor.finalEQNodeLabel);
+    addAndMakeVisible(parentEditor.finalEQResetButton);
+    addAndMakeVisible(parentEditor.finalEQTypeCombo);
+    addAndMakeVisible(parentEditor.finalEQTypeLabel);
+    addAndMakeVisible(parentEditor.finalEQQSlider);
+    addAndMakeVisible(parentEditor.finalEQQLabel);
+    addAndMakeVisible(parentEditor.finalEQFreqSlider);
+    addAndMakeVisible(parentEditor.finalEQFreqLabel);
+    addAndMakeVisible(parentEditor.finalEQGainSlider);
+    addAndMakeVisible(parentEditor.finalEQGainLabel);
     addAndMakeVisible(parentEditor.transientGroup);
     addAndMakeVisible(parentEditor.transientEnabledButton);
     addAndMakeVisible(parentEditor.transientEnabledLabel);
@@ -2913,6 +2924,11 @@ void SaturationColorPageComponent::resized()
     parentEditor.lofiAmountSlider.setBounds(lRowLeft, lfy, knobSize, knobSize);
     parentEditor.analogDriftSlider.setBounds(lRowLeft + knobSize + lKg, lfy, knobSize, knobSize);
     lfy += knobSize + pad + 12;
+    // The Lo-Fi bottom is where the Transient starts, and the Final EQ starts below
+    // the lower of the two groups beside it. Extend Lo-Fi to that same line, so the
+    // Transient and the Final EQ share a top edge -- they already share a bottom
+    // edge (see below), so this also makes the two boxes the same height.
+    lfy = juce::jmax(lfy, juce::jmax(cy, sy));
     parentEditor.lofiGroup.setBounds(leftColX, lofiY, colW, lfy - lofiY);
 
     // --- Transient (under Lo-Fi, same column width) ---
@@ -2943,38 +2959,112 @@ void SaturationColorPageComponent::resized()
     parentEditor.transientPostEffectButton.setBounds(tCx - 60, tfy, 120, 20);
     tfy += 20 + gap;
 
-    // Row 1: Mix | Length | Ka-Donk | Coarse
-    const int tQuadW = 4 * knobSize + 3 * tKg;
-    int tQuadLeft = leftColX + (colW - tQuadW) / 2;
-    parentEditor.transientMixLabel.setBounds(tQuadLeft, tfy, knobSize, labelH);
-    parentEditor.transientLengthLabel.setBounds(tQuadLeft + knobSize + tKg, tfy, knobSize, labelH);
-    parentEditor.transientKaDonkLabel.setBounds(tQuadLeft + 2 * (knobSize + tKg), tfy, knobSize, labelH);
-    parentEditor.transientCoarseLabel.setBounds(tQuadLeft + 3 * (knobSize + tKg), tfy, knobSize, labelH);
+    // Row 1: Length | Ka-Donk | Coarse
+    // The two knob-row tops are kept: the Final EQ beside this box lines its own
+    // knobs up on them, so the knobs across the bottom half of the tab sit on one
+    // grid instead of two that nearly agree.
+    const int tRow1Y = tfy;
+    const int tTripleW = 3 * knobSize + 2 * tKg;
+    int tTripleLeft = leftColX + (colW - tTripleW) / 2;
+    parentEditor.transientLengthLabel.setBounds(tTripleLeft, tfy, knobSize, labelH);
+    parentEditor.transientKaDonkLabel.setBounds(tTripleLeft + knobSize + tKg, tfy, knobSize, labelH);
+    parentEditor.transientCoarseLabel.setBounds(tTripleLeft + 2 * (knobSize + tKg), tfy, knobSize, labelH);
     tfy += labelH + labelGap;
-    parentEditor.transientMixSlider.setBounds(tQuadLeft, tfy, knobSize, knobSize);
-    parentEditor.transientLengthSlider.setBounds(tQuadLeft + knobSize + tKg, tfy, knobSize, knobSize);
-    parentEditor.transientKaDonkSlider.setBounds(tQuadLeft + 2 * (knobSize + tKg), tfy, knobSize, knobSize);
-    parentEditor.transientCoarseSlider.setBounds(tQuadLeft + 3 * (knobSize + tKg), tfy, knobSize, knobSize);
+    parentEditor.transientLengthSlider.setBounds(tTripleLeft, tfy, knobSize, knobSize);
+    parentEditor.transientKaDonkSlider.setBounds(tTripleLeft + knobSize + tKg, tfy, knobSize, knobSize);
+    parentEditor.transientCoarseSlider.setBounds(tTripleLeft + 2 * (knobSize + tKg), tfy, knobSize, knobSize);
+    tfy += knobSize + gap;
+
+    // Row 2: Mix on its own, centred and lowest -- the same place the modulation
+    // FX groups put theirs. It also lengthens this group, and the Final EQ beside
+    // it grows with it because both share this bottom edge.
+    const int tRow2Y = tfy;
+    parentEditor.transientMixLabel.setBounds(tCx - knobSize / 2, tfy, knobSize, labelH);
+    tfy += labelH + labelGap;
+    parentEditor.transientMixSlider.setBounds(tCx - knobSize / 2, tfy, knobSize, knobSize);
     tfy += knobSize + 24 + pad;
 
     parentEditor.transientGroup.setBounds(leftColX, transY, colW, tfy - transY);
 
     // --- Final EQ (center+right columns, below compressor / soft clipper) ---
-    // Top aligned to the lower of the two top-row groups; bottom aligned to
-    // the Transient group bottom (tfy) so both sides end at the same Y.
+    // Top and bottom both taken from the Transient group, so the two boxes line up
+    // on each edge and are the same height. Lo-Fi above is stretched down to clear
+    // the compressor / soft clipper, so this top is always below them too.
     {
-        const int eqTopY  = juce::jmax(cy, sy) + pad;
-        const int eqBotY  = transY + (tfy - transY); // == tfy, same bottom as Transient
+        const int eqTopY  = transY;
+        const int eqBotY  = tfy;   // same bottom as Transient
         const int eqWidth = (rightColX + colW) - centerColX;
         int efy = eqTopY + groupTitleH;
 
         parentEditor.finalEQEnabledButton.setBounds(centerColX + pad, efy, bOnBtnW, bOnBtnH);
         efy += bOnBtnH + gap;
 
-        const int eqDisplayH = juce::jmax(40, eqBotY - efy - pad);
+        // Band controls, all acting on the node the Node dropdown names:
+        //   Quality / Frequency / Gain stack down the right-hand side, beside the
+        //   curve, and Node | Reset | Type sit in a short row under it. Both take
+        //   their room out of the curve display, not out of the group, which stays
+        //   flush with the Transient.
+        const int eqComboH   = 22;
+        const int eqNodeW    = 84;
+        const int eqResetW   = 56;
+        const int eqTypeW    = 110;
+        const int eqCtrlGap  = 12;
+
+        // -- Right-hand knob column: three label+knob pairs on the Transient's knob
+        // grid. The lower two land exactly on its Length/Ka-Donk/Coarse and Mix rows
+        // and Quality carries the same pitch on above them, so the knobs across the
+        // whole bottom half of the tab read as one row structure.
+        const int eqKnobColW  = knobSize + 2 * gap;
+        const int eqKnobColX  = centerColX + eqWidth - pad - eqKnobColW;
+        const int eqKnobH     = labelH + labelGap + knobSize;
+        const int eqKnobPitch = juce::jmax(eqKnobH + gap, tRow2Y - tRow1Y);   // the Transient's own
+        const int eqKnobTopY  = juce::jmax(eqTopY + groupTitleH, tRow2Y - 2 * eqKnobPitch);
+        const int eqKnobBotY  = eqKnobTopY + 2 * eqKnobPitch + eqKnobH;
+
+        juce::Slider* eqKnobs[3]  = { &parentEditor.finalEQQSlider,
+                                      &parentEditor.finalEQFreqSlider,
+                                      &parentEditor.finalEQGainSlider };
+        juce::Label*  eqKnobLbl[3] = { &parentEditor.finalEQQLabel,
+                                       &parentEditor.finalEQFreqLabel,
+                                       &parentEditor.finalEQGainLabel };
+        int eky = eqKnobTopY;
+        for (int k = 0; k < 3; ++k)
+        {
+            // The label spans the column, not the knob: "Frequency" does not fit in
+            // 56 px, and the labels are centred and transparent.
+            eqKnobLbl[k]->setBounds(eqKnobColX, eky, eqKnobColW, labelH);
+            eqKnobs[k]->setBounds(eqKnobColX + (eqKnobColW - knobSize) / 2,
+                                  eky + labelH + labelGap, knobSize, knobSize);
+            eky += eqKnobPitch;
+        }
+
+        // -- Display: everything left of the knob column, above the dropdown row.
+        // The dropdown row ends level with the knob column rather than at the very
+        // bottom of the group, so the block of controls sits together and the group
+        // keeps the same clear strip along its bottom edge the Transient has.
+        const int eqDisplayX = centerColX + pad;
+        const int eqDisplayW = juce::jmax(80, eqKnobColX - gap - eqDisplayX);
+        const int eqCtrlRowH = labelH + labelGap + eqComboH;
+        const int eqCtrlY    = eqKnobBotY - eqCtrlRowH;
+
+        // -- Dropdown row, centred under the display it belongs to.
+        const int eqCtrlRowW = eqNodeW + eqResetW + eqTypeW + 2 * eqCtrlGap;
+        int ex = eqDisplayX + (eqDisplayW - eqCtrlRowW) / 2;
+
+        parentEditor.finalEQNodeLabel.setBounds(ex, eqCtrlY, eqNodeW, labelH);
+        parentEditor.finalEQNodeCombo.setBounds(ex, eqCtrlY + labelH + labelGap, eqNodeW, eqComboH);
+        ex += eqNodeW + eqCtrlGap;
+
+        // No label of its own -- it reads as part of the Node control beside it.
+        parentEditor.finalEQResetButton.setBounds(ex, eqCtrlY + labelH + labelGap, eqResetW, eqComboH);
+        ex += eqResetW + eqCtrlGap;
+
+        parentEditor.finalEQTypeLabel.setBounds(ex, eqCtrlY, eqTypeW, labelH);
+        parentEditor.finalEQTypeCombo.setBounds(ex, eqCtrlY + labelH + labelGap, eqTypeW, eqComboH);
+
+        const int eqDisplayH = juce::jmax(40, eqCtrlY - gap - efy);
         if (parentEditor.finalEQComponent)
-            parentEditor.finalEQComponent->setBounds(centerColX + pad, efy,
-                                                     eqWidth - 2 * pad, eqDisplayH);
+            parentEditor.finalEQComponent->setBounds(eqDisplayX, efy, eqDisplayW, eqDisplayH);
 
         parentEditor.finalEQGroup.setBounds(centerColX, eqTopY, eqWidth, eqBotY - eqTopY);
     }
@@ -3438,9 +3528,10 @@ namespace
             // The front lip: a quiet cyan on a resting key, brighter on a C, and none
             // at all on a held one (the whole face is lit there). It lifts with the
             // output as well, so the whole bed breathes rather than only the key being
-            // played.
+            // played. The alphas carry further than they look: the face under them is
+            // the title's white now, so a thin cyan wash is all a C needs to count.
             const float lipAlpha = isDown ? 0.0f
-                                          : (isC ? 0.45f : 0.22f) * (1.0f + 0.6f * bloom);
+                                          : (isC ? 0.70f : 0.35f) * (1.0f + 0.6f * bloom);
 
             if (lipAlpha > 0.0f)
             {
@@ -3458,10 +3549,9 @@ namespace
                 g.setFont(lf != nullptr ? lf->getBodyFont(9.0f, true)
                                         : juce::Font(juce::FontOptions(9.0f)));
 
-                // Dark on a lit key, cyan on a dark one: the label keeps its contrast
-                // either way round.
-                g.setColour(isDown ? juce::Colour(kTroughBottom).withAlpha(0.85f)
-                                   : juce::Colour(kLabelCyan).withAlpha(0.6f));
+                // Both faces are light now -- the title's white at rest, lit cyan
+                // when held -- so the name is dark on either, as on a real keybed.
+                g.setColour(juce::Colour(kTroughBottom).withAlpha(isDown ? 0.85f : 0.55f));
 
                 g.drawText(text, body.withTrimmedBottom(4.0f).toNearestInt(),
                            juce::Justification::centredBottom, false);
@@ -3549,12 +3639,14 @@ namespace
         // LookAndFeel, so clipping turns the keys red with everything else.
         static constexpr juce::uint32 kTroughTop    = 0xff0b0d1a;
         static constexpr juce::uint32 kTroughBottom = 0xff05060e;
-        static constexpr juce::uint32 kWhiteTop     = 0xff1c2238;
-        static constexpr juce::uint32 kWhiteBottom  = 0xff333d64;
+        // The naturals are the hue of the SPACE DUST title above them (Giuseppe,
+        // 2026-08-12): the title's white, cooled towards the panel's light cyan at
+        // the back of the key and full-white at the front lip the player sees most.
+        static constexpr juce::uint32 kWhiteTop     = 0xffb9dcee;
+        static constexpr juce::uint32 kWhiteBottom  = 0xfff2fbff;
         static constexpr juce::uint32 kBlackTop     = 0xff05060e;
         static constexpr juce::uint32 kBlackBottom  = 0xff121729;
         static constexpr juce::uint32 kSeamDark     = 0xff05060e;
-        static constexpr juce::uint32 kLabelCyan    = 0xffa0d8ff;
 
         SpaceDustLookAndFeel* getSpaceDust()
         {
@@ -5758,6 +5850,88 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         audioProcessor.getValueTreeState(),
         audioProcessor.getSampleRate() > 0.0 ? audioProcessor.getSampleRate() : 44100.0);
     finalEQEnabledLabel.setVisible(false);
+    // Same audio the Spectral tab analyses, so the bars behind the EQ curve are the
+    // same picture of the same signal. The component drives its own FFT at 60 fps.
+    finalEQComponent->setSampleSource([this](float* dest, int numSamples)
+    {
+        audioProcessor.readSpectrumSamples(dest, numSamples);
+    });
+    // Clicking a dot in the display moves the controls below it onto that band.
+    finalEQComponent->onBandSelected = [this](int band) { setFinalEQEditedBand(band); };
+
+    for (int b = 1; b <= FinalEQComponent::numBands; ++b)
+        finalEQNodeCombo.addItem("Node " + juce::String(b), b);   // built here, so already valid UTF-8
+    finalEQNodeCombo.setSelectedId(1, juce::dontSendNotification);
+    finalEQNodeCombo.onChange = [this]
+    {
+        setFinalEQEditedBand(finalEQNodeCombo.getSelectedId() - 1);
+    };
+    finalEQNodeLabel.setText(safeString("Node"), juce::dontSendNotification);
+
+    finalEQResetButton.setButtonText(safeString("Reset"));
+    finalEQResetButton.setTooltip(safeString(
+        "Puts the chosen node back where it started: its default frequency, "
+        "no gain, and its default Quality. The node's Type is left as you set it."));
+    finalEQResetButton.onClick = [this]
+    {
+        auto& vts = audioProcessor.getValueTreeState();
+        const juce::String n(finalEQEditedBand_ + 1);
+        // Freq, Gain and Q only -- the Type is a deliberate choice, not a position.
+        for (const char* suffix : { "Freq", "Gain", "Q" })
+        {
+            if (auto* p = vts.getParameter("finalEQB" + n + suffix))
+            {
+                // Balanced gesture per edit, as everywhere else this editor writes
+                // parameters, so hosts see one clean move rather than a naked write.
+                p->beginChangeGesture();
+                p->setValueNotifyingHost(p->getDefaultValue());
+                p->endChangeGesture();
+            }
+        }
+    };
+
+    {
+        const auto typeNames = SpaceDustFinalEQ::typeChoices();
+        for (int i = 0; i < typeNames.size(); ++i)
+            finalEQTypeCombo.addItem(typeNames[i], i + 1);
+    }
+    // The attachment maps by item index, so the order above must stay exactly the
+    // order of the parameter's choices. Fires on user picks AND on the attachment's
+    // own updates, which is what keeps the Gain knob's greying honest.
+    finalEQTypeCombo.onChange = [this]
+    {
+        const bool usesGain = SpaceDustFinalEQ::typeUsesGain(
+            SpaceDustFinalEQ::typeFromChoiceIndex(finalEQTypeCombo.getSelectedItemIndex()));
+        finalEQGainSlider.setEnabled(usesGain);
+        finalEQGainLabel.setEnabled(usesGain);
+    };
+    finalEQTypeLabel.setText(safeString("Type"), juce::dontSendNotification);
+
+    finalEQQSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    finalEQQSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    finalEQQLabel.setText(safeString("Quality"), juce::dontSendNotification);
+
+    finalEQFreqSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    finalEQFreqSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    finalEQFreqSlider.setTextValueSuffix(safeString(" Hz"));
+    finalEQFreqLabel.setText(safeString("Frequency"), juce::dontSendNotification);
+
+    finalEQGainSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    finalEQGainSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    finalEQGainSlider.setTextValueSuffix(safeString(" dB"));
+    finalEQGainLabel.setText(safeString("Gain"), juce::dontSendNotification);
+
+    for (auto* l : { &finalEQNodeLabel, &finalEQTypeLabel, &finalEQQLabel,
+                     &finalEQFreqLabel, &finalEQGainLabel })
+    {
+        l->setJustificationType(juce::Justification::centred);
+        l->setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+        l->setFont(customLookAndFeel.getBodyFont(12.0f, true));
+    }
+
+    // Builds the four attachments for the first time; nothing above may rely on
+    // them existing before this call.
+    setFinalEQEditedBand(0);
 
     // Trance Gate Effect (Effects tab)
     tranceGateEnabledButton.setButtonText(safeString("On"));
@@ -6891,6 +7065,47 @@ void SpaceDustAudioProcessorEditor::sliderDragEnded(juce::Slider* slider)
 }
 
 //==============================================================================
+// -- Final EQ: point one set of controls at one band --
+//
+// Five bands share a Type dropdown and three knobs, so the controls are moved from
+// band to band rather than duplicated five times over. Moving them means rebuilding
+// their parameter attachments, since an attachment is bound to one parameter ID for
+// its lifetime. Whichever way the band is chosen -- the Node dropdown, or a click on
+// a dot in the display -- it arrives here.
+
+void SpaceDustAudioProcessorEditor::setFinalEQEditedBand(int band)
+{
+    band = juce::jlimit(0, FinalEQComponent::numBands - 1, band);
+    finalEQEditedBand_ = band;
+
+    auto& vts = audioProcessor.getValueTreeState();
+    const juce::String n(band + 1);
+
+    // Release the old attachments BEFORE making the new ones: two attachments live
+    // on one control would both answer its changes and write to different bands.
+    finalEQTypeAttachment.reset();
+    finalEQQAttachment.reset();
+    finalEQFreqAttachment.reset();
+    finalEQGainAttachment.reset();
+
+    finalEQTypeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        vts, "finalEQB" + n + "Type", finalEQTypeCombo);
+    finalEQQAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        vts, "finalEQB" + n + "Q", finalEQQSlider);
+    finalEQFreqAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        vts, "finalEQB" + n + "Freq", finalEQFreqSlider);
+    finalEQGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        vts, "finalEQB" + n + "Gain", finalEQGainSlider);
+
+    // Silent, because the selection can arrive from the dropdown itself.
+    if (finalEQNodeCombo.getSelectedId() != band + 1)
+        finalEQNodeCombo.setSelectedId(band + 1, juce::dontSendNotification);
+
+    if (finalEQComponent != nullptr)
+        finalEQComponent->setSelectedBand(band);
+}
+
+//==============================================================================
 // -- Button Listener (On toggle -> group glow sync) --
 
 void SpaceDustAudioProcessorEditor::buttonClicked(juce::Button* button)
@@ -7215,7 +7430,17 @@ void SpaceDustAudioProcessorEditor::timerCallback()
             spec->setSampleRate(audioProcessor.getSampleRate());
         }
     }
-    
+
+    // The Final EQ's spectrum is the same self-driven analyser, so it needs the
+    // same two things kept current -- and only while its tab is the one on show.
+    constexpr int saturationTabIndex = 3;
+    if (finalEQComponent != nullptr && tabbedComponent.getCurrentTabIndex() == saturationTabIndex
+        && !isBeingDestroyed.load())
+    {
+        finalEQComponent->setSampleRate(audioProcessor.getSampleRate());
+        finalEQComponent->setClipping(clippingHoldTicks > 0);
+    }
+
     // Update Legato Glide button visibility based on voice mode.
     // Show in Mono (1) and Legato (2): in both modes the toggle gates whether
     // glide applies only on legato (overlapping) notes vs. on every note change.

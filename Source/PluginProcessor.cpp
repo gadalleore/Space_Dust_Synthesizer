@@ -2806,12 +2806,15 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         bool finalEQEnabled = safeGetParam(apvts, "finalEQEnabled") > 0.5f;
         if (finalEQEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
         {
-            const SpaceDustFinalEQ::BandType bandTypes[5] = {
-                SpaceDustFinalEQ::BandType::LowShelf,
-                SpaceDustFinalEQ::BandType::Peak,
-                SpaceDustFinalEQ::BandType::Peak,
-                SpaceDustFinalEQ::BandType::Peak,
-                SpaceDustFinalEQ::BandType::HighShelf
+            // Each band's shape is its own parameter now. The fallback index is the
+            // band's original fixed type, so a preset saved before the Type dropdown
+            // existed still loads with the EQ it was built on.
+            const int defaultTypeIndex[5] = {
+                static_cast<int>(SpaceDustFinalEQ::BandType::LowShelf),
+                static_cast<int>(SpaceDustFinalEQ::BandType::Bell),
+                static_cast<int>(SpaceDustFinalEQ::BandType::Bell),
+                static_cast<int>(SpaceDustFinalEQ::BandType::Bell),
+                static_cast<int>(SpaceDustFinalEQ::BandType::HighShelf)
             };
             SpaceDustFinalEQ::Parameters fep;
             fep.enabled = true;
@@ -2821,7 +2824,9 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 fep.bands[i].freqHz = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "finalEQB" + n + "Freq", 1000.0f));
                 fep.bands[i].gainDb = juce::jlimit(-15.0f, 15.0f,    safeGetParam(apvts, "finalEQB" + n + "Gain"));
                 fep.bands[i].Q      = juce::jlimit(0.1f, 10.0f,      safeGetParam(apvts, "finalEQB" + n + "Q", 1.0f));
-                fep.bands[i].type   = bandTypes[i];
+                fep.bands[i].type   = SpaceDustFinalEQ::typeFromChoiceIndex(
+                    static_cast<int>(safeGetParam(apvts, "finalEQB" + n + "Type",
+                                                  static_cast<float>(defaultTypeIndex[i]))));
             }
             finalEQ_.setParameters(fep);
             finalEQ_.process(buffer);
@@ -4417,6 +4422,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"finalEQB1Q", 1}, "EQ B1 Q",
             juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.3f), 0.707f),
         "finalEQB1Q");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"finalEQB1Type", 1}, "EQ B1 Type",
+            SpaceDustFinalEQ::typeChoices(),
+            static_cast<int>(SpaceDustFinalEQ::BandType::LowShelf)),
+        "finalEQB1Type");
     // Band 2 â€“ Low Mid Peak (default 250 Hz)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -4433,6 +4444,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"finalEQB2Q", 1}, "EQ B2 Q",
             juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.3f), 1.0f),
         "finalEQB2Q");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"finalEQB2Type", 1}, "EQ B2 Type",
+            SpaceDustFinalEQ::typeChoices(),
+            static_cast<int>(SpaceDustFinalEQ::BandType::Bell)),
+        "finalEQB2Type");
     // Band 3 â€“ Mid Peak (default 1000 Hz)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -4449,6 +4466,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"finalEQB3Q", 1}, "EQ B3 Q",
             juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.3f), 1.0f),
         "finalEQB3Q");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"finalEQB3Type", 1}, "EQ B3 Type",
+            SpaceDustFinalEQ::typeChoices(),
+            static_cast<int>(SpaceDustFinalEQ::BandType::Bell)),
+        "finalEQB3Type");
     // Band 4 â€“ High Mid Peak (default 4000 Hz)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -4465,6 +4488,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"finalEQB4Q", 1}, "EQ B4 Q",
             juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.3f), 1.0f),
         "finalEQB4Q");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"finalEQB4Type", 1}, "EQ B4 Type",
+            SpaceDustFinalEQ::typeChoices(),
+            static_cast<int>(SpaceDustFinalEQ::BandType::Bell)),
+        "finalEQB4Type");
     // Band 5 â€“ High Shelf (default 10000 Hz)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -4481,6 +4510,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"finalEQB5Q", 1}, "EQ B5 Q",
             juce::NormalisableRange<float>(0.1f, 10.0f, 0.01f, 0.3f), 0.707f),
         "finalEQB5Q");
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"finalEQB5Type", 1}, "EQ B5 Type",
+            SpaceDustFinalEQ::typeChoices(),
+            static_cast<int>(SpaceDustFinalEQ::BandType::HighShelf)),
+        "finalEQB5Type");
 
     //==============================================================================
     // -- Trance Gate Effect Parameters --

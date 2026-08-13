@@ -7,12 +7,11 @@
 juce::String FinalEQComponent::freqId(int band) { return "finalEQB" + juce::String(band + 1) + "Freq"; }
 juce::String FinalEQComponent::gainId(int band) { return "finalEQB" + juce::String(band + 1) + "Gain"; }
 juce::String FinalEQComponent::qId  (int band) { return "finalEQB" + juce::String(band + 1) + "Q";    }
+juce::String FinalEQComponent::typeId(int band) { return "finalEQB" + juce::String(band + 1) + "Type"; }
 
-FinalEQComponent::BandType FinalEQComponent::getBandType(int band)
+FinalEQComponent::BandType FinalEQComponent::getBandType(int band) const
 {
-    if (band == 0) return BandType::LowShelf;
-    if (band == 4) return BandType::HighShelf;
-    return BandType::Peak;
+    return SpaceDustFinalEQ::typeFromChoiceIndex(cachedType_[static_cast<size_t>(band)]);
 }
 
 //==============================================================================
@@ -22,6 +21,9 @@ FinalEQComponent::FinalEQComponent(juce::AudioProcessorValueTreeState& apvts, do
     // Seed cached values from APVTS
     const float defaultFreqs[5] = { 80.0f, 250.0f, 1000.0f, 4000.0f, 10000.0f };
     const float defaultQs[5]    = { 0.707f, 1.0f, 1.0f, 1.0f, 0.707f };
+    const BandType defaultTypes[5] = {
+        BandType::LowShelf, BandType::Bell, BandType::Bell, BandType::Bell, BandType::HighShelf
+    };
 
     for (int b = 0; b < numBands; ++b)
     {
@@ -43,12 +45,29 @@ FinalEQComponent::FinalEQComponent(juce::AudioProcessorValueTreeState& apvts, do
         else
             cachedQ_[b] = defaultQs[b];
 
+        if (auto* p = apvts_.getRawParameterValue(typeId(b)))
+            cachedType_[b] = static_cast<int>(p->load());
+        else
+            cachedType_[b] = static_cast<int>(defaultTypes[b]);
+
         apvts_.addParameterListener(freqId(b), this);
         apvts_.addParameterListener(gainId(b), this);
         apvts_.addParameterListener(qId(b),    this);
+        apvts_.addParameterListener(typeId(b), this);
     }
 
     setOpaque(false);
+
+    // Spectrum first, curve second: children paint in the order they are added, so
+    // this is what puts the bars behind the response curve and the band dots.
+    spectrum_.setDrawBackground(false);          // the EQ paints its own panel
+    spectrum_.setEdgePadding(0.0f);              // bars must span the exact freq axis
+    spectrum_.setDisplayAlpha(0.45f);            // a backdrop, not the main subject
+    spectrum_.setInterceptsMouseClicks(false, false);
+    spectrum_.setAccessible(false);
+    spectrum_.setSampleRate(sampleRate_);
+    addAndMakeVisible(spectrum_);
+    addAndMakeVisible(curveOverlay_);
 }
 
 FinalEQComponent::~FinalEQComponent()
@@ -61,6 +80,7 @@ FinalEQComponent::~FinalEQComponent()
         apvts_.removeParameterListener(freqId(b), this);
         apvts_.removeParameterListener(gainId(b), this);
         apvts_.removeParameterListener(qId(b),    this);
+        apvts_.removeParameterListener(typeId(b), this);
     }
     cancelPendingUpdate();
 }
@@ -68,8 +88,34 @@ FinalEQComponent::~FinalEQComponent()
 //==============================================================================
 void FinalEQComponent::setSampleRate(double sr)
 {
-    sampleRate_ = (sr > 0.0) ? sr : 44100.0;
+    const double newRate = (sr > 0.0) ? sr : 44100.0;
+    if (std::abs(newRate - sampleRate_) < 1.0)
+        return;   // called from the editor timer; recompute only on a real change
+
+    sampleRate_ = newRate;
+    spectrum_.setSampleRate(sampleRate_);
     recomputeResponse();
+}
+
+void FinalEQComponent::setSampleSource(std::function<void(float*, int)> fillSamples)
+{
+    spectrum_.fillSamplesCallback = std::move(fillSamples);
+    spectrum_.start();   // self-driven 60 fps, idle unless this tab is showing
+}
+
+void FinalEQComponent::setClipping(bool isClipping)
+{
+    spectrum_.setClipping(isClipping);
+}
+
+void FinalEQComponent::setSelectedBand(int band)
+{
+    const int b = juce::jlimit(0, numBands - 1, band);
+    if (b == selectedBand_)
+        return;
+
+    selectedBand_ = b;
+    curveOverlay_.repaint();
 }
 
 //==============================================================================
@@ -80,6 +126,12 @@ void FinalEQComponent::resized()
     const int w = displayArea_.getWidth();
     if (w > 0)
         responseMag_.assign(w, 0.0f);
+
+    // The analyser fills the display area exactly, and draws with no inset of its
+    // own, so its log x-axis is the same map freqToX() uses.
+    spectrum_.setBounds(displayArea_);
+    curveOverlay_.setBounds(getLocalBounds());
+
     recomputeResponse();
 }
 
@@ -118,7 +170,10 @@ float FinalEQComponent::yToGain(float y) const
 
 juce::Point<float> FinalEQComponent::getBandDotPos(int band) const
 {
-    return { freqToX(cachedFreq_[band]), gainToY(cachedGain_[band]) };
+    // A cut has no gain, so its dot rides the 0 dB line: dragging it up and down
+    // would otherwise move a number that changes nothing you can hear.
+    const float gain = SpaceDustFinalEQ::typeUsesGain(getBandType(band)) ? cachedGain_[band] : 0.0f;
+    return { freqToX(cachedFreq_[band]), gainToY(gain) };
 }
 
 int FinalEQComponent::getBandNearPos(juce::Point<float> pos) const
@@ -149,7 +204,9 @@ void FinalEQComponent::recomputeResponse()
 
     using Coeffs = juce::dsp::IIR::Coefficients<float>;
 
-    // Build one set of coefficients per band (message thread – allocation is fine)
+    // Build one set of coefficients per band (message thread – allocation is fine).
+    // These mirror SpaceDustFinalEQ::updateCoefficients() exactly, so the drawn
+    // curve is the filter the audio actually goes through.
     juce::ReferenceCountedObjectPtr<Coeffs> coeffs[numBands];
     for (int b = 0; b < numBands; ++b)
     {
@@ -166,7 +223,13 @@ void FinalEQComponent::recomputeResponse()
             case BandType::HighShelf:
                 coeffs[b] = Coeffs::makeHighShelf(sampleRate_, freq, q, A);
                 break;
-            case BandType::Peak:
+            case BandType::LowPass:
+                coeffs[b] = Coeffs::makeLowPass(sampleRate_, freq, q);
+                break;
+            case BandType::HighPass:
+                coeffs[b] = Coeffs::makeHighPass(sampleRate_, freq, q);
+                break;
+            case BandType::Bell:
             default:
                 coeffs[b] = Coeffs::makePeakFilter(sampleRate_, freq, q, A);
                 break;
@@ -194,13 +257,28 @@ void FinalEQComponent::recomputeResponse()
         responseMag_[i] = totalDb;
     }
 
-    repaint();
+    curveOverlay_.repaint();
 }
 
 //==============================================================================
 // Painting
+//
+// Split in two: the panel itself here, the curve and dots in paintCurve(), which
+// the overlay child calls. The spectrum analyser is a child between them, so it
+// covers this background and is covered by that foreground.
 
 void FinalEQComponent::paint(juce::Graphics& g)
+{
+    if (displayArea_.isEmpty())
+        return;
+
+    const auto da = displayArea_.toFloat();
+
+    g.setColour(juce::Colour(0xff0b0b1e));
+    g.fillRoundedRectangle(da, 5.0f);
+}
+
+void FinalEQComponent::paintCurve(juce::Graphics& g)
 {
     if (displayArea_.isEmpty())
         return;
@@ -218,11 +296,7 @@ void FinalEQComponent::paint(juce::Graphics& g)
         knobGlowCol = laf->getMeterResponsiveKnobGlowColour();
     }
 
-    // --- Background ---
-    g.setColour(juce::Colour(0xff0b0b1e));
-    g.fillRoundedRectangle(da, 5.0f);
-
-    // --- Border ---
+    // --- Border (over the spectrum, so the panel keeps a clean edge) ---
     g.setColour(juce::Colour(0xff2a2a55));
     g.drawRoundedRectangle(da, 5.0f, 1.0f);
 
@@ -271,11 +345,14 @@ void FinalEQComponent::paint(juce::Graphics& g)
     for (int b = 0; b < numBands; ++b)
     {
         const auto dot = getBandDotPos(b);
+        const bool isSelected = (b == selectedBand_);
+        const float r = isSelected ? dotRadius_ + 1.5f : dotRadius_;
 
-        // Outer glow halo (matches knob glow)
+        // Outer glow halo (matches knob glow). The selected band wears a stronger
+        // one -- it is the band the knobs beside the display are editing.
         {
-            const float glowR = dotRadius_ + 4.0f;
-            juce::ColourGradient glow(knobGlowCol.withAlpha(0.25f), dot.x, dot.y,
+            const float glowR = r + (isSelected ? 6.0f : 4.0f);
+            juce::ColourGradient glow(knobGlowCol.withAlpha(isSelected ? 0.45f : 0.25f), dot.x, dot.y,
                                       knobGlowCol.withAlpha(0.0f),  dot.x, dot.y - glowR, true);
             g.setGradientFill(glow);
             g.fillEllipse(dot.x - glowR, dot.y - glowR, glowR * 2.0f, glowR * 2.0f);
@@ -283,20 +360,18 @@ void FinalEQComponent::paint(juce::Graphics& g)
 
         // Body gradient (matches knob body)
         {
-            juce::ColourGradient body(knobBodyLight, dot.x, dot.y - dotRadius_ * 0.35f,
-                                      knobBodyDark,  dot.x, dot.y + dotRadius_ * 0.8f, false);
+            juce::ColourGradient body(knobBodyLight, dot.x, dot.y - r * 0.35f,
+                                      knobBodyDark,  dot.x, dot.y + r * 0.8f, false);
             g.setGradientFill(body);
-            g.fillEllipse(dot.x - dotRadius_, dot.y - dotRadius_,
-                          dotRadius_ * 2.0f, dotRadius_ * 2.0f);
+            g.fillEllipse(dot.x - r, dot.y - r, r * 2.0f, r * 2.0f);
         }
 
         // Rim (matches knob arc colour)
-        g.setColour(knobArcCol);
-        g.drawEllipse(dot.x - dotRadius_, dot.y - dotRadius_,
-                      dotRadius_ * 2.0f, dotRadius_ * 2.0f, 1.5f);
+        g.setColour(isSelected ? knobArcCol : knobArcCol.withAlpha(0.65f));
+        g.drawEllipse(dot.x - r, dot.y - r, r * 2.0f, r * 2.0f, isSelected ? 2.0f : 1.5f);
 
         // Band number label
-        g.setColour(knobArcCol.withAlpha(0.85f));
+        g.setColour(knobArcCol.withAlpha(isSelected ? 1.0f : 0.85f));
         g.setFont(juce::Font(8.0f, juce::Font::bold));
         g.drawText(juce::String(b + 1),
                    static_cast<int>(dot.x - 5.0f), static_cast<int>(dot.y - 5.0f),
@@ -318,6 +393,12 @@ void FinalEQComponent::mouseDown(const juce::MouseEvent& e)
         dragStartGain_ = cachedGain_[draggedBand_];
         dragStartPos_  = pos;
 
+        // Clicking a dot is also how you choose which band the Node dropdown and
+        // the Quality / Frequency / Gain knobs are pointed at.
+        setSelectedBand(draggedBand_);
+        if (onBandSelected)
+            onBandSelected(draggedBand_);
+
         // Open a balanced host-automation gesture for the params this drag will move.
         // mouseDrag streams setValueNotifyingHost (performEdit) calls; without a
         // surrounding begin/endChangeGesture the host receives naked, unbalanced edits.
@@ -334,11 +415,12 @@ void FinalEQComponent::mouseDrag(const juce::MouseEvent& e)
     if (draggedBand_ < 0)
         return;
 
-    const float newFreq = xToFreq(e.position.x);
-    const float newGain = yToGain(e.position.y);
+    setParam(freqId(draggedBand_), juce::jlimit(freqMin_, freqMax_, xToFreq(e.position.x)));
 
-    setParam(freqId(draggedBand_), juce::jlimit(freqMin_, freqMax_, newFreq));
-    setParam(gainId(draggedBand_), juce::jlimit(-gainRange_, gainRange_, newGain));
+    // Vertical drag is gain, and a cut has none -- for those the dot slides along
+    // the 0 dB line instead of silently writing a gain nothing applies.
+    if (SpaceDustFinalEQ::typeUsesGain(getBandType(draggedBand_)))
+        setParam(gainId(draggedBand_), juce::jlimit(-gainRange_, gainRange_, yToGain(e.position.y)));
 }
 
 void FinalEQComponent::mouseUp(const juce::MouseEvent&)
@@ -359,7 +441,8 @@ void FinalEQComponent::mouseWheelMove(const juce::MouseEvent& e,
     if (b < 0)
         return;
 
-    // Q only adjustable for peak bands; shelf slope via Q still works visually
+    // Q for a bell is its width, for a shelf its slope, for a cut its corner
+    // resonance -- every shape uses it, so the wheel always does something.
     const float delta = wheel.deltaY * 0.5f;  // sensitivity
     const float newQ  = juce::jlimit(0.1f, 10.0f, cachedQ_[b] + delta);
 
@@ -403,8 +486,9 @@ void FinalEQComponent::handleAsyncUpdate()
         if (auto* p = apvts_.getRawParameterValue(freqId(b))) cachedFreq_[b] = p->load();
         if (auto* p = apvts_.getRawParameterValue(gainId(b))) cachedGain_[b] = p->load();
         if (auto* p = apvts_.getRawParameterValue(qId(b)))    cachedQ_[b]    = p->load();
+        if (auto* p = apvts_.getRawParameterValue(typeId(b))) cachedType_[b] = static_cast<int>(p->load());
     }
-    recomputeResponse();   // ends with repaint() — safe on the message thread
+    recomputeResponse();   // ends with a repaint — safe on the message thread
 }
 
 //==============================================================================
