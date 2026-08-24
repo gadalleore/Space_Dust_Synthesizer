@@ -383,7 +383,11 @@ class SpaceDustAudioProcessorEditor : public juce::AudioProcessorEditor,
                                       public juce::Slider::Listener,
                                       public juce::Button::Listener,
                                       public juce::AudioProcessorValueTreeState::Listener,
-                                      public juce::FocusChangeListener
+                                      public juce::FocusChangeListener,
+                                      // What the Waveforms window needs to resample the synth:
+                                      // start a recording, watch it, take it, and strip the
+                                      // patch back around what it made. See ResampleHost.
+                                      private WaveformEditorComponent::ResampleHost
 {
     // Allow page components to access private members for layout
     friend class MainPageComponent;
@@ -535,7 +539,7 @@ private:
     /** The Waveforms window. Built on first use and then kept, hidden, so that
         closing and reopening it does not lose the selected slot or move it back
         to the middle of the screen. */
-    std::unique_ptr<WaveformEditorWindow> waveformWindow;
+    std::unique_ptr<WaveformEditorPanel> waveformWindow;
 
     /** Open the Waveforms window, pointed at the dropdown that asked for it.
 
@@ -547,9 +551,43 @@ private:
         what the entries before them are so the window can draw them, and group
         says which of the five sets of import slots the window is to show --
         each dropdown has its own. */
-    void openWaveformWindow(juce::ComboBox* combo, int userBase,
-                            WaveformEditorComponent::BuiltInKind kind,
+    void openWaveformWindow(juce::Component* anchorButton, juce::ComboBox* combo,
+                            int userBase, WaveformEditorComponent::BuiltInKind kind,
                             UserWave::Group group);
+
+    //==========================================================================
+    // -- WaveformEditorComponent::ResampleHost --
+    // The Resample buttons, answered here because this is where the processor and
+    // the parameters are. The synth plays itself a middle C and records the whole
+    // chain; see ResampleCapture for how that starts and ends.
+
+    bool startCapture(juce::String& errorMessage) override;
+    bool captureIsRunning() const override;
+    float captureProgress() const override;
+    void abandonCapture() override;
+    float playbackPhase(UserWave::Group group) const override;
+    void setPlaybackPhaseWanted(bool wanted) override;
+
+    /** Take the finished recording, measure how loud it was before the library
+        normalises it, and name it after the patch it came out of. */
+    bool collectCapture(WaveformEditorComponent::Capture& capture,
+                        juce::String& errorMessage) override;
+
+    /** Strip the patch back to nothing but one waveform -- Resample + Init.
+
+        Every parameter goes to its default, which turns every effect off, and
+        then the handful that are not silent-by-default are set: the one source
+        that is to be heard, the filter wide open, the amplitude envelope out of
+        the way, and the master volume put back to where the sound was recorded
+        (the library normalises what it stores, and this undoes exactly that).
+        The imported waveforms are NOT cleared -- unlike Initialize Preset, the
+        point of this is the waveform that was just made. */
+    void initialiseAroundWaveform(UserWave::Group group, int choiceIndex, float peak) override;
+
+    /** Set one parameter to a value in its own units, as a complete gesture.
+        Wrapped like every other write in this editor -- a naked
+        setValueNotifyingHost corrupts FL Studio's "Last Tweaked" tracking. */
+    void setParameterValue(const juce::String& parameterID, float value);
 
     /** Rebuild the five waveform dropdowns from the imported waveforms.
 

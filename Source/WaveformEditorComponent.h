@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
@@ -577,58 +577,95 @@ private:
 
 //==============================================================================
 /**
-    The window the component lives in.
+    The panel the component lives in.
 
-    Kept alive by the editor and hidden rather than deleted when closed, so the
-    selection and the window position survive being shut and reopened.
+    A plain component, not a DocumentWindow. It is parented to the editor's
+    mainView, which lays the whole plugin out in design coordinates and carries
+    its single scale transform -- so the panel scales with the window, floats
+    over the tab bar, and never wanders off onto the desktop the way a window of
+    its own did.
+
+    Hidden rather than deleted when closed, so the selection and the slot it was
+    showing survive being shut and reopened. Its position does not survive,
+    because it no longer has one of its own: it is placed against the Edit button
+    that opened it, every time.
+
+    Opaque. Nothing behind it dims -- that was asked for -- and that is exactly
+    why it has to read as solid. A see-through panel over the oscillator section
+    would be unreadable.
 */
-class WaveformEditorWindow : public juce::DocumentWindow
+class WaveformEditorPanel : public juce::Component
 {
 public:
-    WaveformEditorWindow (UserWaveLibrary& library, SpaceDustLookAndFeel& lookAndFeel);
+    WaveformEditorPanel (UserWaveLibrary& library, SpaceDustLookAndFeel& lookAndFeel);
+    ~WaveformEditorPanel() override;
 
-    ~WaveformEditorWindow() override;
+    void paint (juce::Graphics&) override;
+    void resized() override;
 
-    /** Hidden rather than deleted, so the selection and the position survive --
-        and the playhead is stopped on the way, because a window nobody can see
-        must not be asking the audio thread for anything. */
-    void closeButtonPressed() override;
+    /** A press that reached the panel is a press INSIDE it. Swallowed so the
+        outside-click watcher cannot read it as a press somewhere else. */
+    void mouseDown (const juce::MouseEvent& event) override;
 
-    /** Bring the window up, pointed at the dropdown that asked for it. */
-    void showFor (juce::ComboBox* targetCombo, int userBase,
-                  WaveformEditorComponent::BuiltInKind kind, UserWave::Group group,
-                  int slotIndex);
+    bool keyPressed (const juce::KeyPress& key) override;
 
-    /** Point the window at the synth it is to resample.
+    /** Bring the panel up, pointed at the dropdown that asked for it and placed
+        against the button that was pressed. */
+    void showFor (juce::Component* anchorButton, juce::ComboBox* targetCombo,
+                  int userBase, WaveformEditorComponent::BuiltInKind kind,
+                  UserWave::Group group, int slotIndex);
 
-        Handed in rather than reached for: the window is built by the editor and
-        knows nothing about the processor. See WaveformEditorComponent. */
+    /** Put the panel away: stop the playhead, and end any drag still open. */
+    void hidePanel();
+
     void setResampleHost (WaveformEditorComponent::ResampleHost* host);
 
     /** Redraw after the library changed under it. */
     void refreshContent();
 
-    /** Redraw only, with no rebuild of the controls.
-
-        The editor's meter timer calls this so the window's waveforms and buttons
-        bloom with the output like everything on the main panel. refreshContent()
-        would do it too, but it re-reads the library and re-sets every control on
-        each frame to paint the same pixels. */
+    /** Redraw only, with no rebuild of the controls. The editor's meter timer
+        calls this so the panel blooms with the output like the main panel. */
     void repaintContent();
 
 private:
-    /** Let a file dragged out of Explorer reach this window even when the host is
+    /** Let a file dragged out of Explorer reach this panel even when the host is
         running with raised privileges.
 
         Windows blocks messages sent from a lower privilege level to a higher one,
         and a file drop is such a message. Without this, drag and drop silently
         does nothing in an elevated DAW -- no error, no cursor change, nothing --
         while the Load File button keeps working, which is a confusing pair of
-        symptoms to be handed. Does nothing on any other platform, and nothing on
-        Windows when the process is not elevated. */
+        symptoms to be handed.
+
+        When this lived on a window of our own it filtered that window. The panel
+        has no window now, so getPeer() walks UP the parent chain to the HOST'S
+        window and filters that instead -- which is the window the drop actually
+        arrives at. Does nothing on any other platform, and nothing on Windows
+        when the process is not elevated. */
     void allowFileDropsFromLowerPrivilege();
 
-    WaveformEditorComponent* content = nullptr;
+    /** Watches every press in the plugin while the panel is open, so one landing
+        outside puts the panel away. The panel cannot see those presses itself:
+        they land on whatever was clicked. */
+    struct OutsideClickWatcher : public juce::MouseListener
+    {
+        explicit OutsideClickWatcher (WaveformEditorPanel& ownerToUse) : owner (ownerToUse) {}
+        void mouseDown (const juce::MouseEvent& event) override;
+        WaveformEditorPanel& owner;
+    };
 
-    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WaveformEditorWindow)
+    /** How much room the frame takes around the component, in design pixels. */
+    static constexpr int frameInset = 8;
+    static constexpr int titleHeight = 24;
+
+    UserWaveLibrary& library;
+    SpaceDustLookAndFeel& lookAndFeel;
+
+    std::unique_ptr<WaveformEditorComponent> content;
+    juce::TextButton closeButton { "X" };
+
+    OutsideClickWatcher outsideClicks { *this };
+    bool watchingOutsideClicks = false;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WaveformEditorPanel)
 };

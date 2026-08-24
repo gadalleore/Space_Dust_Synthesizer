@@ -4238,12 +4238,13 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             target.button->setTooltip(safeString(target.tip));
 
             auto* combo = target.combo;
+            auto* button = target.button;
             const int userBase = target.userBase;
             const Kind kind = target.kind;
             const auto group = target.group;
-            target.button->onClick = [this, combo, userBase, kind, group]
+            target.button->onClick = [this, button, combo, userBase, kind, group]
             {
-                openWaveformWindow(combo, userBase, kind, group);
+                openWaveformWindow(button, combo, userBase, kind, group);
             };
         }
     }
@@ -6703,23 +6704,227 @@ void SpaceDustAudioProcessorEditor::rebuildWaveformMenus()
         waveformWindow->refreshContent();
 }
 
-void SpaceDustAudioProcessorEditor::openWaveformWindow(juce::ComboBox* combo, int userBase,
+void SpaceDustAudioProcessorEditor::openWaveformWindow(juce::Component* anchorButton,
+                                                      juce::ComboBox* combo, int userBase,
                                                       WaveformEditorComponent::BuiltInKind kind,
                                                       UserWave::Group group)
 {
     auto& library = audioProcessor.getUserWaveLibrary();
 
     if (waveformWindow == nullptr)
-        waveformWindow = std::make_unique<WaveformEditorWindow>(library, customLookAndFeel);
+    {
+        waveformWindow = std::make_unique<WaveformEditorPanel>(library, customLookAndFeel);
 
-    // The window drives this dropdown directly, so its list and this menu are the
+        // Parented to mainView, which lays the whole plugin out in design
+        // coordinates and carries its single scale transform -- so the panel
+        // scales with the window and may float over the tab bar.
+        mainView.addChildComponent(*waveformWindow);
+
+        // The synth the panel resamples. Safe to hand it `this`: the panel is
+        // owned by this editor and is destroyed with it.
+        waveformWindow->setResampleHost(this);
+    }
+
+    // The panel drives this dropdown directly, so its list and this menu are the
     // same list and cannot drift apart. -1 means "do not move the selection": the
-    // dropdown is on a built-in shape, and opening a window must never change the
+    // dropdown is on a built-in shape, and opening a panel must never change the
     // sound by itself.
     const int slot = combo->getSelectedId() - 1 - userBase;
 
-    waveformWindow->showFor(combo, userBase, kind, group,
+    waveformWindow->showFor(anchorButton, combo, userBase, kind, group,
                             (slot >= 0 && slot < UserWave::numSlots) ? slot : -1);
+}
+
+//==============================================================================
+bool SpaceDustAudioProcessorEditor::startCapture(juce::String& errorMessage)
+{
+    if (audioProcessor.startResampleRecording())
+        return true;
+
+    errorMessage = "The synth cannot record just now. Try again in a moment.";
+    return false;
+}
+
+bool SpaceDustAudioProcessorEditor::captureIsRunning() const
+{
+    return audioProcessor.isResampleRecording();
+}
+
+float SpaceDustAudioProcessorEditor::captureProgress() const
+{
+    return audioProcessor.getResampleProgress();
+}
+
+void SpaceDustAudioProcessorEditor::abandonCapture()
+{
+    audioProcessor.cancelResampleRecording();
+}
+
+float SpaceDustAudioProcessorEditor::playbackPhase(UserWave::Group group) const
+{
+    return audioProcessor.getUserWavePhase(group);
+}
+
+void SpaceDustAudioProcessorEditor::setPlaybackPhaseWanted(bool wanted)
+{
+    audioProcessor.setUserWavePhaseWanted(wanted);
+}
+
+bool SpaceDustAudioProcessorEditor::collectCapture(WaveformEditorComponent::Capture& capture,
+                                                   juce::String& errorMessage)
+{
+    if (!audioProcessor.takeResampleRecording(capture.mono, capture.sampleRate, capture.cutShort))
+    {
+        errorMessage = "Middle C made no sound. Check the levels and the waveform.";
+        return false;
+    }
+
+    // Measured HERE, before the library normalises it. It is the one thing that
+    // normalisation destroys and Resample + Init has to put back.
+    float peak = 0.0f;
+    for (float value : capture.mono)
+        peak = juce::jmax(peak, std::abs(value));
+
+    capture.peak = peak;
+
+    // Named after the patch it came out of, because that is what it is. A patch
+    // with no name of its own gives the plain word.
+    const auto preset = audioProcessor.currentPresetName.trim();
+    capture.name = (preset.isEmpty() || preset == "Init") ? juce::String("Resample") : preset;
+
+    return true;
+}
+
+void SpaceDustAudioProcessorEditor::setParameterValue(const juce::String& parameterID, float value)
+{
+    auto* param = audioProcessor.getValueTreeState().getParameter(parameterID);
+
+    if (param == nullptr)
+    {
+        jassertfalse;   // a renamed or removed parameter, caught at the first press
+        return;
+    }
+
+    const auto& range = param->getNormalisableRange();
+
+    // Balanced gesture, as everywhere else in this editor: a burst of naked
+    // setValueNotifyingHost calls corrupts FL Studio's "Last Tweaked" tracking,
+    // which breaks automation created afterwards (see PresetManager::loadInitPreset).
+    param->beginChangeGesture();
+    param->setValueNotifyingHost(range.convertTo0to1(juce::jlimit(range.start, range.end, value)));
+    param->endChangeGesture();
+}
+
+namespace
+{
+    /** How much of one source reaches the output when its own level is full.
+
+        A voice pans with a constant-power law, so a source in the middle arrives
+        at 1/sqrt(2) on each side -- and the mono sum the capture keeps is that
+        same 1/sqrt(2). The noise source carries a further 0.75 of its own. Both
+        are read straight off SynthVoice's mixing step; if that changes, this does.
+
+        Resample + Init divides the captured peak by this before it sets the
+        master volume, so the sound comes back at the level it was taken at rather
+        than 3 dB under it. */
+    float sourcePlaybackGain(UserWave::Group group)
+    {
+        constexpr float centreGain = 0.70710678f;   // SynthVoice's centerGain
+
+        switch (group)
+        {
+            case UserWave::Group::Noise:     return centreGain * 0.75f;
+
+            // Summed into the master chain rather than panned by a voice, so it
+            // arrives whole.
+            case UserWave::Group::Transient: return 1.0f;
+
+            case UserWave::Group::Osc1:
+            case UserWave::Group::Osc2:
+            case UserWave::Group::Sub:
+            default:                         return centreGain;
+        }
+    }
+}
+
+void SpaceDustAudioProcessorEditor::initialiseAroundWaveform(UserWave::Group group,
+                                                             int choiceIndex, float peak)
+{
+    // Everything back to its default first. Every effect in this synth is off by
+    // default, so this single call IS "no effects chain" -- and it will still be,
+    // for effects added long after this was written.
+    presetManager->loadInitPreset();
+
+    // Two things Initialize Preset does are deliberately NOT done here. The
+    // imported waveforms are not cleared -- a blank patch should not carry the
+    // last session's samples, but the whole point of this button is the waveform
+    // made a moment ago. And the Cheeze Guy tab is left where it is: it is not
+    // part of a patch, so stripping a patch back has no business taking it away.
+
+    // -- The one source that is to be heard, and the waveform it plays --
+    setParameterValue("osc1Level",  group == UserWave::Group::Osc1 ? 1.0f : 0.0f);
+    setParameterValue("osc2Level",  group == UserWave::Group::Osc2 ? 1.0f : 0.0f);
+    setParameterValue("noiseLevel", group == UserWave::Group::Noise ? 1.0f : 0.0f);
+    setParameterValue("subOscOn",   group == UserWave::Group::Sub ? 1.0f : 0.0f);
+
+    if (group == UserWave::Group::Sub)
+        setParameterValue("subOscLevel", 1.0f);
+
+    setParameterValue("transientEnabled", group == UserWave::Group::Transient ? 1.0f : 0.0f);
+
+    if (group == UserWave::Group::Transient)
+        setParameterValue("transientMix", 1.0f);
+
+    switch (group)
+    {
+        case UserWave::Group::Osc1:      setParameterValue("osc1Waveform",   (float) choiceIndex); break;
+        case UserWave::Group::Osc2:      setParameterValue("osc2Waveform",   (float) choiceIndex); break;
+        case UserWave::Group::Sub:       setParameterValue("subOscWaveform", (float) choiceIndex); break;
+        case UserWave::Group::Noise:     setParameterValue("noiseType",      (float) choiceIndex); break;
+        case UserWave::Group::Transient: setParameterValue("transientType",  (float) choiceIndex); break;
+    }
+
+    // -- Nothing left to shape it --
+    // The filter cannot be taken out of the path, so it is put where it does the
+    // least: fully open, no resonance, and no envelope pointed at it.
+    setParameterValue("filterCutoff", 20000.0f);
+    setParameterValue("filterResonance", 0.0f);
+    setParameterValue("filterEnvAmount", 0.0f);
+
+    // The amplitude envelope is already inside the sample -- its attack, its decay
+    // and its tail were all recorded -- so a second envelope on top would shape the
+    // same sound twice. This is as close to a plain gate as the ranges allow: ten
+    // milliseconds in and ten out, short enough not to be heard as a shape and long
+    // enough not to click.
+    setParameterValue("envAttack", 0.01f);
+    setParameterValue("envDecay", 0.01f);
+    setParameterValue("envSustain", 1.0f);
+    setParameterValue("envRelease", 0.01f);
+
+    // And the level it was recorded at -- but never above 0 dBFS.
+    //
+    // The library normalises every waveform it stores, so without this the sound
+    // would come back at whatever its loudest moment happened to be rather than
+    // where the player left it. The cap is what stops that being a licence to
+    // clip: a patch already running hot -- and one built by this very button is,
+    // because it sets the master to the level it found -- would be handed a master
+    // volume that puts its peaks over full scale. Everything downstream then
+    // squares them off, and resampling THAT gives a flatter waveform again, so
+    // each pass through the button is more squashed than the last
+    // (Giuseppe, 2026-08-13).
+    //
+    // So the loudest point of the resampled patch sits exactly at full scale, and
+    // a patch that was quieter than that keeps its own level.
+    const float gain = sourcePlaybackGain(group);
+    const float wanted = juce::jmin(peak, 1.0f);
+    setParameterValue("masterVolume", gain > 0.0f ? wanted / gain : wanted);
+
+    // The patch is no longer the preset it was built from, and says so.
+    audioProcessor.currentPresetName = "Init";
+    presetCombo.setSelectedId(0, juce::dontSendNotification);
+    presetCombo.setTextWhenNothingSelected("Init");
+
+    audioProcessor.updateVoicesWithParameters();
 }
 
 //==============================================================================

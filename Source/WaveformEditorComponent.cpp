@@ -2321,27 +2321,102 @@ void WaveformEditorComponent::paintDetail (juce::Graphics& g)
 }
 
 //==============================================================================
-WaveformEditorWindow::WaveformEditorWindow (UserWaveLibrary& library,
-                                            SpaceDustLookAndFeel& lookAndFeel)
-    : DocumentWindow ("Space Dust - Waveforms", juce::Colour (0xff0a0a1f),
-                      DocumentWindow::closeButton)
+WaveformEditorPanel::WaveformEditorPanel (UserWaveLibrary& libraryToUse,
+                                          SpaceDustLookAndFeel& lookAndFeelToUse)
+    : library (libraryToUse), lookAndFeel (lookAndFeelToUse)
 {
-    // setContentOwned takes ownership immediately, so the raw pointer never
-    // outlives this statement unowned. content is only a borrowed handle for
-    // showFor() and refreshContent(); the window frees the component.
-    auto* editor = new WaveformEditorComponent (library, lookAndFeel);
-    setContentOwned (editor, true);
-    content = editor;
+    // Opaque so JUCE paints this rectangle alone. A non-opaque child makes its
+    // parent repaint first, which here means the whole plugin behind it -- the
+    // same reason SampleStrip is opaque, for the same cost.
+    setOpaque (true);
 
-    setUsingNativeTitleBar (true);
-    setResizable (false, false);
-    centreWithSize (editor->getWidth(), editor->getHeight());
-    setVisible (true);
+    content = std::make_unique<WaveformEditorComponent> (library, lookAndFeel);
+    addAndMakeVisible (*content);
 
-    allowFileDropsFromLowerPrivilege();
+    closeButton.setLookAndFeel (&lookAndFeel);
+    closeButton.onClick = [this] { hidePanel(); };
+    addAndMakeVisible (closeButton);
+
+    setVisible (false);
 }
 
-void WaveformEditorWindow::allowFileDropsFromLowerPrivilege()
+WaveformEditorPanel::~WaveformEditorPanel()
+{
+    // A panel destroyed while open must leave no listener behind on a parent
+    // that outlives it.
+    if (auto* parent = getParentComponent(); parent != nullptr && watchingOutsideClicks)
+        parent->removeMouseListener (&outsideClicks);
+
+    // The audio thread must stop being asked for a position nobody will read.
+    // Before the content goes, because it is the content that carries the word.
+    if (content != nullptr)
+        content->setPlayheadActive (false);
+
+    closeButton.setLookAndFeel (nullptr);
+}
+
+void WaveformEditorPanel::paint (juce::Graphics& g)
+{
+    auto area = getLocalBounds().toFloat();
+
+    g.setColour (juce::Colour (0xff0a0a1f));
+    g.fillRoundedRectangle (area, 6.0f);
+
+    g.setColour (juce::Colour (0xff00d4ff));
+    g.drawRoundedRectangle (area.reduced (0.5f), 6.0f, 1.5f);
+
+    g.setColour (juce::Colour (0xffa0d8ff));
+    g.setFont (lookAndFeel.getBodyFont (13.0f, true));
+    g.drawText ("Waveforms",
+                getLocalBounds().removeFromTop (titleHeight).reduced (frameInset, 0),
+                juce::Justification::centredLeft, false);
+}
+
+void WaveformEditorPanel::resized()
+{
+    auto area = getLocalBounds();
+    auto titleRow = area.removeFromTop (titleHeight);
+
+    closeButton.setBounds (titleRow.removeFromRight (titleHeight + frameInset)
+                                   .reduced (4, 3));
+
+    if (content != nullptr)
+        content->setBounds (area.reduced (frameInset, 0)
+                                .withTrimmedBottom (frameInset));
+}
+
+void WaveformEditorPanel::mouseDown (const juce::MouseEvent&)
+{
+    // Deliberately empty. A press that reached the panel is a press inside it,
+    // and swallowing it here is what stops OutsideClickWatcher reading it as a
+    // press somewhere else.
+}
+
+bool WaveformEditorPanel::keyPressed (const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::escapeKey)
+    {
+        hidePanel();
+        return true;
+    }
+
+    return false;
+}
+
+void WaveformEditorPanel::OutsideClickWatcher::mouseDown (const juce::MouseEvent& event)
+{
+    if (! owner.isVisible())
+        return;
+
+    // Anything that happened inside the panel, or inside anything the panel owns,
+    // belongs to the panel.
+    if (event.eventComponent == &owner || owner.isParentOf (event.eventComponent))
+        return;
+
+    owner.hidePanel();
+}
+
+void WaveformEditorPanel::allowFileDropsFromLowerPrivilege()
 {
 #if JUCE_WINDOWS
     if (auto* peer = getPeer())
@@ -2361,77 +2436,113 @@ void WaveformEditorWindow::allowFileDropsFromLowerPrivilege()
 #endif
 }
 
-void WaveformEditorWindow::showFor (juce::ComboBox* targetCombo, int userBase,
-                                    WaveformEditorComponent::BuiltInKind kind,
-                                    UserWave::Group group, int slotIndex)
+void WaveformEditorPanel::showFor (juce::Component* anchorButton,
+                                   juce::ComboBox* targetCombo, int userBase,
+                                   WaveformEditorComponent::BuiltInKind kind,
+                                   UserWave::Group group, int slotIndex)
 {
-    // The five lists are separate, so the title bar says which one is open. The
-    // window is reused, and without this a second Edit button would raise a
-    // window that looks identical to the one just closed.
-    setName ("Space Dust - " + juce::String (UserWave::groupName (group)));
+    if (content == nullptr)
+        return;
 
-    if (content != nullptr)
+    content->setTarget (targetCombo, userBase, kind, group);
+
+    // Only jump to a slot that has something in it. Opening the panel must never
+    // change the sound by itself.
+    if (slotIndex >= 0)
+        content->selectSlot (slotIndex);
+
+    // The list that opened this may be longer or shorter than the last one, so
+    // the panel is sized from the list rather than left at whatever the previous
+    // one needed.
+    const int width = WaveformEditorComponent::preferredWidth() + frameInset * 2;
+    const int height = WaveformEditorComponent::preferredHeight (userBase)
+                     + titleHeight + frameInset;
+
+    setSize (width, height);
+
+    // Placed against the button that opened it, then pushed back inside. The
+    // clamp is not optional: the Sub Oscillator button sits low and right in the
+    // layout, and a panel hung off it would run off two edges at once.
+    if (auto* parent = getParentComponent())
     {
-        content->setTarget (targetCombo, userBase, kind, group);
+        juce::Point<int> topLeft (0, 0);
 
-        // The list that opened this may be longer or shorter than the last one,
-        // and the content has just resized itself to suit. The window has to
-        // follow, or the rows past the old bottom would have nowhere to be drawn.
-        // Size only: where the player put the window is theirs to keep.
-        setContentComponentSize (content->getWidth(), content->getHeight());
+        if (anchorButton != nullptr)
+        {
+            const auto anchor = parent->getLocalArea (anchorButton,
+                                                      anchorButton->getLocalBounds());
+            topLeft = { anchor.getX(), anchor.getBottom() + 4 };
+        }
 
-        // Only jump to a slot that has something in it. Opening the window must
-        // never change the sound by itself.
-        if (slotIndex >= 0)
-            content->selectSlot (slotIndex);
+        const int maxX = juce::jmax (0, parent->getWidth() - width);
+        const int maxY = juce::jmax (0, parent->getHeight() - height);
 
-        content->refresh();
+        setTopLeftPosition (juce::jlimit (0, maxX, topLeft.x),
+                            juce::jlimit (0, maxY, topLeft.y));
     }
 
     setVisible (true);
     toFront (true);
 
-    // Open, so it follows what is playing again. Paired with closeButtonPressed
-    // and the destructor; between them the synth is only ever asked for a
-    // position while there is a window on screen to draw it on.
-    if (content != nullptr)
-        content->setPlayheadActive (true);
+    content->refresh();
 
-    // The peer is recreated whenever the window is hidden and shown again, and
-    // the filter is a property of the peer, not of the window.
+    // Open, so it follows what is playing again. Paired with hidePanel and the
+    // destructor; between them the synth is only ever asked for a position while
+    // there is a panel on screen to draw it on.
+    content->setPlayheadActive (true);
+
+    // Listen for presses anywhere else in the plugin, so one puts the panel away.
+    if (auto* parent = getParentComponent(); parent != nullptr && ! watchingOutsideClicks)
+    {
+        parent->addMouseListener (&outsideClicks, true);
+        watchingOutsideClicks = true;
+    }
+
+    setWantsKeyboardFocus (true);
+    grabKeyboardFocus();
+
+    // The panel no longer owns a window, so the drop lands on whatever window the
+    // host gave us. Ask that window to let it through. Here rather than in the
+    // constructor: a panel that has never been shown has no peer to reach, and a
+    // host may hand us a different window between one opening and the next.
     allowFileDropsFromLowerPrivilege();
 }
 
-WaveformEditorWindow::~WaveformEditorWindow()
+void WaveformEditorPanel::hidePanel()
 {
-    // The editor is going away and the audio thread must stop being asked for
-    // something nobody will read. Before the content is destroyed, because it is
-    // the content that carries the message.
-    if (content != nullptr)
-        content->setPlayheadActive (false);
-}
+    if (! isVisible())
+        return;
 
-void WaveformEditorWindow::closeButtonPressed()
-{
     if (content != nullptr)
         content->setPlayheadActive (false);
+
+    // A gesture that never got its mouse-up -- the panel closed mid-drag -- would
+    // otherwise hold the slot audio and never write the index file.
+    juce::String ignored;
+    library.endTrimSession (ignored);
+
+    if (auto* parent = getParentComponent(); parent != nullptr && watchingOutsideClicks)
+    {
+        parent->removeMouseListener (&outsideClicks);
+        watchingOutsideClicks = false;
+    }
 
     setVisible (false);
 }
 
-void WaveformEditorWindow::setResampleHost (WaveformEditorComponent::ResampleHost* host)
+void WaveformEditorPanel::setResampleHost (WaveformEditorComponent::ResampleHost* host)
 {
     if (content != nullptr)
         content->setResampleHost (host);
 }
 
-void WaveformEditorWindow::refreshContent()
+void WaveformEditorPanel::refreshContent()
 {
     if (content != nullptr)
         content->refresh();
 }
 
-void WaveformEditorWindow::repaintContent()
+void WaveformEditorPanel::repaintContent()
 {
     if (content != nullptr)
         content->repaint();
