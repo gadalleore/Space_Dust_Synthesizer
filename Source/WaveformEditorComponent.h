@@ -5,6 +5,9 @@
 #include "SpaceDustLookAndFeel.h"
 #include "UserWavetable.h"
 
+#include <functional>
+#include <vector>
+
 /**
     The Waveforms window -- the waveform list, and where a sample joins it.
 
@@ -34,7 +37,8 @@
     be tested without a window on the screen. This draws what they concluded.
 */
 class WaveformEditorComponent : public juce::Component,
-                                public juce::FileDragAndDropTarget
+                                public juce::FileDragAndDropTarget,
+                                private juce::MultiTimer
 {
 public:
     /** What sits above the import slots in the list that opened this window.
@@ -60,7 +64,18 @@ public:
     //==========================================================================
     void paint (juce::Graphics&) override;
     void resized() override;
+
+    /** Selecting a row, and grabbing one of the two markers on the whole-file
+        picture. The markers come first: a press that lands on one is a drag, not
+        a choice of waveform. */
     void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+
+    /** Both markers back to the ends of the file. The one gesture that undoes a
+        trim without having to drag each marker back by hand. */
+    void mouseDoubleClick (const juce::MouseEvent&) override;
 
     //==========================================================================
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
@@ -85,6 +100,97 @@ public:
     /** Show and select the given import slot. */
     void selectSlot (int slotIndex);
 
+    /** Start or stop following what the synth is playing.
+
+        Called by the window as it is shown and hidden, and nothing else here
+        depends on it -- so a closed window costs exactly nothing: no timer, no
+        repaint, and nothing published from the audio thread either. */
+    void setPlayheadActive (bool shouldFollow);
+
+    //==========================================================================
+    // -- Resample --
+    //
+    // The window still decides nothing about audio. It knows that a resample is a
+    // lump of mono samples with a rate and a level, that asking for one takes a
+    // few seconds, and that a patch can be stripped back around the result. WHERE
+    // the samples come from and WHAT stripping a patch back means both live in
+    // the editor, next to the processor and the parameters.
+
+    /** What one press of Resample brings back. */
+    struct Capture
+    {
+        /** Mono, at sampleRate. */
+        std::vector<float> mono;
+        double sampleRate = 0.0;
+
+        /** How loud it was BEFORE it was normalised on the way into the slot.
+            Resample + Init needs it to put the level back. */
+        float peak = 0.0f;
+
+        /** What to call the slot -- the patch the sound came out of. */
+        juce::String name;
+
+        /** Whether the tail was still sounding when the recording ran out of
+            room. The player is the only one who can shorten a reverb, so they
+            are told rather than left with a sample that ends in mid-air. */
+        bool cutShort = false;
+    };
+
+    /** Everything the window needs from the synth: to record it, to strip it back
+        around what it recorded, and to know where it has got to in a sample.
+
+        An interface rather than a handful of callbacks, because they are one job
+        and are all answered by the same object. Implemented by the editor, which
+        owns this window and so outlives it. */
+    struct ResampleHost
+    {
+        virtual ~ResampleHost() = default;
+
+        /** Ask the synth to play a middle C and record what comes out. It runs on
+            the audio thread and takes seconds, so this returns at once. False,
+            with a line for the player, when it cannot be started. */
+        virtual bool startCapture (juce::String& errorMessage) = 0;
+
+        /** Whether that recording is still running. */
+        virtual bool captureIsRunning() const = 0;
+
+        /** How far it has got, 0 to 1, for the bar the player watches. */
+        virtual float captureProgress() const = 0;
+
+        /** Take the finished recording. False when it caught no sound. */
+        virtual bool collectCapture (Capture& capture, juce::String& errorMessage) = 0;
+
+        /** Give up on a recording that can never finish. */
+        virtual void abandonCapture() = 0;
+
+        /** How far through this list's sample the synth has got, 0 to 1, or a
+            negative number when nothing is playing one. Drives the playhead.
+
+            Whatever is being played right now, not what is selected in the
+            window: the two are the same while the player is auditioning, and
+            when they are not, what is sounding is the truthful answer. */
+        virtual float playbackPhase (UserWave::Group group) const = 0;
+
+        /** Whether anybody is watching that. False while the window is shut, and
+            the synth then publishes nothing at all -- the point of asking. */
+        virtual void setPlaybackPhaseWanted (bool wanted) = 0;
+
+        /** Strip the patch back to nothing but the waveform just made: every
+            effect off, the filter open, the envelope out of the way, and this one
+            waveform selected in the list it went into.
+
+            Given the choice index rather than being left to move the dropdown, so
+            the selection is made through the PARAMETER -- the same reset that
+            turns the effects off puts every waveform dropdown back to its
+            default, and a selection made any other way would be undone by it. */
+        virtual void initialiseAroundWaveform (UserWave::Group group, int choiceIndex,
+                                               float peak) = 0;
+    };
+
+    /** Point the window at the synth it is to resample. Null in any host that has
+        not set one, which is what greys the two buttons out. */
+    void setResampleHost (ResampleHost* host);
+
     /** Rebuild every control from the library and the target dropdown. */
     void refresh();
 
@@ -106,6 +212,34 @@ private:
     void importInto (int slotIndex, const juce::File& file);
     void browseForFile();
     void applyMode (UserWave::Mode mode);
+
+    /** Both Resample buttons. alsoInitialise is the only difference between them:
+        the sound is recorded, stored and selected either way, and stripping the
+        patch back happens in between -- after the slot exists, before it is
+        chosen.
+
+        The recording takes seconds, so this only starts it. The rest happens in
+        timerCallback when the synth says it has finished. */
+    void beginResample (int slotIndex, bool alsoInitialise);
+
+    /** Which clock has ticked. The two run at very different rates and only one
+        of them ever runs at all: see resampleTimerId and playheadTimerId. */
+    void timerCallback (int timerID) override;
+
+    /** Build the finished recording into the waiting slot.
+
+        Always Full Sample. A resample is a whole note -- attack, tail, effects
+        and all -- and one period out of the middle of that is not what the player
+        pressed the button for. The Single Cycle button is right there
+        afterwards. */
+    void completeResample();
+
+    /** End a resample that cannot go on, and say why. */
+    void failResample (const juce::String& message);
+
+    /** Whether a recording is running, which is what disables most of the panel
+        while one is. */
+    bool isResampling() const noexcept { return pendingSlot >= 0; }
 
     /** How many rows the list has: built-ins plus the eight import slots. */
     int numRows() const { return userBase + UserWave::numSlots; }
@@ -142,8 +276,103 @@ private:
     juce::Rectangle<int> listBounds() const;
     juce::Rectangle<int> detailBounds() const;
 
+    /** The box the big picture is drawn in. */
+    juce::Rectangle<int> pictureBounds() const;
+
+    /** Where the whole-file picture goes, which is the only place a playhead or a
+        loop mark means anything: the strip under the shape when a pitched sample
+        shows both pictures, the whole box when an unpitched one shows only its
+        outline, and nothing at all for a single cycle or a built-in shape.
+
+        This is the SampleStrip's bounds. Empty means there is no such picture and
+        the strip is hidden. */
+    juce::Rectangle<int> wholeFileBounds() const;
+
+    /** Draw the whole recording end to end, with its start and end markers.
+        Handed to the SampleStrip, which caches what it returns. */
+    void paintWholeFilePicture (juce::Graphics&, juce::Rectangle<int> area) const;
+
+    //==========================================================================
+    // -- The start and end markers --
+    //
+    // Two vertical lines on the whole-file picture that say where the sound
+    // begins and where it ends. Dragging them is how a sample is topped and
+    // tailed: past the front of a hit, before a tail that runs on too long.
+    //
+    // The start marker also goes BACKWARDS, off the front of the file and into a
+    // gutter kept clear in front of it, and there it means silence -- the sample
+    // still starts when the marker says, there is simply nothing there until it
+    // does. That gutter is the only reason the picture is not just the file: with
+    // the file drawn edge to edge there is nowhere to drag the marker TO.
+    //
+    // Nothing is cut. The slot keeps the whole file whatever the markers say
+    // (UserWaveSlot::sample), so the material outside them is still drawn, dimmed,
+    // and dragging a marker back out brings it back.
+
+    /** Which marker a drag is moving, if any. */
+    enum class TrimHandle
+    {
+        None,
+        Start,
+        End
+    };
+
+    /** How much room the picture leaves in FRONT of the file, in file samples.
+
+        A quarter of the file's own length, so the gutter is always a visible
+        share of the picture whatever the sample is -- and no more than the slot
+        has room left for, because silence is stored as samples like everything
+        else and comes out of the same fifteen seconds. */
+    int padGutter (const UserWaveSlot& entry) const;
+
+    /** Where the two markers stand, in samples of the file, with the end resolved
+        to a real position rather than the "to the end" zero the slot stores.
+
+        Answers with the DRAG in progress when there is one. A drag moves a line
+        on a picture and nothing else -- the slot is not rebuilt until the mouse
+        comes up -- so every part of the drawing has to ask here rather than
+        reading the slot. */
+    void trimPoints (const UserWaveSlot& entry, int& start, int& end) const;
+
+    /** Where a position in the buffer falls across the picture, 0 to 1.
+
+        The picture's axis is the gutter and then the buffer, so this is not
+        simply a fraction of the sample: it is the one place that geometry is
+        written down, and the markers, the dimming, the playhead and the mouse all
+        go through it. */
+    double axisPosition (const UserWaveSlot& entry, double bufferIndex) const;
+
+    /** And back again: the buffer position a point on screen refers to. */
+    double bufferIndexAt (const UserWaveSlot& entry, int x) const;
+
+    /** The marker under a point, or None. Within a few pixels either side, so a
+        line one pixel wide can still be picked up. */
+    TrimHandle handleAt (juce::Point<int> position) const;
+
+    /** Take the drag in progress into the slot, and say what it did. */
+    void commitTrim();
+
+    /** A number of file samples as the player reads it: seconds, or milliseconds
+        when there are too few seconds to show. */
+    juce::String timeLabel (const UserWaveSlot& entry, double samples) const;
+
+    /** Put the strip where it belongs for what is on screen, and redraw it. */
+    void positionSampleStrip();
+
+    /** The slot the detail panel is showing, or null for a built-in row. */
+    const UserWaveSlot* shownSlot() const;
+
+    /** Put the playhead where the synth has got to, and size it to the picture.
+        Does nothing visible when there is no whole-file picture to draw it on. */
+    void updatePlayhead();
+
     void paintList (juce::Graphics&);
     void paintDetail (juce::Graphics&);
+
+    /** The bar a recording is watched by, drawn in the box the waveform is
+        normally drawn in -- because it is that waveform being made, and because
+        it is the one part of the panel the player is already looking at. */
+    void paintRecording (juce::Graphics&, juce::Rectangle<int> area);
 
     /** How much halo a picture carries.
 
@@ -161,11 +390,38 @@ private:
         Tight
     };
 
+    /** Whether a whole-sample slot is drawn as its SHAPE or as its OUTLINE.
+
+        A pitched sample has a period, so a few cycles of it can be drawn and the
+        picture is a waveform -- the same kind of picture as a built-in shape or a
+        single cycle, which is what the player came to this window to look at. A
+        two-second note drawn as its outline instead is a filled rectangle, which
+        tells them nothing at all (Giuseppe, 2026-08-13).
+
+        An unpitched one -- a drum, a texture, a field recording -- has no period
+        to cut at, and a few cycles of it would be a few hundred samples chosen at
+        random. That one keeps the outline, where its shape over time is the only
+        thing there is to see.
+
+        A resample counts as pitched however the detector read it: the plugin
+        played it a middle C itself. See UserWaveSlot::allowRetune. */
+    static bool drawsCycles (const UserWaveSlot& slot);
+
     /** Draw any row's waveform, built-in or imported, into an area. One function
         for both so the list reads as one kind of thing. */
     void paintRowWaveform (juce::Graphics&, juce::Rectangle<int> area, int row,
                            juce::Colour colour, float thickness, int repeats,
                            Bloom bloom) const;
+
+    /** Draw a stretch of a whole sample as its outline -- the shape of the two
+        edges of its range, column by column.
+
+        The stretch is given in buffer positions and may reach outside the buffer
+        at either end, which is what draws the gutter in front of the file as the
+        silence it is rather than leaving it blank. */
+    void paintSampleOutline (juce::Graphics&, juce::Rectangle<int> area,
+                             const UserWaveSlot& entry, double fromIndex, double toIndex,
+                             juce::Colour colour, float thickness, Bloom bloom) const;
 
     /** Stroke a built picture, with the bloom the rest of the plugin carries.
         One place, so two pictures of the same size cannot end up glowing
@@ -208,6 +464,86 @@ private:
     int dragTargetRow = -1;
     bool dragActive = false;
 
+    /** The marker being dragged, and where the two of them stand while it is.
+
+        Held here rather than written into the slot on every mouse move because
+        moving a marker rebuilds the slot, saves the index file and hands the
+        audio thread a fresh bank -- once a gesture is right; sixty times a second
+        is not. The slot learns about it when the mouse comes up. */
+    TrimHandle trimDrag = TrimHandle::None;
+    int dragTrimStart = 0;
+    int dragTrimEnd = 0;
+
+    /** The synth being resampled, or null where there is none. */
+    ResampleHost* resampleHost = nullptr;
+
+    //==========================================================================
+    /** The picture of the whole recording, and the line moving across it.
+
+        A component of its own, and an OPAQUE one, and one that keeps its picture
+        in an image. All three of those are the same decision: the line has to be
+        redrawn sixty times a second, and NOTHING ELSE MAY BE.
+
+          a component   so a frame touches this rectangle instead of the panel.
+
+          opaque        because a see-through one does not achieve that. JUCE has
+                        to paint whatever is underneath before it can paint
+                        through it -- "non-opaque children require their parent to
+                        repaint", as its own test suite puts it -- so a
+                        transparent overlay dragged the whole panel along behind
+                        the line, nineteen waveform pictures and all, and the line
+                        crawled (Giuseppe, 2026-08-14).
+
+          cached        because the picture under the line costs a pass over the
+                        entire sample to draw, and it does not change from one
+                        frame to the next. It is drawn when the slot, the loop or
+                        the size changes; a frame is then a blit and a line.
+
+        Takes nothing from the mouse: a click here belongs to the panel. */
+    class SampleStrip : public juce::Component
+    {
+    public:
+        SampleStrip();
+
+        /** What to draw behind the line, in this component's own coordinates.
+            Set by the panel, which owns every drawing rule in this window. */
+        std::function<void (juce::Graphics&, juce::Rectangle<int> area)> drawPicture;
+
+        /** Draw the picture again. Called when what it shows changes -- never per
+            frame. */
+        void rebuild();
+
+        /** Where the line goes, 0 to 1 across the picture, or negative for no
+            line. Repaints only when it would actually land somewhere else. */
+        void setPosition (float newPosition, juce::Colour newColour);
+
+        /** The picture sits inside the component, so the box's border and its
+            rounded corners are still the panel's to draw. */
+        juce::Rectangle<int> pictureArea() const { return getLocalBounds().reduced (5, 5); }
+
+        void paint (juce::Graphics&) override;
+        void resized() override { rebuild(); }
+
+    private:
+        juce::Image picture;
+        float position = -1.0f;
+        juce::Colour colour { 0xff00d4ff };
+    };
+
+    SampleStrip sampleStrip;
+
+    /** Whether the window is open and following the synth. */
+    bool playheadActive = false;
+
+    /** The slot a running recording is going into, and whether the patch is to be
+        stripped back around it when it arrives. -1 when nothing is running. */
+    int pendingSlot = -1;
+    bool pendingInitialise = false;
+
+    /** How long the recording has been running, in timer ticks, so one that can
+        never finish is given up on rather than left waiting for good. */
+    int pendingTicks = 0;
+
     juce::GroupComponent listGroup;
     juce::GroupComponent detailGroup;
 
@@ -218,6 +554,14 @@ private:
     SpaceDustToggleStyleButton loadButton;
     SpaceDustToggleStyleButton clearButton;
     SpaceDustToggleStyleButton updateAllButton;
+    SpaceDustToggleStyleButton resampleButton;
+    SpaceDustToggleStyleButton resampleInitButton;
+
+    /** On for a sample that repeats while the key is held, off for one that plays
+        once and stops. A toggle, and lit when it is on, like every other pair of
+        states on the main panel. Dead in Single Cycle mode, where a repeat is the
+        whole idea. */
+    SpaceDustToggleStyleButton loopButton;
     SpaceDustToggleStyleButton singleCycleButton;
     SpaceDustToggleStyleButton fullSampleButton;
     juce::TextEditor nameEditor;
@@ -243,12 +587,23 @@ class WaveformEditorWindow : public juce::DocumentWindow
 public:
     WaveformEditorWindow (UserWaveLibrary& library, SpaceDustLookAndFeel& lookAndFeel);
 
-    void closeButtonPressed() override { setVisible (false); }
+    ~WaveformEditorWindow() override;
+
+    /** Hidden rather than deleted, so the selection and the position survive --
+        and the playhead is stopped on the way, because a window nobody can see
+        must not be asking the audio thread for anything. */
+    void closeButtonPressed() override;
 
     /** Bring the window up, pointed at the dropdown that asked for it. */
     void showFor (juce::ComboBox* targetCombo, int userBase,
                   WaveformEditorComponent::BuiltInKind kind, UserWave::Group group,
                   int slotIndex);
+
+    /** Point the window at the synth it is to resample.
+
+        Handed in rather than reached for: the window is built by the editor and
+        knows nothing about the processor. See WaveformEditorComponent. */
+    void setResampleHost (WaveformEditorComponent::ResampleHost* host);
 
     /** Redraw after the library changed under it. */
     void refreshContent();

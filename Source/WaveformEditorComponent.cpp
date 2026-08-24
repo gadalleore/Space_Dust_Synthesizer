@@ -1,4 +1,4 @@
-#include "WaveformEditorComponent.h"
+﻿#include "WaveformEditorComponent.h"
 
 #include "WaveAnalysis.h"
 
@@ -48,8 +48,47 @@ namespace
     constexpr int buttonWidth = 90;
     constexpr int buttonGap = 6;
 
-    /** Height of the two control rows plus the gap between them. */
-    constexpr int controlStripHeight = buttonHeight * 2 + 8 + 4;
+    /** A button wide enough for a two-word name. The main panel has toggles from
+        86 to 130 wide, so this is not a size of this window's own invention. */
+    constexpr int wideButtonWidth = 130;
+
+    /** Height of the three control rows plus the gaps between them. */
+    constexpr int controlStripHeight = buttonHeight * 3 + 8 + 8 + 4;
+
+    /** How often the window asks the synth whether its recording has finished.
+        Often enough to feel immediate; the recording itself is timed on the audio
+        thread, so nothing about its length depends on this. */
+    constexpr int resamplePollMs = 60;
+
+    /** The two clocks. Only one of them is ever running: the poll while a
+        recording is being waited for, the playhead while the window is open. */
+    constexpr int resampleTimerId = 0;
+    constexpr int playheadTimerId = 1;
+    constexpr int trimTimerId = 2;
+
+    /** How often a drag is put into the slot and published: about thirty times a
+        second.
+
+        Fast enough that the sound follows the hand, and slow enough to be work
+        the message thread can carry. In Full Sample mode a rebuild builds no
+        mipmap tables -- buildSlot clears them and fills the sample buffer only --
+        so one update is a copy of the sample, at most about 2.6 MB at the
+        fifteen second limit. */
+    constexpr int trimIntervalMs = 33;
+
+    /** How often the playhead moves. Sixty a second, because it is a line moving
+        across a picture and anything slower is seen as steps rather than as
+        movement -- and because the panel's own redraw cannot be used for it: that
+        one is driven by the output METER changing, so it stops entirely on a
+        steady note and stutters on a changing one (Giuseppe, 2026-08-14). */
+    constexpr int playheadIntervalMs = 16;
+
+    /** How long to wait before deciding a recording will never finish.
+
+        Comfortably past the longest one there can be -- two seconds of held note
+        and then a tail capped at the length of a waveform slot -- so this only
+        ever fires when the audio thread has stopped running altogether. */
+    constexpr int resampleGiveUpMs = 30000;
 
     /** The list area is always tall enough for every row THIS list could hold, so
         it does not change size as waveforms are imported and cleared. The space
@@ -84,6 +123,11 @@ namespace
             default: return 0.0f;
         }
     }
+
+    /** How near a marker the pointer has to be to pick it up, in pixels. A line
+        is one pixel wide and a mouse is not that accurate; this is the same grab
+        distance the panel's own draggable things use. */
+    constexpr int handleGrabPixels = 6;
 
     /** How loud a drum is, as a fraction of the way through its hit.
 
@@ -140,14 +184,30 @@ WaveformEditorComponent::WaveformEditorComponent (UserWaveLibrary& libraryToUse,
     updateAllButton.setButtonText ("Update All");
     singleCycleButton.setButtonText ("Single Cycle");
     fullSampleButton.setButtonText ("Full Sample");
+    resampleButton.setButtonText ("Resample");
+    resampleInitButton.setButtonText ("Resample + Init");
+    loopButton.setButtonText ("Loop");
 
     addAndMakeVisible (loadButton);
     addAndMakeVisible (clearButton);
     addAndMakeVisible (updateAllButton);
     addAndMakeVisible (singleCycleButton);
     addAndMakeVisible (fullSampleButton);
+    addAndMakeVisible (resampleButton);
+    addAndMakeVisible (resampleInitButton);
+    addAndMakeVisible (loopButton);
     addAndMakeVisible (nameEditor);
     addAndMakeVisible (nameLabel);
+
+    // The whole-file picture and its playhead. Positioned by refresh(), and told
+    // here how to draw itself -- every rule about what a waveform looks like in
+    // this window stays in this class.
+    sampleStrip.drawPicture = [this] (juce::Graphics& g, juce::Rectangle<int> area)
+    {
+        paintWholeFilePicture (g, area);
+    };
+
+    addChildComponent (sampleStrip);
 
     loadButton.onClick = [this] { browseForFile(); };
 
@@ -207,6 +267,33 @@ WaveformEditorComponent::WaveformEditorComponent (UserWaveLibrary& libraryToUse,
             setStatus ("\"" + name + "\" is now slot " + juce::String (slot + 1)
                        + " of Waveform 1, Waveform 2, Sub, Noize and Transient.", false);
 
+        refresh();
+    };
+
+    resampleButton.setTooltip ("Record a middle C, silently, and put the sound that "
+                               "comes out into a waveform slot");
+    resampleInitButton.setTooltip ("The same, and then turn everything else off so "
+                                  "that waveform is all you hear");
+
+    // The same slot rule as Load File, and for the same reason: a resample is an
+    // import that happens to come from inside the plugin, so it must not land
+    // anywhere a dropped file would not.
+    resampleButton.onClick     = [this] { beginResample (fallbackImportSlot(), false); };
+    resampleInitButton.onClick = [this] { beginResample (fallbackImportSlot(), true); };
+
+    loopButton.setTooltip ("On: the sample repeats while the key is held. "
+                           "Off: it plays once and stops.");
+    loopButton.setClickingTogglesState (true);
+
+    loopButton.onClick = [this]
+    {
+        const bool shouldLoop = loopButton.getToggleState();
+
+        library.setSlotLoop (group, activeSlot, shouldLoop);
+
+        setStatus (shouldLoop ? "Loop on: a held key plays the sample over and over."
+                              : "Loop off: the sample plays once, all the way through, "
+                                "and stops.", false);
         refresh();
     };
 
@@ -389,8 +476,17 @@ juce::String WaveformEditorComponent::rowDetail (int row) const
     if (entry.pitchLabel.isNotEmpty())
         detail += "   " + entry.pitchLabel;
 
+    // "not tuned" is a warning: the pitch could not be read, so the sample plays
+    // at its recorded speed. A resample is at its recorded speed BY DESIGN -- it
+    // was recorded from middle C -- so the same words would read as a fault.
     if (entry.mode == UserWave::Mode::FullSample && ! entry.retuned)
-        detail += "   not tuned";
+        detail += entry.allowRetune ? "   not tuned" : "   from middle C";
+
+    // Said on the row, because it is the difference between a key that holds a
+    // sound and a key that fires one off, and the player should not have to
+    // select a row to find out which they have.
+    if (entry.mode == UserWave::Mode::FullSample && ! entry.loop)
+        detail += "   one shot";
 
     return detail;
 }
@@ -410,22 +506,48 @@ void WaveformEditorComponent::refresh()
     // those controls go dead while one is shown. It is the only way the two kinds
     // of row differ.
     const bool showingSlot = (slot >= 0);
-    const bool editable = showingSlot && entry.isPlayable();
 
-    nameEditor.setText (editable ? entry.name : juce::String(), juce::dontSendNotification);
+    // Everything that acts on a slot goes dead while a recording is running. It
+    // is only a few seconds, and every one of these would be acting on the slot
+    // that the recording is about to overwrite.
+    const bool busy = isResampling();
+    const bool editable = showingSlot && entry.isPlayable() && ! busy;
+
+    nameEditor.setText (showingSlot && entry.isPlayable() ? entry.name : juce::String(),
+                        juce::dontSendNotification);
     nameEditor.setEnabled (editable);
     nameLabel.setEnabled (editable);
     clearButton.setEnabled (editable);
     updateAllButton.setEnabled (editable);
     singleCycleButton.setEnabled (editable);
     fullSampleButton.setEnabled (editable);
+    loadButton.setEnabled (! busy);
+
+    // The two Resample buttons are NOT tied to the selected row. A resample lands
+    // in the slot a dropped file would land in, so it is as available while a
+    // built-in is on screen as Load File is. All they need is a synth to record,
+    // which is what the editor gives them.
+    resampleButton.setEnabled (resampleHost != nullptr && ! busy);
+    resampleInitButton.setEnabled (resampleHost != nullptr && ! busy);
 
     singleCycleButton.setToggleState (editable && entry.mode == UserWave::Mode::SingleCycle,
                                       juce::dontSendNotification);
     fullSampleButton.setToggleState (editable && entry.mode == UserWave::Mode::FullSample,
                                      juce::dontSendNotification);
 
+    // A single cycle has nowhere to go but round, so the loop is not a choice
+    // there and the button says so by going dead rather than by lying about
+    // being off.
+    const bool wholeSample = editable && entry.mode == UserWave::Mode::FullSample;
+    loopButton.setEnabled (wholeSample);
+    loopButton.setToggleState (wholeSample ? entry.loop : true, juce::dontSendNotification);
+
     detailGroup.setText (row >= 0 ? rowName (row) : juce::String ("Detail"));
+
+    // The whole-file picture belongs to whichever slot is on screen, so it is
+    // moved, shown, hidden and redrawn here rather than only when the window is
+    // resized -- selecting a different row is what changes it, not the size.
+    positionSampleStrip();
 
     repaint();
 }
@@ -476,6 +598,333 @@ void WaveformEditorComponent::importInto (int slotIndex, const juce::File& file)
         message += ". Middle C now plays it in tune.";
 
     setStatus (message, false);
+    refresh();
+}
+
+void WaveformEditorComponent::setResampleHost (ResampleHost* host)
+{
+    resampleHost = host;
+    refresh();      // the two buttons take their enabled state from this
+}
+
+void WaveformEditorComponent::beginResample (int slotIndex, bool alsoInitialise)
+{
+    if (resampleHost == nullptr || isResampling())
+        return;
+
+    juce::String error;
+
+    if (! resampleHost->startCapture (error))
+    {
+        setStatus (error, true);
+        return;
+    }
+
+    pendingSlot = slotIndex;
+    pendingInitialise = alsoInitialise;
+    pendingTicks = 0;
+
+    // Every line this panel shows has to fit the one status row across the bottom
+    // of the window, which is about a hundred characters wide. Anything longer is
+    // silently cut off in the middle of a word.
+    setStatus ("Recording a middle C. Nothing is heard while it runs.", false);
+
+    // Often enough to feel immediate, seldom enough to cost nothing. The recording
+    // itself is timed by the audio thread, not by this.
+    startTimer (resampleTimerId, resamplePollMs);
+    refresh();
+}
+
+WaveformEditorComponent::SampleStrip::SampleStrip()
+{
+    // Both of these are the point of this class -- see the note on it.
+    setOpaque (true);
+    setInterceptsMouseClicks (false, false);
+}
+
+void WaveformEditorComponent::SampleStrip::rebuild()
+{
+    if (getWidth() <= 0 || getHeight() <= 0 || ! drawPicture)
+    {
+        picture = {};
+        repaint();
+        return;
+    }
+
+    // RGB, not ARGB: this component is opaque, so nothing is drawn underneath it
+    // and every pixel here has to come from somewhere.
+    picture = juce::Image (juce::Image::RGB, getWidth(), getHeight(), false);
+
+    juce::Graphics g (picture);
+    drawPicture (g, getLocalBounds());
+
+    repaint();
+}
+
+void WaveformEditorComponent::SampleStrip::setPosition (float newPosition, juce::Colour newColour)
+{
+    // A line is one pixel wide, so a move it cannot show is a repaint that costs
+    // everything and changes nothing. Sixty times a second, that is the whole
+    // difference between a playhead and a busy loop.
+    const auto area = pictureArea();
+    const bool moved = std::abs (newPosition - position) * (float) juce::jmax (1, area.getWidth()) >= 0.5f;
+    const bool appeared = (newPosition < 0.0f) != (position < 0.0f);
+
+    if (! moved && ! appeared && newColour == colour)
+        return;
+
+    position = newPosition;
+    colour = newColour;
+    repaint();
+}
+
+void WaveformEditorComponent::SampleStrip::paint (juce::Graphics& g)
+{
+    if (picture.isValid())
+        g.drawImageAt (picture, 0, 0);
+    else
+        g.fillAll (backgroundNavy);
+
+    if (position < 0.0f || position > 1.0f)
+        return;
+
+    // Drawn as a thin filled rectangle at a fractional position rather than as a
+    // line on a whole pixel: the edges are shaded in, so the line slides instead
+    // of stepping from one pixel to the next.
+    const auto area = pictureArea();
+    const float x = (float) area.getX() + position * (float) area.getWidth();
+
+    g.setColour (colour.withAlpha (0.9f));
+    g.fillRect (juce::Rectangle<float> (x - 0.5f, (float) area.getY(),
+                                        1.0f, (float) area.getHeight()));
+}
+
+//==============================================================================
+void WaveformEditorComponent::setPlayheadActive (bool shouldFollow)
+{
+    if (playheadActive == shouldFollow)
+        return;
+
+    playheadActive = shouldFollow;
+
+    // The audio thread is told too. Nothing is published while no window is
+    // watching, so a closed window costs nothing at all -- not a repaint here and
+    // not a store per source per block over there.
+    if (resampleHost != nullptr)
+        resampleHost->setPlaybackPhaseWanted (shouldFollow);
+
+    if (shouldFollow)
+    {
+        startTimer (playheadTimerId, playheadIntervalMs);
+    }
+    else
+    {
+        stopTimer (playheadTimerId);
+        sampleStrip.setPosition (-1.0f, traceColour());
+    }
+}
+
+void WaveformEditorComponent::positionSampleStrip()
+{
+    const auto area = wholeFileBounds();
+
+    sampleStrip.setVisible (! area.isEmpty());
+
+    if (area.isEmpty())
+        return;
+
+    // setBounds only rebuilds the picture when the size actually changed (it goes
+    // through resized), so this is safe to call from refresh().
+    const bool sameSize = (sampleStrip.getBounds() == area);
+    sampleStrip.setBounds (area);
+
+    if (sameSize)
+        sampleStrip.rebuild();   // same shape, different contents
+}
+
+void WaveformEditorComponent::updatePlayhead()
+{
+    const auto* entry = shownSlot();
+
+    if (! sampleStrip.isVisible() || entry == nullptr || resampleHost == nullptr
+        || entry->loopLength <= 0 || entry->sample.empty())
+    {
+        sampleStrip.setPosition (-1.0f, traceColour());
+        return;
+    }
+
+    const float phase = resampleHost->playbackPhase (group);
+
+    if (phase < 0.0f || phase > 1.0f)
+    {
+        sampleStrip.setPosition (-1.0f, traceColour());
+        return;
+    }
+
+    // A phase runs 0 to 1 across the part that PLAYS, which begins a crossfade
+    // past the start marker when the slot loops -- so it is placed against the
+    // loop, not against the trimmed region, or the line would lag its own sound
+    // by ten milliseconds.
+    const double from = entry->loop ? (double) entry->loopStart : (double) entry->playStart;
+
+    sampleStrip.setPosition (
+        (float) juce::jlimit (0.0, 1.0,
+                              axisPosition (*entry,
+                                            from + (double) phase * (double) entry->playSpan())),
+        traceColour());
+}
+
+void WaveformEditorComponent::timerCallback (int timerID)
+{
+    if (timerID == playheadTimerId)
+    {
+        updatePlayhead();
+        return;
+    }
+
+    if (timerID == trimTimerId)
+    {
+        // Nothing to do when the mouse has stopped: updateTrimSession compares
+        // the numbers and returns at once if they have not moved.
+        juce::String error;
+
+        // Exactly the end of the file is stored as a ZERO, not as the length --
+        // so that a slot whose sample is later replaced by a longer one still
+        // plays all of it. The same conversion commitTrim does, done here too, so
+        // the drag and the mouse-up never write two different numbers for the
+        // same marker position.
+        const auto* entry = shownSlot();
+        const int end = (entry != nullptr && dragTrimEnd == entry->fileLength)
+                            ? 0 : dragTrimEnd;
+
+        if (! library.updateTrimSession (dragTrimStart, end, error))
+        {
+            // The drag has reached somewhere the slot cannot go. Stop it here
+            // rather than let it fight the clamps for the rest of the gesture.
+            stopTimer (trimTimerId);
+            trimDrag = TrimHandle::None;
+
+            juce::String ignored;
+            library.endTrimSession (ignored);
+
+            setStatus (error, true);
+            refresh();
+        }
+
+        return;
+    }
+
+    if (! isResampling() || resampleHost == nullptr)
+    {
+        stopTimer (resampleTimerId);
+        return;
+    }
+
+    if (resampleHost->captureIsRunning())
+    {
+        // A recording that never ends means the audio thread has stopped running
+        // it -- a device that has gone away, or a host that has stopped calling
+        // the plugin. Give up, rather than leave the buttons dead for good.
+        if (++pendingTicks * resamplePollMs > resampleGiveUpMs)
+        {
+            resampleHost->abandonCapture();
+            failResample ("The synth is not running, so there was nothing to record.");
+            return;
+        }
+
+        // Nothing is heard while a recording runs, so the bar is the only sign
+        // that anything is happening. It has to be redrawn to move.
+        repaint();
+        return;
+    }
+
+    completeResample();
+}
+
+void WaveformEditorComponent::failResample (const juce::String& message)
+{
+    stopTimer (resampleTimerId);
+    pendingSlot = -1;
+    setStatus (message, true);
+    refresh();
+}
+
+void WaveformEditorComponent::completeResample()
+{
+    stopTimer (resampleTimerId);
+
+    const int slotIndex = pendingSlot;
+    const bool alsoInitialise = pendingInitialise;
+    pendingSlot = -1;
+
+    Capture capture;
+    juce::String error;
+
+    if (resampleHost == nullptr || ! resampleHost->collectCapture (capture, error))
+    {
+        failResample (error);
+        return;
+    }
+
+    // Analysing the recording and building the slot takes long enough on a long
+    // tail to look like a hang, exactly as importing a file does.
+    juce::MouseCursor::showWaitCursor();
+    const bool ok = library.importAudio (std::move (capture.mono), capture.sampleRate,
+                                         capture.name, group, slotIndex,
+                                         UserWave::Mode::FullSample, error);
+    juce::MouseCursor::hideWaitCursor();
+
+    if (! ok)
+    {
+        failResample (error);
+        return;
+    }
+
+    activeSlot = slotIndex;
+
+    const int choiceIndex = userBase + slotIndex;
+    const auto seconds = juce::String (library.bank().slot (group, slotIndex).sample.size()
+                                         / juce::jmax (1.0, capture.sampleRate), 1);
+
+    // The tail outlasting the slot is the one thing the player has to act on --
+    // only they can shorten a reverb -- so it takes the whole line when it
+    // happens, in the amber the panel warns in.
+    if (capture.cutShort)
+    {
+        if (alsoInitialise)
+            resampleHost->initialiseAroundWaveform (group, choiceIndex, capture.peak);
+        else if (targetCombo != nullptr)
+            targetCombo->setSelectedId (choiceIndex + 1, juce::sendNotificationSync);
+
+        setStatus ("Slot " + juce::String (slotIndex + 1) + " holds " + seconds
+                   + " s -- all a slot can. The tail was still sounding, so it is cut.",
+                   true);
+        refresh();
+        return;
+    }
+
+    if (alsoInitialise)
+    {
+        // Stripping the patch back selects the waveform as well -- it has to, or
+        // the reset that turns the effects off would leave the dropdown on Sine.
+        // See the note on ResampleHost::initialiseAroundWaveform.
+        resampleHost->initialiseAroundWaveform (group, choiceIndex, capture.peak);
+
+        setStatus ("Slot " + juce::String (slotIndex + 1) + " holds " + seconds
+                   + " s of that sound, and it is all you hear now: no effects, "
+                     "filter open, no envelope.", false);
+    }
+    else
+    {
+        if (targetCombo != nullptr)
+            targetCombo->setSelectedId (choiceIndex + 1, juce::sendNotificationSync);
+
+        setStatus ("Slot " + juce::String (slotIndex + 1) + " of "
+                   + UserWave::groupName (group) + " holds " + seconds
+                   + " s of that sound. The effects are still on, so it goes through "
+                     "them again.", false);
+    }
+
     refresh();
 }
 
@@ -576,12 +1025,243 @@ void WaveformEditorComponent::filesDropped (const juce::StringArray& files, int 
 }
 
 //==============================================================================
+WaveformEditorComponent::TrimHandle
+WaveformEditorComponent::handleAt (juce::Point<int> position) const
+{
+    const auto* entry = shownSlot();
+    const auto area = wholeFileBounds();
+
+    if (entry == nullptr || area.isEmpty() || isResampling()
+        || entry->mode != UserWave::Mode::FullSample || entry->sample.empty())
+        return TrimHandle::None;
+
+    // The whole height of the strip, not only the tab at the top of the line: the
+    // strip is fifty pixels tall under a pitched sample, and asking for the top
+    // five of them would be asking for accuracy nobody has.
+    if (! area.contains (position))
+        return TrimHandle::None;
+
+    const auto picture = area.reduced (5, 5);
+
+    int start = 0;
+    int end = 0;
+    trimPoints (*entry, start, end);
+
+    const auto pixelsFrom = [&] (int filePosition)
+    {
+        const double at = axisPosition (*entry, (double) (entry->fileOffset() + filePosition));
+        const double x = (double) picture.getX() + at * (double) picture.getWidth();
+        return std::abs (x - (double) position.getX());
+    };
+
+    const double toStart = pixelsFrom (start);
+    const double toEnd = pixelsFrom (end);
+
+    if (toStart > (double) handleGrabPixels && toEnd > (double) handleGrabPixels)
+        return TrimHandle::None;
+
+    // The nearer of the two when both are in reach, which is what happens on a
+    // sample trimmed down to almost nothing.
+    return toStart <= toEnd ? TrimHandle::Start : TrimHandle::End;
+}
+
 void WaveformEditorComponent::mouseDown (const juce::MouseEvent& event)
 {
+    // A press on a marker is the start of a drag, and nothing else. It has to be
+    // asked first: the markers are drawn on the detail panel, well away from the
+    // list, but a press that reached selectRow() would rebuild the panel out from
+    // under the drag.
+    if (const auto handle = handleAt (event.getPosition()); handle != TrimHandle::None)
+    {
+        if (const auto* entry = shownSlot())
+        {
+            // Where the markers stand READ FIRST, and the drag begun after.
+            // trimPoints() answers with the drag in progress once there is one,
+            // so setting the handle first made it seed the drag from the last
+            // drag's leftovers -- which on the first press of all is 0 and 0, and
+            // both marks shut against the left wall (Giuseppe, 2026-08-16).
+            trimPoints (*entry, dragTrimStart, dragTrimEnd);
+
+            // Decode the slot's audio once, here, so that every rebuild for the
+            // rest of this gesture is free of it. A slot that cannot be opened is
+            // a slot that cannot be dragged: say so and do not begin.
+            juce::String error;
+
+            if (! library.beginTrimSession (group, activeSlot, error))
+            {
+                setStatus (error, true);
+                return;
+            }
+
+            trimDrag = handle;
+        }
+
+        return;
+    }
+
     const int row = rowAt (event.getPosition());
 
     if (row >= 0)
         selectRow (row);
+}
+
+void WaveformEditorComponent::mouseDrag (const juce::MouseEvent& event)
+{
+    if (trimDrag == TrimHandle::None)
+        return;
+
+    const auto* entry = shownSlot();
+
+    if (entry == nullptr)
+        return;
+
+    // Where the pointer is, in samples of the FILE. Negative is in front of it,
+    // which is the silence this whole gesture exists for.
+    const int at = (int) std::lround (bufferIndexAt (*entry, event.x)
+                                      - (double) entry->fileOffset());
+
+    // Each marker reaches as far off its own end of the file as the gutter drawn
+    // there, and no nearer the other marker than there is sound to leave between
+    // them.
+    const int gutter = padGutter (*entry);
+
+    if (trimDrag == TrimHandle::Start)
+    {
+        dragTrimStart = juce::jlimit (-(entry->padStart() + gutter),
+                                      juce::jmin (dragTrimEnd, entry->fileLength)
+                                          - UserWave::minPlayLength,
+                                      at);
+    }
+    else
+    {
+        dragTrimEnd = juce::jlimit (juce::jmax (0, dragTrimStart) + UserWave::minPlayLength,
+                                    entry->fileLength + entry->padEnd() + gutter,
+                                    at);
+    }
+
+    // The picture is cached, so it has to be told the marks moved. One pass over
+    // the sample per frame of the drag, which is what it costs to have the shaded
+    // region follow the pointer instead of jumping when the mouse comes up.
+    sampleStrip.rebuild();
+    repaint();
+
+    // And the SOUND follows the same way. Not from here -- a rebuild per mouse
+    // move is far more than the ear needs -- but from a timer that reads where
+    // the drag has got to.
+    if (! isTimerRunning (trimTimerId))
+        startTimer (trimTimerId, trimIntervalMs);
+}
+
+void WaveformEditorComponent::mouseUp (const juce::MouseEvent&)
+{
+    if (trimDrag == TrimHandle::None)
+        return;
+
+    trimDrag = TrimHandle::None;
+    stopTimer (trimTimerId);
+    commitTrim();
+}
+
+void WaveformEditorComponent::mouseMove (const juce::MouseEvent& event)
+{
+    setMouseCursor (handleAt (event.getPosition()) != TrimHandle::None
+                        ? juce::MouseCursor::LeftRightResizeCursor
+                        : juce::MouseCursor::NormalCursor);
+}
+
+void WaveformEditorComponent::mouseDoubleClick (const juce::MouseEvent& event)
+{
+    const auto* entry = shownSlot();
+    const auto area = wholeFileBounds();
+
+    if (entry == nullptr || area.isEmpty() || ! area.contains (event.getPosition())
+        || isResampling())
+        return;
+
+    juce::String error;
+
+    if (! library.setSlotTrim (group, activeSlot, 0, 0, error))
+    {
+        setStatus (error, true);
+    }
+    else
+    {
+        setStatus ("Start and end put back: the whole sample plays again.", false);
+        positionSampleStrip();
+    }
+
+    refresh();
+}
+
+void WaveformEditorComponent::commitTrim()
+{
+    const auto* entry = shownSlot();
+
+    if (entry == nullptr)
+        return;
+
+    const int start = dragTrimStart;
+
+    // Exactly the end of the file is stored as a zero, so that a slot whose
+    // sample is later replaced by a longer one still plays all of it. Past the
+    // end is silence, and that is kept as the number it is.
+    const int end = dragTrimEnd == entry->fileLength ? 0 : dragTrimEnd;
+
+    juce::String error;
+
+    // The session has been putting this into the slot all through the drag. This
+    // applies wherever the mouse got to after the last timer tick, then writes
+    // the index file once.
+    //
+    // setSlotTrim is untouched and is still what a double-click reset uses: one
+    // finished decision, decode and write and all.
+    if (! library.updateTrimSession (start, end, error)
+        || ! library.endTrimSession (error))
+    {
+        setStatus (error, true);
+        refresh();
+        return;
+    }
+
+    // Read back from the slot, not from the drag: what the marker asked for and
+    // what the slot could give it are not always the same number.
+    const auto& updated = library.bank().slot (group, activeSlot);
+
+    juce::String message;
+
+    if (updated.padStart() > 0)
+        message << timeLabel (updated, (double) updated.padStart()) << " of silence first. ";
+
+    if (updated.padEnd() > 0)
+        message << timeLabel (updated, (double) updated.padEnd()) << " of silence after. ";
+
+    if (updated.padStart() == 0 && updated.padEnd() == 0)
+        message << "Plays from " << timeLabel (updated, (double) updated.trimStart) << " to "
+                << timeLabel (updated, (double) (updated.trimEnd > 0 ? updated.trimEnd
+                                                                     : updated.fileLength))
+                << " of the sample. ";
+
+    message << "A key now sounds for " << timeLabel (updated, (double) updated.playLength) << ".";
+
+    setStatus (message, false);
+
+    // The buffer may have grown or shrunk with the silence in front of it, so the
+    // picture is redrawn from scratch rather than merely repainted.
+    positionSampleStrip();
+    refresh();
+}
+
+juce::String WaveformEditorComponent::timeLabel (const UserWaveSlot& entry, double samples) const
+{
+    if (entry.fileSampleRate <= 0.0)
+        return "0 ms";
+
+    const double seconds = samples / entry.fileSampleRate;
+
+    if (std::abs (seconds) < 1.0)
+        return juce::String (juce::roundToInt (seconds * 1000.0)) + " ms";
+
+    return juce::String (seconds, 2) + " s";
 }
 
 //==============================================================================
@@ -595,6 +1275,255 @@ juce::Rectangle<int> WaveformEditorComponent::detailBounds() const
 {
     auto list = listBounds();
     return { list.getRight() + margin, list.getY(), detailWidth, list.getHeight() };
+}
+
+//==============================================================================
+// The picture geometry lives here, not in paintDetail, because the playhead is a
+// component that has to be POSITIONED over the same rectangles the picture is
+// drawn in. Worked out twice, in two places, they would drift apart the first
+// time either was adjusted.
+juce::Rectangle<int> WaveformEditorComponent::pictureBounds() const
+{
+    auto content = detailBounds().reduced (groupPadding, 0);
+    content.removeFromTop (groupTitleInset);
+    content.removeFromBottom (groupPadding);
+    content.removeFromBottom (controlStripHeight);   // the strip laid out in resized()
+    content.removeFromTop (24 + 4);                  // the readout line
+    content.removeFromBottom (32);                   // the note under the picture
+
+    return content;
+}
+
+const UserWaveSlot* WaveformEditorComponent::shownSlot() const
+{
+    const int row = rowForSelection();
+
+    if (row < 0)
+        return nullptr;
+
+    const int slot = slotForRow (row);
+
+    return slot >= 0 ? &library.bank().slot (group, slot) : nullptr;
+}
+
+juce::Rectangle<int> WaveformEditorComponent::wholeFileBounds() const
+{
+    const auto* entry = shownSlot();
+
+    if (entry == nullptr || ! entry->isPlayable()
+        || entry->mode != UserWave::Mode::FullSample)
+        return {};
+
+    auto content = pictureBounds();
+
+    if (content.getHeight() < 40)
+        return {};
+
+    // An unpitched sample shows its outline across the whole box; a pitched one
+    // shows its shape there and the whole file in the strip beneath. Either way
+    // this is the picture a position along the file belongs on.
+    //
+    // Inset by one, so the box's own border and its rounded corners stay the
+    // panel's to draw -- this is an opaque component and it would otherwise paint
+    // over them with square ones.
+    if (! drawsCycles (*entry))
+        return content.reduced (1, 1);
+
+    return content.removeFromBottom (juce::jmin (54, content.getHeight() / 3)).reduced (1, 1);
+}
+
+//==============================================================================
+// -- Where things are along the picture --
+//
+// The picture's axis is NOT the sample. It is the buffer with a gutter at each
+// end of it:
+//
+//   [ gutter ][ guard ][ silence ][ the whole file ][ silence ][ guard ][ gutter ]
+//   ^                                                                          ^
+//   axis 0                                                                 axis 1
+//
+// A gutter is empty room outside the sound with nothing in it to draw. It is
+// there so a marker has somewhere to go when it is dragged off the end of the
+// file, which is the gesture that adds silence -- with the file drawn edge to
+// edge, both markers would already be hard against the walls.
+//
+// Everything that has a position -- the two markers, the dimming outside them,
+// the playhead, and the mouse coming the other way -- goes through the two
+// functions below, so none of them can disagree about where anything is.
+
+int WaveformEditorComponent::padGutter (const UserWaveSlot& entry) const
+{
+    if (entry.fileLength <= 0)
+        return 0;
+
+    // What is left of the slot's allowance for silence, which the two ends share.
+    const int room = UserWave::maxPadSamples (entry.fileLength, entry.fileSampleRate)
+                   - entry.padStart() - entry.padEnd();
+
+    // A quarter of the file at each end, so the gutters are a visible share of
+    // the picture whatever the sample is -- and half the remaining room apiece
+    // when there is less than that left, so neither end can eat the other's.
+    return juce::jlimit (0, juce::jmax (0, room) / 2, entry.fileLength / 4);
+}
+
+void WaveformEditorComponent::trimPoints (const UserWaveSlot& entry, int& start, int& end) const
+{
+    if (trimDrag != TrimHandle::None)
+    {
+        start = dragTrimStart;
+        end = dragTrimEnd;
+        return;
+    }
+
+    start = entry.trimStart;
+    end = entry.trimEnd > 0 ? entry.trimEnd : entry.fileLength;
+}
+
+double WaveformEditorComponent::axisPosition (const UserWaveSlot& entry,
+                                              double bufferIndex) const
+{
+    const double gutter = (double) padGutter (entry);
+    const double span = 2.0 * gutter + (double) entry.sample.size();
+
+    if (span <= 0.0)
+        return 0.0;
+
+    return (bufferIndex + gutter) / span;
+}
+
+double WaveformEditorComponent::bufferIndexAt (const UserWaveSlot& entry, int x) const
+{
+    const auto area = wholeFileBounds();
+
+    if (area.isEmpty())
+        return 0.0;
+
+    // The picture sits inside the strip by the same inset the strip draws it at.
+    const auto picture = area.reduced (5, 5);
+    const double width = (double) juce::jmax (1, picture.getWidth());
+    const double gutter = (double) padGutter (entry);
+    const double span = 2.0 * gutter + (double) entry.sample.size();
+
+    return ((double) (x - picture.getX()) / width) * span - gutter;
+}
+
+//==============================================================================
+void WaveformEditorComponent::paintWholeFilePicture (juce::Graphics& g,
+                                                     juce::Rectangle<int> area) const
+{
+    const auto* entry = shownSlot();
+
+    // Opaque: every pixel of this comes from here, including the background the
+    // panel would otherwise have drawn underneath.
+    g.fillAll (backgroundNavy);
+
+    if (entry == nullptr || entry->sample.empty())
+        return;
+
+    auto picture = area.reduced (5, 5);
+
+    g.setColour (toggleBorder.withAlpha (0.5f));
+    g.drawHorizontalLine (picture.getCentreY(), (float) picture.getX(),
+                          (float) picture.getRight());
+
+    // Dropped back when it is the strip under a shape, because it is the context
+    // and the shape is the subject -- and at full weight when it IS the picture,
+    // which is what an unpitched sample gets.
+    const bool isStrip = drawsCycles (*entry);
+
+    const double gutter = (double) padGutter (*entry);
+
+    paintSampleOutline (g, picture, *entry, -gutter, (double) entry->sample.size() + gutter,
+                        traceColour().withAlpha (isStrip ? 0.5f : 0.9f),
+                        isStrip ? 1.0f : 1.8f,
+                        isStrip ? Bloom::Tight : Bloom::Wide);
+
+    //==========================================================================
+    // The two markers, and everything outside them dimmed.
+    //
+    // Dimmed rather than hidden, because it is still there: the slot keeps the
+    // whole file, so what is under the shading is exactly what dragging the
+    // marker back out would bring back. Hiding it would say it had gone.
+    int start = 0;
+    int end = 0;
+    trimPoints (*entry, start, end);
+
+    const auto markerX = [&] (int filePosition)
+    {
+        const double position = axisPosition (*entry, (double) (entry->fileOffset()
+                                                                 + filePosition));
+        return (float) picture.getX() + (float) (position * (double) picture.getWidth());
+    };
+
+    const float startX = markerX (start);
+    const float endX = markerX (end);
+
+    g.setColour (backgroundNavy.withAlpha (0.72f));
+
+    if (startX > (float) picture.getX())
+        g.fillRect (juce::Rectangle<float> ((float) picture.getX(), (float) picture.getY(),
+                                            startX - (float) picture.getX(),
+                                            (float) picture.getHeight()));
+
+    if (endX < (float) picture.getRight())
+        g.fillRect (juce::Rectangle<float> (endX, (float) picture.getY(),
+                                            (float) picture.getRight() - endX,
+                                            (float) picture.getHeight()));
+
+    // The line, and a tab at the top of it to say it can be taken hold of. The
+    // tab points INTO the part that plays, so the two markers face each other and
+    // the sound is plainly the thing between them.
+    const auto drawMarker = [&] (float x, bool pointsRight)
+    {
+        const float top = (float) picture.getY();
+        const float bottom = (float) picture.getBottom();
+        const float tab = 5.0f;
+
+        g.setColour (knobArcCyan.withAlpha (0.9f));
+        g.fillRect (juce::Rectangle<float> (x - 0.5f, top, 1.0f, bottom - top));
+
+        juce::Path grip;
+        grip.startNewSubPath (x, top);
+        grip.lineTo (x + (pointsRight ? tab : -tab), top);
+        grip.lineTo (x, top + tab);
+        grip.closeSubPath();
+
+        g.fillPath (grip);
+    };
+
+    drawMarker (startX, true);
+    drawMarker (endX, false);
+
+    // Where the recording itself begins and ends, when there is silence outside
+    // it. Faint, and only marks: they cannot be dragged and they are not the
+    // start or the end of anything -- they simply say which part of the run-in
+    // and the run-out is silence the player asked for and which part is the
+    // recording.
+    g.setColour (warningAmber.withAlpha (0.35f));
+
+    if (start < 0)
+        g.drawVerticalLine ((int) markerX (0), (float) picture.getY(),
+                            (float) picture.getBottom());
+
+    if (end > entry->fileLength)
+        g.drawVerticalLine ((int) markerX (entry->fileLength), (float) picture.getY(),
+                            (float) picture.getBottom());
+
+    //==========================================================================
+    // What to do with them, said once, on a sample nobody has trimmed yet -- and
+    // gone for good on that sample the moment they have. A tab on a line is a
+    // small thing to notice in a strip fifty pixels tall, and the alternative to
+    // this is a sentence taking up room on the panel for ever to teach something
+    // that only needs teaching once.
+    if (start == 0 && end == entry->fileLength && trimDrag == TrimHandle::None)
+    {
+        auto hint = picture.removeFromBottom (14).reduced (4, 0);
+
+        g.setColour (dimText.withAlpha (0.75f));
+        g.setFont (lookAndFeel.getBodyFont (10.5f, false));
+        g.drawText ("drag the marks to set start and end -- past either end, for silence",
+                    hint, juce::Justification::centredRight, true);
+    }
 }
 
 bool WaveformEditorComponent::isRowVisible (int row) const
@@ -677,14 +1606,32 @@ void WaveformEditorComponent::resized()
 
     controls.removeFromTop (8);
 
-    // Update All sits on the lower row rather than beside Clear Slot: the upper
+    // Update All sits on the middle row rather than beside Clear Slot: the upper
     // row is already full, and the name box has width to spare. Same height as
-    // every other button, so the five read as one set.
+    // every other button, so they read as one set.
+    auto middle = controls.removeFromTop (buttonHeight);
+    updateAllButton.setBounds (middle.removeFromRight (buttonWidth));
+    middle.removeFromRight (buttonGap);
+    nameLabel.setBounds (middle.removeFromLeft (42));
+    nameEditor.setBounds (middle);
+
+    controls.removeFromTop (8);
+
+    // The two ways of taking the sound back in, on a row of their own at the left
+    // edge. They are the only controls here that do not act on the slot on screen
+    // -- they MAKE one -- so they are not mixed in among the ones that do.
     auto lower = controls.removeFromTop (buttonHeight);
-    updateAllButton.setBounds (lower.removeFromRight (buttonWidth));
-    lower.removeFromRight (buttonGap);
-    nameLabel.setBounds (lower.removeFromLeft (42));
-    nameEditor.setBounds (lower);
+    resampleButton.setBounds (lower.removeFromLeft (buttonWidth));
+    lower.removeFromLeft (buttonGap);
+    resampleInitButton.setBounds (lower.removeFromLeft (wideButtonWidth));
+
+    // Loop goes to the far right of this row rather than beside the mode buttons
+    // it belongs with: that row is full, and this is the only space left at the
+    // height of the controls it answers to.
+    loopButton.setBounds (lower.removeFromRight (buttonWidth));
+
+    // Last, because where the picture goes is worked out from the boxes above it.
+    positionSampleStrip();
 }
 
 //==============================================================================
@@ -709,6 +1656,72 @@ void WaveformEditorComponent::paint (juce::Graphics& g)
 }
 
 //==============================================================================
+void WaveformEditorComponent::paintSampleOutline (juce::Graphics& g, juce::Rectangle<int> area,
+                                                  const UserWaveSlot& entry, double fromIndex,
+                                                  double toIndex, juce::Colour colour,
+                                                  float thickness, Bloom bloom) const
+{
+    //==========================================================================
+    // There are far more samples than there are pixels, so a column cannot show a
+    // value -- it can only show a range, and the picture is the shape of the two
+    // edges of that range. Both edges: this used to plot the loudest point in each
+    // column as a single line, which put a sustained note hard against the top of
+    // the box and never brought it back down.
+    //
+    // Drawn out along the tops and back along the bottoms as one closed path, so
+    // it is stroked and bloomed exactly like every other picture here.
+    const int columns = area.getWidth();
+    const double span = toIndex - fromIndex;
+
+    if (columns < 2 || span <= 0.0 || entry.sample.empty())
+        return;
+
+    const float centreY = (float) area.getCentreY();
+    const float halfHeight = (float) area.getHeight() * 0.42f;
+    const int last = (int) entry.sample.size() - 1;
+
+    juce::Path path;
+    std::vector<float> bottoms ((std::size_t) columns, centreY);
+
+    for (int x = 0; x < columns; ++x)
+    {
+        const double across = (double) x / (double) (columns - 1);
+        const int from = (int) std::floor (fromIndex + across * span);
+        const int to = juce::jmax (from + 1,
+                                   (int) std::floor (fromIndex
+                                                     + (across + 1.0 / columns) * span));
+
+        // Anything outside the buffer reads as silence, which is what the gutter
+        // in front of the file is: room the marker can be dragged into, drawn as
+        // the flat line it will sound like.
+        float low = 0.0f;
+        float high = 0.0f;
+
+        for (int i = juce::jmax (0, from); i < juce::jmin (to, last + 1); ++i)
+        {
+            const float value = entry.sample[(std::size_t) i];
+            low = juce::jmin (low, value);
+            high = juce::jmax (high, value);
+        }
+
+        const float px = (float) (area.getX() + x);
+
+        if (x == 0)
+            path.startNewSubPath (px, centreY - high * halfHeight);
+        else
+            path.lineTo (px, centreY - high * halfHeight);
+
+        bottoms[(std::size_t) x] = centreY - low * halfHeight;
+    }
+
+    for (int x = columns - 1; x >= 0; --x)
+        path.lineTo ((float) (area.getX() + x), bottoms[(std::size_t) x]);
+
+    path.closeSubPath();
+
+    strokeWaveformPath (g, path, colour, thickness, bloom);
+}
+
 void WaveformEditorComponent::paintRowWaveform (juce::Graphics& g, juce::Rectangle<int> area,
                                                 int row, juce::Colour colour, float thickness,
                                                 int repeats, Bloom bloom) const
@@ -782,6 +1795,80 @@ void WaveformEditorComponent::paintRowWaveform (juce::Graphics& g, juce::Rectang
     if (entry != nullptr && ! entry->isPlayable())
         return;
 
+    //==========================================================================
+    // A pitched whole sample is drawn as its SHAPE: a few cycles of it, taken from
+    // a settled part of the note and scaled to fill the box.
+    //
+    // Which is what the window is for. Drawn over its whole length instead, a
+    // two-second note is one filled rectangle -- there are five hundred cycles
+    // behind every pixel, so the only thing a column can show is that the sound
+    // was loud, which the player already knew (Giuseppe, 2026-08-13).
+    //
+    // Scaled to its own loudest point rather than to the file's, so the shape is
+    // just as readable taken from the quiet tail of a pluck as from the front of
+    // it. This is a picture of a SHAPE; how loud the sound is at that moment is
+    // not what it is being asked.
+    if (entry != nullptr && entry->mode == UserWave::Mode::FullSample && drawsCycles (*entry))
+    {
+        const double period = entry->fileSampleRate / entry->fundamentalHz;
+        const int span = juce::jmax (2, (int) (period * juce::jmax (1, repeats)));
+        const int total = (int) entry->sample.size();
+
+        // Taken from the part that PLAYS, and from the recorded part of it -- not
+        // from a fifth of the way into the buffer. A trimmed sample would
+        // otherwise be drawn as a stretch of itself the player has cut out, and
+        // one with silence in front of it would be drawn as the silence.
+        const int from = juce::jmax (entry->playStart, entry->fileOffset());
+        const int to = juce::jmin (entry->playStart + entry->playLength,
+                                   entry->fileOffset() + entry->fileLength);
+
+        // A fifth of the way in: past the attack of anything that has one, and
+        // still well inside the shortest sample worth drawing.
+        int start = juce::jlimit (0, juce::jmax (0, total - span - 1),
+                                  from + juce::jmax (0, to - from) / 5);
+
+        float loudest = 0.0f;
+
+        for (int i = start; i < start + span && i < total; ++i)
+            loudest = juce::jmax (loudest, std::abs (entry->sample[(std::size_t) i]));
+
+        // Nothing there to draw -- a silent stretch. Fall through to the outline,
+        // which at least shows where the sound is.
+        if (loudest > 1.0e-5f)
+        {
+            const float scale = 1.0f / loudest;
+            const int width = area.getWidth();
+
+            for (int x = 0; x < width; ++x)
+            {
+                const double across = (double) x / (double) juce::jmax (1, width - 1);
+                const int index = juce::jlimit (0, total - 1, start + (int) (across * span));
+
+                const float y = centreY - entry->sample[(std::size_t) index] * scale * halfHeight;
+                const float px = (float) (area.getX() + x);
+
+                if (x == 0)
+                    path.startNewSubPath (px, y);
+                else
+                    path.lineTo (px, y);
+            }
+
+            strokeWaveformPath (g, path, colour, strokeThickness, bloom);
+            return;
+        }
+    }
+
+    //==========================================================================
+    // An unpitched whole sample is drawn as its OUTLINE -- the whole buffer, end
+    // to end, with no gutter. The gutter belongs to the picture the markers are
+    // dragged on; a thumbnail in the list has no markers on it.
+    if (entry != nullptr && entry->mode == UserWave::Mode::FullSample)
+    {
+        paintSampleOutline (g, area, *entry, 0.0, (double) entry->sample.size(),
+                            colour, strokeThickness, bloom);
+        return;
+    }
+
     const int width = area.getWidth();
 
     for (int x = 0; x < width; ++x)
@@ -789,37 +1876,23 @@ void WaveformEditorComponent::paintRowWaveform (juce::Graphics& g, juce::Rectang
         const double across = (double) x / (double) (width - 1);
         float value = 0.0f;
 
+        // Everything that is left is a single cycle: a built-in shape, or a slot
+        // holding one period. A whole sample never reaches here -- see the outline
+        // above -- because a cycle has one value per column and a sample has not.
         if (entry == nullptr)
         {
             value = builtInShapeValue (row, across * repeats);
         }
-        else if (entry->mode == UserWave::Mode::SingleCycle)
+        else if (! entry->tables.empty())
         {
             // Drawn at full bandwidth, so the shape on screen is the shape that
             // was imported and not the reduced version a high note would play.
-            if (! entry->tables.empty())
-            {
-                double phase = across * repeats;
-                phase -= std::floor (phase);
+            double phase = across * repeats;
+            phase -= std::floor (phase);
 
-                const int index = juce::jlimit (0, WaveAnalysis::tableSize - 1,
-                                                (int) (phase * WaveAnalysis::tableSize));
-                value = entry->tables[(std::size_t) index];
-            }
-        }
-        else if (! entry->sample.empty())
-        {
-            // A whole file at one pixel per column would alias badly, so each
-            // column shows the loudest point in the span it covers. That is what
-            // makes the envelope of a sample readable at this size.
-            const double total = (double) entry->sample.size();
-            const int from = juce::jlimit (0, (int) entry->sample.size() - 1, (int) (across * total));
-            const int to = juce::jlimit (from + 1, (int) entry->sample.size(),
-                                         (int) ((across + 1.0 / width) * total));
-
-            for (int i = from; i < to; ++i)
-                if (std::abs (entry->sample[(std::size_t) i]) > std::abs (value))
-                    value = entry->sample[(std::size_t) i];
+            const int index = juce::jlimit (0, WaveAnalysis::tableSize - 1,
+                                            (int) (phase * WaveAnalysis::tableSize));
+            value = entry->tables[(std::size_t) index];
         }
 
         const float y = centreY - value * halfHeight;
@@ -832,6 +1905,20 @@ void WaveformEditorComponent::paintRowWaveform (juce::Graphics& g, juce::Rectang
     }
 
     strokeWaveformPath (g, path, colour, strokeThickness, bloom);
+}
+
+bool WaveformEditorComponent::drawsCycles (const UserWaveSlot& slot)
+{
+    if (slot.sample.empty() || slot.fileSampleRate <= 0.0 || slot.fundamentalHz <= 20.0)
+        return false;
+
+    // Trusted by the detector, or known because the plugin played the note itself.
+    if (! (slot.retuned || ! slot.allowRetune))
+        return false;
+
+    // And long enough to hold a cycle worth looking at. Four samples is the floor
+    // below which a period is a zigzag rather than a shape.
+    return slot.fileSampleRate / slot.fundamentalHz >= 4.0;
 }
 
 juce::Colour WaveformEditorComponent::traceColour() const
@@ -982,12 +2069,86 @@ void WaveformEditorComponent::paintList (juce::Graphics& g)
 }
 
 //==============================================================================
+void WaveformEditorComponent::paintRecording (juce::Graphics& g, juce::Rectangle<int> area)
+{
+    const float done = juce::jlimit (0.0f, 1.0f,
+                                     resampleHost != nullptr ? resampleHost->captureProgress()
+                                                             : 0.0f);
+
+    //==========================================================================
+    // The oscilloscope's box, the same one the waveform is drawn in, because this
+    // IS that waveform being made.
+    g.setColour (backgroundNavy);
+    g.fillRoundedRectangle (area.toFloat(), 4.0f);
+
+    g.setColour (toggleBorder);
+    g.drawRoundedRectangle (area.toFloat(), 4.0f, 1.0f);
+
+    auto middle = area.withSizeKeepingCentre (juce::jmin (area.getWidth() - 40, 300), 60);
+
+    g.setColour (labelCyan);
+    g.setFont (lookAndFeel.getBodyFont (13.0f, true));
+    g.drawText ("Recording " + juce::String (UserWave::groupName (group)) + "...",
+                middle.removeFromTop (20), juce::Justification::centred, false);
+
+    middle.removeFromTop (6);
+
+    //==========================================================================
+    // The bar itself: the same navy trough, border and cyan fill as a toggle, so
+    // it belongs to this panel rather than being a progress bar from elsewhere.
+    auto trough = middle.removeFromTop (14).toFloat();
+    constexpr float corner = 4.0f;
+
+    g.setColour (toggleNavy);
+    g.fillRoundedRectangle (trough, corner);
+
+    if (done > 0.0f)
+    {
+        auto filled = trough.withWidth (juce::jmax (corner * 2.0f, trough.getWidth() * done));
+
+        g.setColour (toggleLitNavy);
+        g.fillRoundedRectangle (filled, corner);
+
+        g.setColour (knobArcCyan.withMultipliedAlpha (0.9f));
+        g.fillRoundedRectangle (filled.reduced (2.0f), corner - 1.0f);
+
+        // The bloom every lit control on this panel carries, so the bar lights up
+        // as it fills instead of being a flat block of colour. AFTER the fill, not
+        // before -- a glow drawn first is painted straight over. And the meter is
+        // read before the output is silenced, so this still breathes with the
+        // sound being recorded even though none of it is heard.
+        lookAndFeel.glowAround (g, filled.expanded (2.0f), corner + 1.0f,
+                                lookAndFeel.getMeterResponsiveKnobArcColour());
+    }
+
+    g.setColour (toggleBorder);
+    g.drawRoundedRectangle (trough.reduced (0.5f), corner, 1.0f);
+
+    middle.removeFromTop (8);
+
+    // Why the speakers are silent, said before the player has time to wonder.
+    g.setColour (dimText);
+    g.setFont (lookAndFeel.getBodyFont (11.5f, false));
+    g.drawText ("Silent while it records. It stops when the sound has died away.",
+                middle.removeFromTop (16), juce::Justification::centred, true);
+}
+
+//==============================================================================
 void WaveformEditorComponent::paintDetail (juce::Graphics& g)
 {
     auto content = detailBounds().reduced (groupPadding, 0);
     content.removeFromTop (groupTitleInset);
     content.removeFromBottom (groupPadding);
     content.removeFromBottom (controlStripHeight);   // the strip laid out in resized()
+
+    // A recording takes the whole panel over while it runs. It is going to
+    // overwrite whatever is on screen here in a moment, so showing that thing
+    // meanwhile would only be showing the player what they are about to lose.
+    if (isResampling())
+    {
+        paintRecording (g, content);
+        return;
+    }
 
     const int row = rowForSelection();
 
@@ -1046,6 +2207,14 @@ void WaveformEditorComponent::paintDetail (juce::Graphics& g)
         {
             note = "One period of the sample. Every key plays it at its own pitch.";
         }
+        else if (! entry->allowRetune)
+        {
+            // A resample. It is not re-tuned, but that is not the same fault the
+            // amber line below reports -- it is how a resample is made to come
+            // back out exactly as it went in.
+            note = "Recorded from the synth on middle C. Middle C plays it back "
+                   "exactly as it was; the keys either side transpose it.";
+        }
         else if (entry->retuned)
         {
             note = "Tuned: middle C plays this at concert pitch, so it sits in the "
@@ -1062,6 +2231,31 @@ void WaveformEditorComponent::paintDetail (juce::Graphics& g)
     g.setColour (valueCyan);
     g.setFont (lookAndFeel.getBodyFont (12.5f, false));
     g.drawText (detail, readout, juce::Justification::centredLeft, true);
+
+    // Where the markers stand, in the time the player reads off the picture, at
+    // the other end of the same line. The picture says WHERE they are; this says
+    // how far in, which is the number they need to match a sample to a bar.
+    if (entry != nullptr && entry->mode == UserWave::Mode::FullSample && entry->fileLength > 0)
+    {
+        int start = 0;
+        int end = 0;
+        trimPoints (*entry, start, end);
+
+        juce::String marks;
+
+        if (start < 0)
+            marks << "+" << timeLabel (*entry, (double) -start) << " silence   ";
+
+        marks << timeLabel (*entry, (double) juce::jmax (0, start)) << " to "
+              << timeLabel (*entry, (double) juce::jmin (end, entry->fileLength));
+
+        if (end > entry->fileLength)
+            marks << "   silence +" << timeLabel (*entry, (double) (end - entry->fileLength));
+
+        g.setColour (trimDrag != TrimHandle::None ? knobArcCyan : dimText);
+        g.setFont (lookAndFeel.getBodyFont (11.5f, false));
+        g.drawText (marks, readout, juce::Justification::centredRight, true);
+    }
 
     content.removeFromTop (4);
 
@@ -1080,37 +2274,50 @@ void WaveformEditorComponent::paintDetail (juce::Graphics& g)
 
     g.setColour (toggleBorder);
     g.drawRoundedRectangle (content.toFloat(), 4.0f, 1.0f);
-    g.drawHorizontalLine (content.getCentreY(), (float) content.getX() + 2.0f,
-                          (float) content.getRight() - 2.0f);
 
-    // Two periods for a cycle so it reads as repeating; one pass for a whole
-    // sample, because that is the thing itself.
+    // Two periods wherever a period is being drawn -- a built-in shape, a single
+    // cycle, or a pitched sample -- so every one of them reads as repeating. One
+    // pass for a sample drawn as its outline, because that is the thing itself.
     const bool wholeSample = (entry != nullptr && entry->mode == UserWave::Mode::FullSample);
+    const bool asOutline = wholeSample && ! drawsCycles (*entry);
+
+    //==========================================================================
+    // A pitched sample gets BOTH pictures, because they answer different
+    // questions and the player has both: the shape, large, which is what the
+    // oscillator sounds like -- and under it a strip showing the whole recording
+    // end to end, which is where its attack, its tail and its silence are. One
+    // without the other is what made this window feel wrong twice over: the
+    // outline alone is a featureless block, and the shape alone hides whether the
+    // sound ever died away (Giuseppe, 2026-08-14).
+    // Everything showing the WHOLE file -- the strip under a shape, or the single
+    // outline an unpitched sample gets -- now belongs to the SampleStrip. It is a
+    // component of its own so that the playhead can move without dragging this
+    // paint along behind it, and it draws its own background, its own loop marks
+    // and the line. All that is left here is the shape above it.
+    const auto stripArea = wholeFileBounds();
+
+    if (asOutline && ! stripArea.isEmpty())
+        return;                     // the strip IS the picture: nothing above it
+
+    auto shape = content;
+
+    if (! stripArea.isEmpty())
+    {
+        shape.setBottom (stripArea.getY() - 1);
+
+        g.setColour (toggleBorder.withAlpha (0.7f));
+        g.drawHorizontalLine (stripArea.getY() - 1, (float) content.getX() + 2.0f,
+                              (float) content.getRight() - 2.0f);
+    }
+
+    g.setColour (toggleBorder);
+    g.drawHorizontalLine (shape.getCentreY(), (float) content.getX() + 2.0f,
+                          (float) content.getRight() - 2.0f);
 
     // The EQ curve's own weight and its own spread -- one open curve alone in a
     // box, which is exactly what that treatment was drawn for.
-    paintRowWaveform (g, content.reduced (6, 8), row, traceColour(), 1.8f,
-                      wholeSample ? 1 : 2, Bloom::Wide);
-
-    //==========================================================================
-    // Mark the loop: the ends of a file are reserved for the crossfade, so what
-    // plays is not quite all of what was imported.
-    if (entry != nullptr && wholeSample && entry->loopLength > 0 && ! entry->sample.empty())
-    {
-        auto area = content.reduced (6, 8);
-        const double total = (double) entry->sample.size();
-
-        const auto markerX = [&] (int position)
-        {
-            return (int) ((float) area.getX()
-                        + (float) ((double) position / total * area.getWidth()));
-        };
-
-        g.setColour (warningAmber.withAlpha (0.45f));
-        g.drawVerticalLine (markerX (entry->loopStart), (float) area.getY(), (float) area.getBottom());
-        g.drawVerticalLine (markerX (entry->loopStart + entry->loopLength),
-                            (float) area.getY(), (float) area.getBottom());
-    }
+    paintRowWaveform (g, shape.reduced (6, 8), row, traceColour(), 1.8f,
+                      asOutline ? 1 : 2, Bloom::Wide);
 }
 
 //==============================================================================
@@ -1184,9 +2391,38 @@ void WaveformEditorWindow::showFor (juce::ComboBox* targetCombo, int userBase,
     setVisible (true);
     toFront (true);
 
+    // Open, so it follows what is playing again. Paired with closeButtonPressed
+    // and the destructor; between them the synth is only ever asked for a
+    // position while there is a window on screen to draw it on.
+    if (content != nullptr)
+        content->setPlayheadActive (true);
+
     // The peer is recreated whenever the window is hidden and shown again, and
     // the filter is a property of the peer, not of the window.
     allowFileDropsFromLowerPrivilege();
+}
+
+WaveformEditorWindow::~WaveformEditorWindow()
+{
+    // The editor is going away and the audio thread must stop being asked for
+    // something nobody will read. Before the content is destroyed, because it is
+    // the content that carries the message.
+    if (content != nullptr)
+        content->setPlayheadActive (false);
+}
+
+void WaveformEditorWindow::closeButtonPressed()
+{
+    if (content != nullptr)
+        content->setPlayheadActive (false);
+
+    setVisible (false);
+}
+
+void WaveformEditorWindow::setResampleHost (WaveformEditorComponent::ResampleHost* host)
+{
+    if (content != nullptr)
+        content->setResampleHost (host);
 }
 
 void WaveformEditorWindow::refreshContent()
