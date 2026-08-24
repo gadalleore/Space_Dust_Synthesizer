@@ -160,6 +160,34 @@ float UserWaveSlot::read (double phase01, double freqHz, double sampleRate) cons
     if (loopLength <= 0)
         return 0.0f;
 
+    //==========================================================================
+    // A slot that does NOT loop is read straight through, from the start marker
+    // to the end marker, with no crossfade at the end of it.
+    //
+    // Both halves of that matter, and both were audible before:
+    //
+    //   where it starts   a looping slot begins at loopStart, which is a whole
+    //                     crossfade past the start marker -- material
+    //                     deliberately held back so the loop has something to
+    //                     fade into. There is no loop here, so holding it back
+    //                     would only throw away the first ten milliseconds of the
+    //                     sound, which on anything struck or plucked IS the
+    //                     sound.
+    //
+    //   the crossfade     it fades the end of the pass into the material before
+    //                     loopStart -- that is, into the ATTACK. Inaudible going
+    //                     round, because that is where the next pass begins; a
+    //                     click going nowhere, because the oscillator then falls
+    //                     silent from whatever the attack was doing
+    //                     (Giuseppe, 2026-08-14).
+    //
+    // A one-shot covers playLength and a loop covers loopLength, and the phase
+    // scale is worked out from whichever of the two this slot uses -- so the
+    // sample comes out at the speed it went in either way, and the note still
+    // plays at the pitch it was recorded at.
+    if (! loop)
+        return hermite (sample.data(), (double) playStart + phase01 * (double) playLength);
+
     const double position = (double) loopStart + phase01 * (double) loopLength;
     float value = hermite (sample.data(), position);
 
@@ -346,10 +374,18 @@ void UserWaveLibrary::buildSlot (UserWaveSlot& slot, const std::vector<float>& m
     slot.fileSampleRate = sampleRate;
     slot.tables.clear();
     slot.sample.clear();
+    slot.fileLength = 0;
+    slot.playStart = 0;
+    slot.playLength = 0;
     slot.loopStart = 0;
     slot.loopLength = 0;
     slot.crossfade = 0;
     slot.phaseIncrementScale = 1.0;
+
+    // NOT reset: trimStart and trimEnd say where the player put the markers, and
+    // this is the function that puts their decision into effect. Clearing them
+    // here would undo it on every rebuild -- including the rebuild a change of
+    // mode does, and the one opening a song does.
 
     const int numSamples = (int) mono.size();
 
@@ -363,17 +399,28 @@ void UserWaveLibrary::buildSlot (UserWaveSlot& slot, const std::vector<float>& m
     // length of the cycle to extract in one, and the playback speed in the other.
     const auto estimate = WaveAnalysis::detectFundamental (mono.data(), numSamples, sampleRate);
 
-    slot.fundamentalHz = estimate.frequencyHz;
+    // What the period and the playback speed are actually measured against.
+    //
+    // A resample is KNOWN to be a middle C -- the plugin played it itself -- so
+    // nothing is gained by asking the detector and there is a great deal to lose.
+    // It reads a patch with a strong fifth, a detuned pair or an octave-down sub
+    // an octave or a fifth out often enough to matter, and a period cut at the
+    // wrong length is not a slightly wrong waveform: it is a different shape
+    // every cycle, which is what a resample read as "G#1" looked like on screen
+    // (Giuseppe, 2026-08-13).
+    const double analysisHz = slot.allowRetune ? estimate.frequencyHz : WaveAnalysis::middleCHz;
+
+    slot.fundamentalHz = analysisHz;
     slot.confidence = estimate.confidence;
 
     char label[32] = {};
-    WaveAnalysis::describePitch (estimate.frequencyHz, label, sizeof (label));
+    WaveAnalysis::describePitch (analysisHz, label, sizeof (label));
     slot.pitchLabel = juce::String (label);
 
     if (mode == UserWave::Mode::SingleCycle)
     {
         const auto harmonics = WaveAnalysis::analyseHarmonics (mono.data(), numSamples,
-                                                               sampleRate, estimate.frequencyHz);
+                                                               sampleRate, analysisHz);
 
         if (harmonics.isEmpty())
         {
@@ -393,42 +440,125 @@ void UserWaveLibrary::buildSlot (UserWaveSlot& slot, const std::vector<float>& m
 
     //==========================================================================
     // Full Sample.
-    slot.sample = mono;
+    slot.fileLength = numSamples;
 
-    // Reserve material at both ends. The crossfade at the end of the loop reads
-    // the samples immediately BEFORE the loop start, and the interpolator reads
-    // one sample back and two forward, so both ends need clearance or the loop
-    // would read off the end of the buffer.
-    constexpr int interpolationGuard = 3;
+    // Where the markers stand, turned into what actually gets read. The maths is
+    // in WaveAnalysis, where it is checked against known numbers -- a region that
+    // reaches one sample too far is a read off the end of a buffer on the audio
+    // thread, not a slightly wrong sound.
+    const auto region = WaveAnalysis::regionForTrim (numSamples, sampleRate,
+                                                     UserWave::maxPadSamples (numSamples,
+                                                                              sampleRate),
+                                                     slot.trimStart, slot.trimEnd);
 
-    int fade = (int) (0.010 * sampleRate);
-    fade = juce::jlimit (0, (numSamples - 16) / 4, fade);
-
-    slot.crossfade = fade;
-    slot.loopStart = fade + interpolationGuard;
-    slot.loopLength = numSamples - slot.loopStart - interpolationGuard;
-
-    if (slot.loopLength <= 0)
+    if (region.loopLength <= 0)
     {
         slot.active = false;
         return;
     }
 
+    // Written back, so what the slot says and what it plays are the same thing --
+    // the picture and the times on screen are drawn from these.
+    slot.trimStart = region.trimStart;
+    slot.trimEnd = region.trimEnd;
+
+    slot.playStart = region.playStart;
+    slot.playLength = region.playLength;
+    slot.loopStart = region.loopStart;
+    slot.loopLength = region.loopLength;
+    slot.crossfade = region.crossfade;
+
+    // The buffer: clearance, the silence the start marker asked for, the WHOLE
+    // file, clearance. The whole file, not the part between the markers, because
+    // a marker is a decision that can be taken back -- see UserWaveSlot::sample.
+    slot.sample.assign ((std::size_t) region.bufferLength, 0.0f);
+    std::copy (mono.begin(), mono.end(), slot.sample.begin() + region.fileOffset);
+
     // Whether to re-tune at all. A drum hit has no fundamental to put on middle
     // C, and forcing one on it only makes the sample play back at a speed the
-    // user did not ask for and cannot explain.
-    slot.retuned = estimate.confidence >= UserWave::minPitchConfidence;
-    const double rootHz = slot.retuned ? estimate.frequencyHz : WaveAnalysis::middleCHz;
+    // user did not ask for and cannot explain. Neither has a resample, for a
+    // different reason -- see UserWaveSlot::allowRetune.
+    slot.retuned = slot.allowRetune && estimate.confidence >= UserWave::minPitchConfidence;
 
-    // The whole of Full Sample mode, in one constant. The derivation, and the test
-    // that proves middle C really does land on the recorded pitch, are both over
-    // in WaveAnalysis where they can run without a plugin host.
-    slot.phaseIncrementScale = WaveAnalysis::playbackPhaseScale (sampleRate, rootHz, slot.loopLength);
+    // The whole of Full Sample mode, in one constant -- see updatePhaseScale.
+    updatePhaseScale (slot);
 
     slot.active = true;
 }
 
+void UserWaveLibrary::updatePhaseScale (UserWaveSlot& slot)
+{
+    if (slot.mode != UserWave::Mode::FullSample)
+    {
+        slot.phaseIncrementScale = 1.0;
+        return;
+    }
+
+    // Not the fundamental as read: a file whose pitch was read with too little
+    // confidence keeps its recorded speed even though re-tuning WAS allowed for
+    // it. A resample reaches the same answer by the other road -- allowRetune is
+    // false, so retuned is false and this is middle C, which is where it was
+    // recorded.
+    const double rootHz = slot.retuned ? slot.fundamentalHz : WaveAnalysis::middleCHz;
+
+    // The derivation, and the test that proves middle C really does land on the
+    // recorded pitch, are both over in WaveAnalysis where they can run without a
+    // plugin host.
+    slot.phaseIncrementScale = WaveAnalysis::playbackPhaseScale (slot.fileSampleRate, rootHz,
+                                                                 slot.playSpan());
+}
+
 //==============================================================================
+bool UserWaveLibrary::storeSlot (const std::vector<float>& mono, double sampleRate,
+                                 const juce::String& name, const juce::String& sourceFile,
+                                 bool allowRetune, UserWave::Group group, int slotIndex,
+                                 UserWave::Mode mode, juce::String& errorMessage)
+{
+    auto& slot = editable->editableSlot (group, slotIndex);
+    slot.name = name;
+    slot.sourceFile = sourceFile;
+
+    // Set before the build, because the build is what reads it.
+    slot.allowRetune = allowRetune;
+
+    // A newly imported sample loops, whatever the slot's last occupant did. The
+    // slot object is reused, so without this a slot the player had set to
+    // one-shot would silently impose that on the next thing dropped into it.
+    // Changing MODE goes another way (setSlotMode) and deliberately keeps it.
+    slot.loop = true;
+
+    // And it plays end to end, for the same reason. The markers belong to the
+    // sound that was in the slot, not to the slot, so a new sample must not
+    // arrive with somebody else's start and end already cut into it.
+    slot.trimStart = 0;
+    slot.trimEnd = 0;
+
+    buildSlot (slot, mono, sampleRate, mode);
+
+    if (! slot.active)
+    {
+        errorMessage = "Nothing pitched could be found in that sound.";
+        clearSlot (group, slotIndex);
+        return false;
+    }
+
+    // The slot keeps the audio, not the user's disk: an imported file is never
+    // copied anywhere, and this is what a preset, a saved song and a later change
+    // of Mode are all built from. Encoded after buildSlot, which does not touch it.
+    slot.encodedAudio = encodeSlotAudio (mono, sampleRate);
+
+    if (slot.encodedAudio.getSize() == 0)
+    {
+        errorMessage = "That sound could not be stored in the slot.";
+        clearSlot (group, slotIndex);
+        return false;
+    }
+
+    saveToDisk();
+    publish();
+    return true;
+}
+
 bool UserWaveLibrary::importFile (const juce::File& file, UserWave::Group group, int slotIndex,
                                   UserWave::Mode mode, juce::String& errorMessage)
 {
@@ -444,37 +574,68 @@ bool UserWaveLibrary::importFile (const juce::File& file, UserWave::Group group,
     if (! readFileAsMono (file, mono, sampleRate, errorMessage))
         return false;
 
-    auto& slot = editable->editableSlot (group, slotIndex);
-    slot.name = file.getFileNameWithoutExtension();
-    slot.sourceFile = file.getFileName();
+    return storeSlot (mono, sampleRate, file.getFileNameWithoutExtension(), file.getFileName(),
+                      true, group, slotIndex, mode, errorMessage);
+}
 
-    buildSlot (slot, mono, sampleRate, mode);
-
-    if (! slot.active)
+bool UserWaveLibrary::importAudio (std::vector<float> mono, double sampleRate,
+                                   const juce::String& name, UserWave::Group group,
+                                   int slotIndex, UserWave::Mode mode,
+                                   juce::String& errorMessage)
+{
+    if (slotIndex < 0 || slotIndex >= UserWave::numSlots)
     {
-        errorMessage = "Nothing pitched could be found in that file.";
-        clearSlot (group, slotIndex);
+        errorMessage = "That waveform slot does not exist.";
         return false;
     }
 
-    // The slot keeps the audio, not the user's disk: the imported file is never
-    // copied anywhere, and this is what a preset, a saved song and a later change
-    // of Mode are all built from. Encoded after buildSlot, which does not touch it.
-    slot.encodedAudio = encodeSlotAudio (mono, sampleRate);
-
-    if (slot.encodedAudio.getSize() == 0)
+    if (sampleRate <= 0.0 || mono.size() < 64)
     {
-        errorMessage = "That file could not be stored in the slot.";
-        clearSlot (group, slotIndex);
+        errorMessage = "That sound is too short to use.";
         return false;
     }
 
-    saveToDisk();
-    publish();
-    return true;
+    // The same cap a file gets. The caller's history is already this long at most,
+    // so this only ever holds for a caller that has not read that far.
+    const auto cap = (std::size_t) (UserWave::maxSampleSeconds * sampleRate);
+
+    if (mono.size() > cap)
+        mono.resize (cap);
+
+    // And the same normalisation, so a waveform taken from the synth sits at the
+    // same level as one dropped in from disk. What that costs -- the level the
+    // sound was captured at -- is given back by Resample + Init, which puts the
+    // master volume where it has to be to undo this exactly.
+    normalise (mono);
+
+    // No re-tuning: this was recorded from middle C, and middle C plays a slot
+    // back unchanged. See UserWaveSlot::allowRetune.
+    return storeSlot (mono, sampleRate, name, {}, false, group, slotIndex, mode, errorMessage);
 }
 
 //==============================================================================
+bool UserWaveLibrary::loadSlotAudio (UserWaveSlot& slot, std::vector<float>& mono,
+                                     double& sampleRate, juce::String& errorMessage)
+{
+    if (decodeSlotAudio (slot.encodedAudio, mono, sampleRate))
+        return true;
+
+    // Only reachable for a slot imported before the audio travelled with it,
+    // whose file in the Wavetables folder may since have been removed.
+    auto legacy = wavetableFolder().getChildFile ("Samples").getChildFile (slot.sourceFile);
+
+    if (! readFileAsMono (legacy, mono, sampleRate, errorMessage))
+    {
+        errorMessage = "The audio for \"" + slot.name + "\" is missing, so it cannot be rebuilt.";
+        return false;
+    }
+
+    // Take it into the slot while we have it, so this is the last time it is ever
+    // looked for on disk.
+    slot.encodedAudio = encodeSlotAudio (mono, sampleRate);
+    return true;
+}
+
 bool UserWaveLibrary::setSlotMode (UserWave::Group group, int slotIndex, UserWave::Mode mode,
                                    juce::String& errorMessage)
 {
@@ -501,22 +662,8 @@ bool UserWaveLibrary::setSlotMode (UserWave::Group group, int slotIndex, UserWav
     std::vector<float> mono;
     double sampleRate = 0.0;
 
-    if (! decodeSlotAudio (slot.encodedAudio, mono, sampleRate))
-    {
-        // Only reachable for a slot imported before the audio travelled with it,
-        // whose file in the Wavetables folder has since been removed.
-        auto legacy = wavetableFolder().getChildFile ("Samples").getChildFile (slot.sourceFile);
-
-        if (! readFileAsMono (legacy, mono, sampleRate, errorMessage))
-        {
-            errorMessage = "The audio for \"" + slot.name + "\" is missing, so it cannot be rebuilt.";
-            return false;
-        }
-
-        // Take it into the slot while we have it, so this is the last time it is
-        // ever looked for on disk.
-        slot.encodedAudio = encodeSlotAudio (mono, sampleRate);
-    }
+    if (! loadSlotAudio (slot, mono, sampleRate, errorMessage))
+        return false;
 
     buildSlot (slot, mono, sampleRate, mode);
 
@@ -529,6 +676,212 @@ bool UserWaveLibrary::setSlotMode (UserWave::Group group, int slotIndex, UserWav
     saveToDisk();
     publish();
     return true;
+}
+
+void UserWaveLibrary::setSlotLoop (UserWave::Group group, int slotIndex, bool shouldLoop)
+{
+    if (slotIndex < 0 || slotIndex >= UserWave::numSlots)
+        return;
+
+    auto& slot = editable->editableSlot (group, slotIndex);
+
+    if (! slot.active || slot.loop == shouldLoop)
+        return;
+
+    slot.loop = shouldLoop;
+
+    // A one-shot and a loop cover regions of different lengths, so the scale that
+    // keeps the sample at its recorded speed is not the same for both. Nothing
+    // else is rebuilt -- the audio has not changed.
+    updatePhaseScale (slot);
+
+    saveToDisk();
+    publish();
+}
+
+bool UserWaveLibrary::setSlotTrim (UserWave::Group group, int slotIndex, int trimStart,
+                                   int trimEnd, juce::String& errorMessage)
+{
+    if (slotIndex < 0 || slotIndex >= UserWave::numSlots)
+    {
+        errorMessage = "That waveform slot does not exist.";
+        return false;
+    }
+
+    auto& slot = editable->editableSlot (group, slotIndex);
+
+    if (! slot.active)
+    {
+        errorMessage = "That slot is empty.";
+        return false;
+    }
+
+    if (slot.mode != UserWave::Mode::FullSample)
+    {
+        errorMessage = "The start and end can only be moved on a whole sample.";
+        return false;
+    }
+
+    if (slot.trimStart == trimStart && slot.trimEnd == trimEnd)
+        return true;
+
+    // The audio in the slot is the whole file and always was, so moving a marker
+    // that was dragged inwards back OUT again brings the sound back. Nothing here
+    // is ever a cut.
+    std::vector<float> mono;
+    double sampleRate = 0.0;
+
+    if (! loadSlotAudio (slot, mono, sampleRate, errorMessage))
+        return false;
+
+    const int keptStart = slot.trimStart;
+    const int keptEnd = slot.trimEnd;
+
+    slot.trimStart = trimStart;
+    slot.trimEnd = trimEnd;
+
+    buildSlot (slot, mono, sampleRate, UserWave::Mode::FullSample);
+
+    if (! slot.active)
+    {
+        // Cannot happen for a request that came through the clamps in buildSlot,
+        // but a slot that fell out of the list would take the player's waveform
+        // with it -- so it is put back rather than left broken.
+        slot.trimStart = keptStart;
+        slot.trimEnd = keptEnd;
+        buildSlot (slot, mono, sampleRate, UserWave::Mode::FullSample);
+
+        errorMessage = "There is not enough of the sample left between those two points.";
+        return false;
+    }
+
+    saveToDisk();
+    publish();
+    return true;
+}
+
+//==============================================================================
+// -- Dragging a marker --
+//
+// setSlotTrim above decodes, rebuilds, writes and publishes on every call. The
+// three below are the same work, taken apart so the expensive ends happen once
+// per gesture and only the rebuild happens in between.
+
+bool UserWaveLibrary::beginTrimSession (UserWave::Group group, int slotIndex,
+                                        juce::String& errorMessage)
+{
+    // A session left open by a gesture that never finished would hold the wrong
+    // slot's audio. Close it before opening another.
+    if (trimSession.isOpen())
+    {
+        juce::String ignored;
+        endTrimSession (ignored);
+    }
+
+    if (slotIndex < 0 || slotIndex >= UserWave::numSlots)
+    {
+        errorMessage = "That waveform slot does not exist.";
+        return false;
+    }
+
+    auto& slot = editable->editableSlot (group, slotIndex);
+
+    if (! slot.active)
+    {
+        errorMessage = "That slot is empty.";
+        return false;
+    }
+
+    if (slot.mode != UserWave::Mode::FullSample)
+    {
+        errorMessage = "The start and end can only be moved on a whole sample.";
+        return false;
+    }
+
+    // The one decode of the gesture.
+    if (! loadSlotAudio (slot, trimAudio, trimAudioRate, errorMessage))
+    {
+        trimAudio.clear();
+        trimAudioRate = 0.0;
+        return false;
+    }
+
+    trimSession.open ((int) group, slotIndex,
+                      TrimSession::Points { slot.trimStart, slot.trimEnd });
+    return true;
+}
+
+bool UserWaveLibrary::updateTrimSession (int trimStart, int trimEnd,
+                                         juce::String& errorMessage)
+{
+    if (! trimSession.isOpen())
+    {
+        errorMessage = "There is no drag in progress.";
+        return false;
+    }
+
+    trimSession.pending (TrimSession::Points { trimStart, trimEnd });
+
+    // A still mouse. Not a failure -- there is simply nothing to do.
+    if (! trimSession.wants())
+        return true;
+
+    const auto group = (UserWave::Group) trimSession.group();
+    auto& slot = editable->editableSlot (group, trimSession.slot());
+
+    const int keptStart = slot.trimStart;
+    const int keptEnd = slot.trimEnd;
+
+    slot.trimStart = trimStart;
+    slot.trimEnd = trimEnd;
+
+    buildSlot (slot, trimAudio, trimAudioRate, UserWave::Mode::FullSample);
+
+    if (! slot.active)
+    {
+        // Same rollback setSlotTrim does: a slot that fell out of the list would
+        // take the player's waveform with it mid-drag.
+        slot.trimStart = keptStart;
+        slot.trimEnd = keptEnd;
+        buildSlot (slot, trimAudio, trimAudioRate, UserWave::Mode::FullSample);
+
+        errorMessage = "There is not enough of the sample left between those two points.";
+        return false;
+    }
+
+    trimSession.applied();
+
+    // No saveToDisk(). That is what the end of the gesture is for.
+    publish();
+    return true;
+}
+
+bool UserWaveLibrary::endTrimSession (juce::String& errorMessage)
+{
+    if (! trimSession.isOpen())
+        return true;
+
+    // The last position FIRST, while the session and the held audio are both
+    // still alive. A fast drag moves the markers after the final timer tick, and
+    // without this the position the player actually let go at would be lost.
+    bool ok = true;
+
+    if (trimSession.wants())
+    {
+        const auto last = trimSession.pendingPoints();
+        ok = updateTrimSession (last.start, last.end, errorMessage);
+    }
+
+    trimSession.close();
+
+    trimAudio.clear();
+    trimAudio.shrink_to_fit();
+    trimAudioRate = 0.0;
+
+    // The one write of the gesture. Done even when the last apply was refused:
+    // the slot still holds the last trim that worked, and that is worth keeping.
+    saveToDisk();
+    return ok;
 }
 
 void UserWaveLibrary::renameSlot (UserWave::Group group, int slotIndex,
@@ -667,6 +1020,25 @@ std::unique_ptr<juce::XmlElement> UserWaveLibrary::createStateXml() const
             element->setAttribute ("pitchLabel", slot.pitchLabel);
             element->setAttribute ("retuned", slot.retuned);
 
+            // Only written when it is false, which is only ever a resample. Every
+            // slot saved before this existed was imported from a file and is meant
+            // to be re-tuned, which is what its absence means on the way back in.
+            if (! slot.allowRetune)
+                element->setAttribute ("allowRetune", false);
+
+            // The same rule, for the same reason: every slot saved before the loop
+            // could be turned off had one, so absent means on.
+            if (! slot.loop)
+                element->setAttribute ("loop", false);
+
+            // And again: absent means the sample plays end to end, which is what
+            // every slot saved before the markers existed does.
+            if (slot.trimStart != 0)
+                element->setAttribute ("trimStart", slot.trimStart);
+
+            if (slot.trimEnd != 0)
+                element->setAttribute ("trimEnd", slot.trimEnd);
+
             // Only the richest table is stored. The other ten are a transform
             // away, and eight kilobytes per slot is small enough to sit inside a
             // preset -- which is what makes a Single Cycle waveform load without
@@ -735,6 +1107,16 @@ void UserWaveLibrary::restoreSlotFromXml (const juce::XmlElement& element, UserW
     slot.confidence = element.getDoubleAttribute ("confidence", 0.0);
     slot.pitchLabel = element.getStringAttribute ("pitchLabel");
     slot.retuned = element.getBoolAttribute ("retuned", false);
+
+    // Read BEFORE the rebuild below, which is what consults it. Absent means true:
+    // everything written before Resample existed came from a file.
+    slot.allowRetune = element.getBoolAttribute ("allowRetune", true);
+    slot.loop = element.getBoolAttribute ("loop", true);
+
+    // Read before the rebuild for the same reason: the rebuild is what puts the
+    // markers into effect, and both default to the whole file.
+    slot.trimStart = element.getIntAttribute ("trimStart", 0);
+    slot.trimEnd = element.getIntAttribute ("trimEnd", 0);
 
     // The slot's own audio, written by everything saved from this version on. It
     // is kept whatever the mode is, because it is what a later change of mode is

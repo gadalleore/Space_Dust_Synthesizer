@@ -4,6 +4,7 @@
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 
+#include "TrimSession.h"
 #include "WaveAnalysis.h"
 
 #include <atomic>
@@ -162,6 +163,30 @@ namespace UserWave
         SingleCycle = 0,
         FullSample  = 1
     };
+
+    /** Samples kept clear at each end of a Full Sample slot, and the shortest
+        region the start and end markers may leave between them.
+
+        Both belong to the geometry that works out what a slot plays, which lives
+        in WaveAnalysis so it can be checked without a plugin host -- see
+        WaveAnalysis::regionForTrim. Named here as well because the panel and the
+        slot both reason in these terms. */
+    inline constexpr int interpolationGuard = WaveAnalysis::interpolationGuard;
+    inline constexpr int minPlayLength = WaveAnalysis::minPlayLength;
+
+    /** The most leading silence a slot holding this many samples may carry.
+
+        Silence costs exactly what sound costs -- it is stored as samples like
+        everything else -- so it comes out of the same fifteen seconds a slot has
+        in the first place. A short sample can be pushed a long way back; one that
+        already fills a slot cannot be pushed back at all. */
+    inline int maxPadSamples (int fileLength, double sampleRate) noexcept
+    {
+        if (sampleRate <= 0.0)
+            return 0;
+
+        return juce::jmax (0, (int) (maxSampleSeconds * sampleRate) - fileLength);
+    }
 }
 
 //==============================================================================
@@ -192,6 +217,47 @@ struct UserWaveSlot
 
     UserWave::Mode mode = UserWave::Mode::SingleCycle;
 
+    /** Whether a Full Sample slot repeats for as long as the key is held.
+
+        On, a held note goes round and round the file -- which is what makes a
+        sampled string or a pad hold. Off, the file is heard once and then the
+        oscillator falls silent, which is what a hit, a stab or a whole recorded
+        phrase wants: it plays out to its end and stops there instead of starting
+        over on top of itself.
+
+        Means nothing in Single Cycle mode, where one turn of the phase IS the
+        waveform and repeating it is the whole point. */
+    bool loop = true;
+
+    /** Where the sound starts and ends inside the file, in samples of the file.
+
+        These are the two markers the player drags across the picture, and they
+        are the ONLY record of where the sound was cut: the audio in the slot is
+        never shortened, so every cut can be taken back by dragging the marker
+        out again. What plays is worked out from them each time the slot is built
+        -- see playStart and playLength.
+
+        Either marker can be dragged OFF the file, and out there it means silence.
+        trimStart below zero puts silence in FRONT of the recording, so a sample
+        can be made to begin late -- a hit that lands after the beat, a pad that
+        arrives a moment after the key goes down. trimEnd past fileLength puts
+        silence AFTER it, which is what holds a one-shot's key open past the end
+        of the sound and what gives a loop a measured gap before it comes round
+        again. There is nothing to reach for outside a recording, so the only
+        thing a marker can mean out there is silence, and it makes it.
+
+        Inside the file they are ordinary positions: trimEnd is one past the last
+        file sample played. Zero, and anything at or before trimStart, means "to
+        the end of the file" -- which is what every slot saved before the markers
+        existed has, and what a freshly imported one gets.
+
+        Meaningless in Single Cycle mode, which takes one period out of the
+        middle of the sound and never sees its ends. Kept across a change of mode
+        all the same, so switching to Single Cycle and back does not throw the
+        markers away. */
+    int trimStart = 0;
+    int trimEnd = 0;
+
     /** What the analysis found, kept for display. */
     double fundamentalHz = 0.0;
     double confidence = 0.0;
@@ -199,6 +265,21 @@ struct UserWaveSlot
 
     /** Whether the pitch was trusted enough to re-tune the sample. */
     bool retuned = false;
+
+    /** Whether re-tuning is allowed at all.
+
+        False for a slot made by Resample. That sound was recorded from middle C,
+        and middle C is the note a slot plays back unchanged, so the two already
+        agree exactly -- and any reading the pitch detector takes of it can only
+        disagree. A patch with a strong fifth in it, or an octave-down sub, is
+        read a fifth or an octave out often enough to matter, and the result is a
+        resample that plays back at the wrong speed for a reason the player cannot
+        see.
+
+        Kept in the slot and in saved state rather than worked out again, because
+        a slot is rebuilt whenever its mode changes and whenever a song is opened,
+        and either of those would otherwise re-tune it later. */
+    bool allowRetune = true;
 
     //==========================================================================
     // -- Single Cycle --
@@ -210,15 +291,49 @@ struct UserWaveSlot
     //==========================================================================
     // -- Full Sample --
 
-    /** Mono, at the rate of the file it came from. Empty in Single Cycle mode. */
+    /** What the oscillator reads, at the rate of the file it came from. Empty in
+        Single Cycle mode.
+
+        NOT the file. It is the file with room built around it:
+
+            [ guard ][ silence ][ the whole imported file ][ silence ][ guard ]
+
+        The guards are what the interpolator reads past the ends (see
+        interpolationGuard). The silence is whatever the markers were dragged out
+        by, and it is real samples because that is the only way the phase can run
+        through it.
+
+        The WHOLE file is here whatever the markers say, and that is deliberate:
+        trimming is a pair of numbers, not a cut, so material outside the markers
+        is still there to be drawn behind them and still there to be taken back. */
     std::vector<float> sample;
 
     double fileSampleRate = 0.0;
 
+    /** How many samples of it are the imported file, and where that file begins.
+
+        Everything the player points at is a position in the FILE -- the markers,
+        the picture, the times on screen -- while everything the oscillator reads
+        is a position in the buffer above. These convert between the two. */
+    int fileLength = 0;
+    int padStart() const noexcept { return trimStart < 0 ? -trimStart : 0; }
+    int padEnd() const noexcept { return trimEnd > fileLength ? trimEnd - fileLength : 0; }
+    int fileOffset() const noexcept { return UserWave::interpolationGuard + padStart(); }
+
+    /** The part that PLAYS: the silence in front, the file between the two
+        markers, and the silence after. A slot with the markers where they were
+        imported plays the file end to end, which is what every slot did before
+        there were markers.
+
+        A one-shot reads exactly this and stops. A looping one reads the loop
+        below, which starts a crossfade further in. */
+    int playStart = 0;
+    int playLength = 0;
+
     /** The looped region, and the overlap that hides its seam.
 
-        The loop deliberately starts a little way into the file and ends a little
-        way before its end, so the crossfade at the end of the loop has real
+        The loop deliberately starts a little way after the start marker and ends
+        at the end marker, so the crossfade at the end of the loop has real
         material to fade into -- the samples immediately BEFORE the loop start.
         Without that reserve the loop would have to fade into silence, which is
         audible as a pulse once per pass. */
@@ -231,10 +346,19 @@ struct UserWaveSlot
         In Single Cycle mode this is 1: one turn of the phase is one period, which
         is what the increment already means.
 
-        In Full Sample mode one turn has to cover loopLength file samples instead
-        of one period, and the ratio between those two is fixed per slot, so the
-        whole mode costs one multiply. */
+        In Full Sample mode one turn has to cover the whole region being read
+        instead of one period, and the ratio between those two is fixed per slot,
+        so the whole mode costs one multiply.
+
+        Which region that is depends on the loop -- a one-shot reads playLength
+        and a looping slot reads loopLength -- so turning the loop on or off
+        recomputes this. It has to: the point of the scale is that the sample
+        comes out at the speed it went in whatever length the phase is covering,
+        and a scale left over from the other length would transpose it. */
     double phaseIncrementScale = 1.0;
+
+    /** The region one turn of the phase covers. See phaseIncrementScale. */
+    int playSpan() const noexcept { return loop ? loopLength : playLength; }
 
     //==========================================================================
     /** One sample, from a phase in [0, 1). Audio thread: no allocation, no locks.
@@ -372,9 +496,72 @@ public:
     bool importFile (const juce::File& file, UserWave::Group group, int slotIndex,
                      UserWave::Mode mode, juce::String& errorMessage);
 
+    /** Build a slot from audio that is already in memory -- what Resample does
+        with the synth's own output.
+
+        Everything from here on is the same as an import from disk: the audio is
+        summed and normalised the same way, analysed the same way, and stored in
+        the slot the same way. The slot names no file, because there is no file:
+        the sound never existed anywhere but inside the plugin. */
+    bool importAudio (std::vector<float> mono, double sampleRate, const juce::String& name,
+                      UserWave::Group group, int slotIndex, UserWave::Mode mode,
+                      juce::String& errorMessage);
+
     /** Rebuild a slot in the other mode, re-reading its stored copy. */
     bool setSlotMode (UserWave::Group group, int slotIndex, UserWave::Mode mode,
                       juce::String& errorMessage);
+
+    /** Turn a Full Sample slot's loop on or off. The audio is not rebuilt -- the
+        loop is read at playback time -- but the phase scale is, because the two
+        settings read regions of different lengths. See phaseIncrementScale. */
+    void setSlotLoop (UserWave::Group group, int slotIndex, bool shouldLoop);
+
+    /** Move the start and end markers of a Full Sample slot.
+
+        Both are in samples of the imported FILE. A negative start is silence put
+        in front of it; see UserWaveSlot::trimStart. Nothing is thrown away, so
+        any cut can be taken back by dragging the marker out again, and the
+        request is clamped rather than refused: a start pushed further back than a
+        slot has room for stops where the room runs out, and the two are never let
+        closer together than UserWave::minPlayLength.
+
+        Rebuilds the slot from its own stored copy of the audio, exactly as a
+        change of mode does. */
+    bool setSlotTrim (UserWave::Group group, int slotIndex, int trimStart, int trimEnd,
+                      juce::String& errorMessage);
+
+    //==========================================================================
+    // -- Dragging a marker --
+    //
+    // setSlotTrim above is one finished decision: it decodes the slot's audio
+    // again, rebuilds it, writes the index file and publishes. That is right for
+    // a double-click reset and wrong thirty times a second.
+    //
+    // A session splits it up. The decode happens once at the start and the write
+    // once at the end; only the rebuild and the publish happen in between. The
+    // slot ends up in exactly the state setSlotTrim would have left it in.
+
+    /** Begin a drag on a slot: decode its audio once and hold it.
+
+        Refused, with a line for the player, on the same slots setSlotTrim
+        refuses -- one that does not exist, one that is empty, and one that is
+        not in Full Sample mode -- and on a slot that cannot be decoded. */
+    bool beginTrimSession (UserWave::Group group, int slotIndex, juce::String& errorMessage);
+
+    /** Put the markers where the mouse has them, and let the audio thread hear
+        it. Rebuilds from the held audio and publishes. Writes nothing to disk.
+
+        Does nothing, successfully, when the markers have not moved since the
+        last call -- so a paused drag costs nothing at all. */
+    bool updateTrimSession (int trimStart, int trimEnd, juce::String& errorMessage);
+
+    /** End the drag: apply the last position if the mouse outran the timer, then
+        write the index file and release the held audio.
+
+        Safe, and successful, when no session is open. */
+    bool endTrimSession (juce::String& errorMessage);
+
+    bool trimSessionIsOpen() const noexcept { return trimSession.isOpen(); }
 
     void renameSlot (UserWave::Group group, int slotIndex, const juce::String& newName);
     void clearSlot (UserWave::Group group, int slotIndex);
@@ -476,9 +663,40 @@ private:
         happens or the plugin closes. */
     void collectRetired();
 
-    /** Build one slot from decoded mono audio. Does the analysis. */
+    /** Build one slot from decoded mono audio. Does the analysis.
+
+        The audio handed in is the WHOLE imported file, every time. Where the
+        markers stand is read out of the slot, so this is also what rebuilds a
+        slot after they move. */
     static void buildSlot (UserWaveSlot& slot, const std::vector<float>& mono,
                            double sampleRate, UserWave::Mode mode);
+
+    /** Work out phaseIncrementScale for a slot as it now stands.
+
+        Apart because the loop flag changes it without anything being rebuilt --
+        the length the phase has to cover is the loop's or the whole trimmed
+        region's, and those are not the same number. */
+    static void updatePhaseScale (UserWaveSlot& slot);
+
+    /** Get a slot's own audio back, for a rebuild. False, with a line for the
+        player, when there is none to be had.
+
+        Slots imported before the audio travelled inside them keep a copy in the
+        Wavetables folder instead, and this is where that copy is taken into the
+        slot for good -- so a rebuild is the last time it is ever looked for. */
+    bool loadSlotAudio (UserWaveSlot& slot, std::vector<float>& mono, double& sampleRate,
+                        juce::String& errorMessage);
+
+    /** Put mono audio into a slot and make it permanent: analyse it, keep the
+        audio inside the slot, write the index and publish a fresh bank.
+
+        Shared by importFile() and importAudio(), which differ only in where the
+        audio came from and in whether there is a file to name. The slot is left
+        empty on any failure, so a slot that says it holds something always does. */
+    bool storeSlot (const std::vector<float>& mono, double sampleRate,
+                    const juce::String& name, const juce::String& sourceFile,
+                    bool allowRetune, UserWave::Group group, int slotIndex,
+                    UserWave::Mode mode, juce::String& errorMessage);
 
     /** Read one SLOT element into a loose slot, doing whichever rebuild its mode
         needs. Kept apart from where the result is stored so that a slot with no
@@ -508,6 +726,15 @@ private:
         one entry and the timer empties it several times a second. */
     static constexpr int retiredCapacity = 32;
     std::atomic<UserWaveBank*> retired[retiredCapacity] {};
+
+    /** The drag in progress, and the audio it is rebuilding from.
+
+        The audio is the whole imported file and is decoded once, when the
+        session opens. Holding it is the entire point: decoding is what made a
+        marker too expensive to move while a note was sounding. */
+    TrimSession trimSession;
+    std::vector<float> trimAudio;
+    double trimAudioRate = 0.0;
 
     juce::AudioFormatManager formatManager;
 
