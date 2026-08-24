@@ -234,18 +234,45 @@ code.
 
 ## Testing
 
-**Automated, in `tools/wavetabletest`.** The trim session needs no window.
+**Corrected after reading the harness.** An earlier draft of this spec said the
+trim session would be driven from `tools/wavetabletest`. It cannot be.
+`wavetable_test` links `Source/WaveAnalysis.cpp` and nothing else, on purpose —
+"none of it needs JUCE, so it builds and runs in seconds without touching the
+plugin" (`CMakeLists.txt:356`). `UserWavetable.cpp` needs JUCE in every
+direction: strings, files, XML, `AudioFormatManager`. It will not link there.
 
-- A session on an empty slot fails and opens nothing.
-- A session on a Single Cycle slot fails and opens nothing.
-- Open, then several updates, then close. After each update the slot's
-  `playStart`, `playLength`, `padStart()` and `padEnd()` match what
-  `setSlotTrim` produces for the same numbers.
-- The index file's modification time does not change across the updates, and
-  does change on close.
-- An update with numbers that leave too little sound rolls back, and the slot
-  keeps its last good trim.
-- Closing a session that was never opened succeeds and does nothing.
+This repository already answers that problem the same way three times. The
+JUCE-free part of a feature is lifted into its own unit with its own test
+target: `WaveAnalysis`, `NoteLockGrid`, `ResampleCapture`. The trim session
+follows that pattern.
+
+**What is already tested.** The geometry — where the buffer, the play region,
+the loop and the crossfade land for a given pair of markers — is
+`WaveAnalysis::regionForTrim`, and `wavetable_test` already checks it under
+"Start and end markers". This spec adds no geometry, so it adds no geometry
+tests.
+
+**What is new and can be wrong** is the *sequencing*: decode once, rebuild many
+times, save exactly once, and do nothing at all when the numbers have not
+moved. That is pure state, so it goes in a JUCE-free `TrimSession`
+(`Source/TrimSession.h`) with a new `trimsession-test` target built the same way
+as `resample-test`.
+
+- A session reports itself closed until it is opened.
+- Opening records the group and the slot.
+- `wants()` is false for the numbers last applied, and true for any others, so
+  a still mouse costs nothing.
+- `applied()` makes `wants()` false for the same numbers.
+- Closing reports whether a final apply is still owed, so the last position of
+  a fast drag is never lost between the last timer tick and the mouse coming up.
+- Closing a session that was never opened is safe and owes nothing.
+- Opening a second slot while one is open is refused, so two gestures can never
+  interleave.
+
+**What stays a hand test**, because it needs JUCE and a disk: that the index
+file is written once on close and not during the drag, and that a failed
+rebuild rolls the slot back. Both are checked in the Standalone against the
+file's modification time.
 
 Note the build trap: MSBuild reads a line containing `error :` in a test's
 output as a build error and fails the target with code -1, even when the
