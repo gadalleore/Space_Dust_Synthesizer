@@ -122,6 +122,8 @@ target_sources(SpaceDust PRIVATE
     Source/WaveformEditorComponent.cpp
     Source/WaveformEditorComponent.h
     Source/WaveformChoiceAttachment.h
+    Source/ResampleCapture.cpp
+    Source/ResampleCapture.h
     Source/LfoWaveform.cpp
     Source/LfoWaveform.h
     Source/Goniometer.cpp
@@ -369,6 +371,47 @@ add_custom_target(wavetable-test
     COMMAND $<TARGET_FILE:wavetable_test>
     DEPENDS wavetable_test
     COMMENT "Running wave analysis tests")
+
+#==============================================================================
+# resample-test — standalone check of what Resample takes out of the history.
+# Where a take starts and ends is the whole of that feature that can be right or
+# wrong on paper: one note gives one note, a phrase stays whole, the silence
+# either side goes, and a ring that has been written past its end still reads
+# back in order. None of it needs JUCE or a running synth.
+# Usage: cmake --build build --config Release --target resample-test
+#==============================================================================
+add_executable(resample_test
+    tools/resampletest/resample_test.cpp
+    Source/ResampleCapture.cpp)
+set_target_properties(resample_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/resample_test")
+target_compile_features(resample_test PRIVATE cxx_std_17)
+target_include_directories(resample_test PRIVATE Source)
+
+add_custom_target(resample-test
+    COMMAND $<TARGET_FILE:resample_test>
+    DEPENDS resample_test
+    COMMENT "Running resample capture tests")
+
+#==============================================================================
+# trimsession-test — standalone check of the trim drag's sequencing.
+# Dragging a marker decodes the slot's audio once, rebuilds it many times and
+# writes the index file once. WHEN each of those is allowed, and whether a
+# marker has actually moved, is pure state and needs no JUCE. The geometry of a
+# trim is WaveAnalysis::regionForTrim and is checked in wavetable-test.
+# Usage: cmake --build build --config Release --target trimsession-test
+#==============================================================================
+add_executable(trim_session_test
+    tools/trimsessiontest/trim_session_test.cpp)
+set_target_properties(trim_session_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/trim_session_test")
+target_compile_features(trim_session_test PRIVATE cxx_std_17)
+target_include_directories(trim_session_test PRIVATE Source)
+
+add_custom_target(trimsession-test
+    COMMAND $<TARGET_FILE:trim_session_test>
+    DEPENDS trim_session_test
+    COMMENT "Running trim session tests")
 
 #==============================================================================
 # lfo-test — measures LFO fold-back (aliasing) across the rate range.
