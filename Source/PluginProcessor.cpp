@@ -3133,6 +3133,47 @@ void SpaceDustAudioProcessor::migrateLfoRatesIfOld(juce::ValueTree& state, int s
     }
 }
 
+void SpaceDustAudioProcessor::migrateWaveformChoicesIfOld(juce::ValueTree& state, int stateVersion)
+{
+    // Version 4 onwards already speaks the new numbering. Anything older -- and a
+    // missing attribute, which means version 1 -- stored four built-in shapes
+    // followed by the User slots.
+    if (stateVersion >= currentStateVersion || !state.isValid())
+        return;
+
+    const int inserted = OscShape::numShapes - legacyOscUserBase;
+
+    // Nothing to do if no shapes were ever inserted. Cheap, and it keeps this
+    // correct if the two numbers are ever brought back level.
+    if (inserted <= 0)
+        return;
+
+    for (auto child : state)
+    {
+        if (!child.hasProperty("id"))
+            continue;
+
+        const auto id = child.getProperty("id").toString();
+
+        if (id != "osc1Waveform" && id != "osc2Waveform" && id != "subOscWaveform")
+            continue;
+
+        const double stored = static_cast<double>(child.getProperty("value"));
+
+        // Below the old base is a built-in shape, and the first four kept their
+        // places, so it already means what it always meant.
+        if (stored < static_cast<double>(legacyOscUserBase))
+            continue;
+
+        // At or above it is a User slot, which has moved up by however many
+        // shapes went in front of it.
+        const double moved = stored + static_cast<double>(inserted);
+        const double highest = static_cast<double>(OscShape::numShapes + UserWave::numSlots - 1);
+
+        child.setProperty("value", juce::jlimit(0.0, highest, moved), nullptr);
+    }
+}
+
 void SpaceDustAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
     //==============================================================================
@@ -3214,7 +3255,13 @@ void SpaceDustAudioProcessor::setStateInformation(const void* data, int sizeInBy
             }
 
             auto restored = juce::ValueTree::fromXml(*xmlState);
-            migrateLfoRatesIfOld(restored, xmlState->getIntAttribute("stateVersion", 1));
+            const int savedVersion = xmlState->getIntAttribute("stateVersion", 1);
+            migrateLfoRatesIfOld(restored, savedVersion);
+
+            // Before the parameters are put back, so a song saved when there were
+            // four built-in shapes still selects the waveform it was saved with
+            // rather than whichever shape now sits at that number.
+            migrateWaveformChoicesIfOld(restored, savedVersion);
             apvts.replaceState(restored);
 
             // After the parameters, so the waveform choices they restored already
@@ -3328,11 +3375,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     // The built-in shapes keep their existing positions, so every preset and every
     // saved song written before this feature still selects the same waveform:
     // the value stored is the index, and index 2 is still Saw.
+    // All twenty-one built-in shapes, in OscShape's order, then the eight User
+    // slots. The names come from OscillatorShapes.h rather than being written out
+    // again here: the list a host sees and the shape the oscillator plays are the
+    // same list, indexed the same way, and there is no second copy to fall behind.
     juce::StringArray waveformChoices;
-    waveformChoices.add(safeString("Sine"));
-    waveformChoices.add(safeString("Triangle"));
-    waveformChoices.add(safeString("Saw"));
-    waveformChoices.add(safeString("Square"));
+
+    for (int i = 0; i < OscShape::numShapes; ++i)
+        waveformChoices.add(safeString(OscShape::names[i]));
 
     for (int i = 1; i <= UserWave::numSlots; ++i)
         waveformChoices.add("User " + juce::String(i));

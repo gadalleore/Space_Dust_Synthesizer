@@ -73,6 +73,11 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
 
+    /** Scroll the list. Twenty-one built-in shapes plus eight import slots is
+        more rows than the panel can show at once, so the list scrolls past its
+        box rather than the panel growing taller than the plugin. */
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+
     /** Both markers back to the ends of the file. The one gesture that undoes a
         trim without having to drag each marker back by hand. */
     void mouseDoubleClick (const juce::MouseEvent&) override;
@@ -267,6 +272,40 @@ private:
     int displayPositionForRow (int row) const;
 
     int numVisibleRows() const;
+
+    //==========================================================================
+    // -- Scrolling the list --
+    //
+    // The list used to fit whatever it held, because the longest one was the
+    // Transient's ten drums and eight slots. An oscillator list now holds
+    // twenty-one built-in shapes and can reach twenty-nine rows, which would ask
+    // for a panel taller than the plugin -- and clamping such a panel to fit
+    // would push its bottom rows and its status line off the edge for good.
+    //
+    // So the panel stops growing at maxPanelHeight and the list scrolls inside
+    // it. The offset is applied in rowBounds() alone, which is what keeps
+    // hit-testing and drawing in step.
+
+    /** As tall as the panel is ever allowed to be, in design pixels. The plugin
+        is 857 design pixels tall, so this leaves room for the frame around the
+        panel and a margin at top and bottom. */
+    static constexpr int maxPanelHeight = 760;
+
+    /** How tall the rows are all together, and how much of that can be seen. */
+    int listContentHeight() const;
+    int listViewHeight() const;
+    int maxListScroll() const;
+
+    /** Set the scroll, clamped, and repaint if it moved. */
+    void setListScroll (int newScroll);
+
+    /** Bring a row into view. Called when the selection moves by any route other
+        than a click -- opening the panel on a slot, or stepping off one that was
+        cleared -- because a selected row nobody can see reads as no selection. */
+    void scrollRowIntoView (int row);
+
+    /** How far the list is scrolled, in pixels. */
+    int listScroll = 0;
 
     /** Where a dropped file goes when it does not land on an import row: the slot
         being shown, or the first empty one. Never a built-in. */

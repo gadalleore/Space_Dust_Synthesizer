@@ -4,6 +4,7 @@
 #include <juce_core/juce_core.h>
 #include <juce_events/juce_events.h>
 
+#include "OscillatorShapes.h"
 #include "TrimSession.h"
 #include "WaveAnalysis.h"
 
@@ -125,11 +126,19 @@ namespace UserWave
     }
 
     /** First dropdown index that means "user slot" for the two oscillators.
-        0-3 are Sine, Triangle, Saw and Square.
+        0..20 are the built-in shapes -- see OscShape in OscillatorShapes.h, which
+        is where they are named and where their maths lives.
 
-        The sub oscillator shares this base, because it offers the same four
-        shapes in the same order and plays them through the same code. */
-    inline constexpr int oscUserBase = 4;
+        The sub oscillator shares this base, because it offers the same shapes in
+        the same order and plays them through the same code.
+
+        Taken FROM OscShape rather than written as a number, so a shape can never
+        be added without the User slots moving out of its way. It was 4 while
+        there were only Sine, Triangle, Saw and Square; presets and automation
+        written then store the old numbering, and
+        SpaceDustAudioProcessor::migrateWaveformChoicesIfOld is what carries them
+        across. */
+    inline constexpr int oscUserBase = OscShape::numShapes;
 
     /** First dropdown index that means "user slot" for the noise source.
         0-1 are White and Pink. */

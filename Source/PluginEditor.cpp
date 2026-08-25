@@ -4033,10 +4033,13 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     catch (...) {}
     #endif
     
-    osc1WaveformCombo.addItem(safeString("Sine"), 1);
-    osc1WaveformCombo.addItem(safeString("Triangle"), 2);
-    osc1WaveformCombo.addItem(safeString("Saw"), 3);
-    osc1WaveformCombo.addItem(safeString("Square"), 4);
+    // Item ids run 1..N in list order and the parameter's choices run 0..N-1 in
+    // the same order, so a row's id is its choice index plus one. The Waveforms
+    // panel leans on that -- see rowForSelection() -- so the built-ins are added
+    // straight from OscShape rather than written out by hand, where a typo or an
+    // omission would put the two lists out of step.
+    for (int i = 0; i < OscShape::numShapes; ++i)
+        osc1WaveformCombo.addItem(safeString(OscShape::names[i]), i + 1);
 
     // The imported waveforms are added by rebuildWaveformMenus() once every combo
     // exists, and only the slots that actually hold something get an entry.
@@ -4124,10 +4127,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     osc1PanLabel.setInterceptsMouseClicks(true, true);  // Clickable to reset pan to center
     
     // Oscillator 2
-    osc2WaveformCombo.addItem(safeString("Sine"), 1);
-    osc2WaveformCombo.addItem(safeString("Triangle"), 2);
-    osc2WaveformCombo.addItem(safeString("Saw"), 3);
-    osc2WaveformCombo.addItem(safeString("Square"), 4);
+    for (int i = 0; i < OscShape::numShapes; ++i)
+        osc2WaveformCombo.addItem(safeString(OscShape::names[i]), i + 1);
     osc2WaveformCombo.setSelectedId(2);  // Default to Triangle
     if (auto* osc2WaveformParam = audioProcessor.getValueTreeState().getParameter("osc2Waveform"))
         osc2WaveformAttachment = std::make_unique<WaveformChoiceAttachment>(
@@ -4506,10 +4507,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         audioProcessor.getValueTreeState(), "subOscOn", subOscToggleButton);
     // Items come from rebuildWaveformMenus below, like the other waveform menus:
     // it is the one place that knows which User slots hold anything.
-    subOscWaveformCombo.addItem(safeString("Sine"), 1);
-    subOscWaveformCombo.addItem(safeString("Triangle"), 2);
-    subOscWaveformCombo.addItem(safeString("Saw"), 3);
-    subOscWaveformCombo.addItem(safeString("Square"), 4);
+    for (int i = 0; i < OscShape::numShapes; ++i)
+        subOscWaveformCombo.addItem(safeString(OscShape::names[i]), i + 1);
     subOscWaveformCombo.setLookAndFeel(&customLookAndFeel);
     if (auto* subOscWaveformParam = audioProcessor.getValueTreeState().getParameter("subOscWaveform"))
         subOscWaveformAttachment = std::make_unique<WaveformChoiceAttachment>(

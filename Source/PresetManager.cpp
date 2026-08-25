@@ -81,7 +81,14 @@ void PresetManager::loadPreset(const juce::File& presetFile)
     // Presets saved before the LFO free-rate range was widened to 2000 Hz store a knob
     // position that meant a different frequency. Rescale so they sound as recorded.
     auto restored = juce::ValueTree::fromXml(*xml);
-    SpaceDustAudioProcessor::migrateLfoRatesIfOld(restored, xml->getIntAttribute("stateVersion", 1));
+    const int savedVersion = xml->getIntAttribute("stateVersion", 1);
+    SpaceDustAudioProcessor::migrateLfoRatesIfOld(restored, savedVersion);
+
+    // Presets written when there were four built-in shapes store a User slot as 4
+    // upwards. Seventeen shapes now sit in front of those slots, so the stored
+    // number has to move up with them or the preset comes back on a shape it was
+    // never saved with.
+    SpaceDustAudioProcessor::migrateWaveformChoicesIfOld(restored, savedVersion);
 
     valueTreeState.replaceState(restored);
 

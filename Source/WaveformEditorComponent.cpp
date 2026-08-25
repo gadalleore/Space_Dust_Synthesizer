@@ -1,5 +1,6 @@
 ﻿#include "WaveformEditorComponent.h"
 
+#include "OscillatorShapes.h"
 #include "WaveAnalysis.h"
 
 #if JUCE_WINDOWS
@@ -112,16 +113,12 @@ namespace
         phase, just the outline, at a size where a few pixels could not be seen. */
     float builtInShapeValue (int shape, double phase01)
     {
-        constexpr double twoPi = 6.283185307179586;
-
-        switch (shape)
-        {
-            case 0: return (float) std::sin (twoPi * phase01);
-            case 1: return (float) (4.0 * std::abs (phase01 - std::floor (phase01 + 0.5)) - 1.0);
-            case 2: return (float) (2.0 * (phase01 - std::floor (phase01 + 0.5)));
-            case 3: return std::sin (twoPi * phase01) > 0.0 ? 1.0f : -1.0f;
-            default: return 0.0f;
-        }
+        // The same function the oscillator reads, so the row draws the shape that
+        // will actually sound. It used to be a second copy of the maths, which was
+        // survivable at four shapes and would not be at twenty-one -- the picture
+        // is how the player picks a shape, so a picture that lies is worse than no
+        // picture at all.
+        return OscShape::shapeValue (shape, phase01);
     }
 
     /** How near a marker the pointer has to be to pick it up, in pixels. A line
@@ -149,8 +146,62 @@ int WaveformEditorComponent::preferredWidth()
 
 int WaveformEditorComponent::preferredHeight (int userBase)
 {
-    return margin + groupTitleInset + maxRowsFor (userBase) * rowHeight + groupPadding
-         + margin + statusHeight + margin;
+    const int wanted = margin + groupTitleInset + maxRowsFor (userBase) * rowHeight
+                     + groupPadding + margin + statusHeight + margin;
+
+    // Capped, and the list scrolls past the cap.
+    //
+    // Height used to follow the list exactly, which was right while the longest
+    // list was the Transient's ten drums plus eight slots. The oscillators now
+    // offer twenty-one built-in shapes, so their list can reach twenty-nine rows
+    // and would ask for a panel taller than the plugin it sits in -- and a panel
+    // clamped to fit would simply lose its bottom rows and its status line off
+    // the edge, with no way to reach them.
+    return juce::jmin (wanted, maxPanelHeight);
+}
+
+int WaveformEditorComponent::listContentHeight() const
+{
+    return numVisibleRows() * rowHeight;
+}
+
+int WaveformEditorComponent::listViewHeight() const
+{
+    return juce::jmax (0, listBounds().getHeight() - groupTitleInset - groupPadding);
+}
+
+int WaveformEditorComponent::maxListScroll() const
+{
+    return juce::jmax (0, listContentHeight() - listViewHeight());
+}
+
+void WaveformEditorComponent::setListScroll (int newScroll)
+{
+    const int clamped = juce::jlimit (0, maxListScroll(), newScroll);
+
+    if (clamped == listScroll)
+        return;
+
+    listScroll = clamped;
+    repaint();
+}
+
+void WaveformEditorComponent::scrollRowIntoView (int row)
+{
+    const int position = displayPositionForRow (row);
+
+    if (position < 0)
+        return;
+
+    // In the list's own coordinates, before the scroll is taken off.
+    const int top = position * rowHeight;
+    const int bottom = top + rowHeight;
+    const int view = listViewHeight();
+
+    if (top < listScroll)
+        setListScroll (top);
+    else if (bottom > listScroll + view)
+        setListScroll (bottom - view);
 }
 
 //==============================================================================
@@ -382,6 +433,11 @@ void WaveformEditorComponent::selectSlot (int slotIndex)
         targetCombo->setSelectedId (userBase + activeSlot + 1, juce::sendNotificationSync);
 
     refresh();
+
+    // The import slots sit below twenty-one built-in shapes, so on an oscillator
+    // list they are past the bottom of the box every time. After refresh(), which
+    // is what settles which rows are visible at all.
+    scrollRowIntoView (rowForSelection());
 }
 
 //==============================================================================
@@ -1162,6 +1218,20 @@ void WaveformEditorComponent::mouseUp (const juce::MouseEvent&)
     commitTrim();
 }
 
+void WaveformEditorComponent::mouseWheelMove (const juce::MouseEvent& event,
+                                              const juce::MouseWheelDetails& wheel)
+{
+    // Only over the list. The picture beside it has its own gestures, and a wheel
+    // there scrolling the list behind the pointer would be a surprise.
+    if (! listBounds().contains (event.getPosition()) || maxListScroll() == 0)
+        return;
+
+    // deltaY is positive when the wheel turns away from the user, which should
+    // move the list UP -- so it is subtracted. Scaled by a row so one notch moves
+    // about three rows, the same feel as a list anywhere else.
+    setListScroll (listScroll - juce::roundToInt (wheel.deltaY * rowHeight * 3.0f));
+}
+
 void WaveformEditorComponent::mouseMove (const juce::MouseEvent& event)
 {
     setMouseCursor (handleAt (event.getPosition()) != TrimHandle::None
@@ -1567,7 +1637,13 @@ juce::Rectangle<int> WaveformEditorComponent::rowBounds (int row) const
 
     auto list = listBounds().reduced (groupPadding, 0);
 
-    return { list.getX(), list.getY() + groupTitleInset + position * rowHeight,
+    // listScroll comes off here, in the ONE place a row's position is worked out.
+    // rowAt() finds a row by asking every row whether it contains a point, so
+    // hit-testing follows the scroll for free and cannot disagree with what is
+    // drawn -- which is exactly the sort of pair that drifts apart when the
+    // offset is applied in two places.
+    return { list.getX(),
+             list.getY() + groupTitleInset + position * rowHeight - listScroll,
              list.getWidth(), rowHeight };
 }
 
@@ -1970,6 +2046,16 @@ void WaveformEditorComponent::strokeWaveformPath (juce::Graphics& g, const juce:
 void WaveformEditorComponent::paintList (juce::Graphics& g)
 {
     const int selected = rowForSelection();
+
+    // Rows are drawn at a scrolled offset, so one at either end is partly outside
+    // the list box. Clipped to the box, or a half-scrolled row would spill over
+    // the group's border and into the panel around it.
+    auto clip = listBounds().reduced (groupPadding, 0);
+    clip.removeFromTop (groupTitleInset);
+    clip.removeFromBottom (groupPadding);
+
+    juce::Graphics::ScopedSaveState saved (g);
+    g.reduceClipRegion (clip);
 
     for (int row = 0; row < numRows(); ++row)
     {

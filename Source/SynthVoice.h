@@ -8,6 +8,7 @@
 #include "OversampledStage.h" // Per-sample oversampling wrapper for the nonlinear master filter
 #include "RetargetableADSR.h" // juce::ADSR-faithful envelope + live release retargeting
 #include "SynthSound.h"   // Kept for build compatibility (some headers still include it indirectly)
+#include "OscillatorShapes.h" // The built-in shapes, shared with the Waveforms picture
 #include "UserWavetable.h" // Imported samples played as oscillator waveforms
 #include <array>
 #include <numeric>

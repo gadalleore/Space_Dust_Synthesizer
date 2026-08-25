@@ -827,33 +827,15 @@ float SynthVoice::generateWaveform(double angle, int waveform, const UserWaveSlo
         return userSlot->read (phase, freqHz, sampleRate);
     }
 
-    switch (waveform)
-    {
-        case Sine:
-            return std::sin(angle);
-            
-        case Triangle:
-            // Triangle wave: 2 * abs(2 * (phase - floor(phase + 0.5))) - 1
-            {
-                double normalized = angle / (2.0 * juce::MathConstants<double>::pi);
-                double phase = normalized - std::floor(normalized + 0.5);
-                return static_cast<float>(4.0 * std::abs(phase) - 1.0);
-            }
-            
-        case Saw:
-            // Simple sawtooth: 2 * (phase - floor(phase + 0.5))
-            {
-                double normalized = angle / (2.0 * juce::MathConstants<double>::pi);
-                double phase = normalized - std::floor(normalized + 0.5);
-                return static_cast<float>(2.0 * phase);
-            }
-            
-        case Square:
-            return std::sin(angle) > 0.0f ? 1.0f : -1.0f;
-            
-        default:
-            return std::sin(angle);
-    }
+    // Every built-in shape, from the one place the maths is written down. The
+    // Waveforms picture calls the same function, so what is drawn in the list and
+    // what comes out of the oscillator cannot drift apart -- which mattered
+    // little with four shapes and would be a certainty with twenty-one.
+    //
+    // The four original shapes are unchanged in there, to the sample. See
+    // OscillatorShapes.h, and the shape test that compares them against the maths
+    // this switch used to hold.
+    return OscShape::shapeValueFromAngle(waveform, angle);
 }
 
 //==============================================================================

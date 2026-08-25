@@ -140,9 +140,36 @@ public:
         (or a missing attribute) predates that and already means what it says. */
     static void migrateLfoRatesIfOld(juce::ValueTree& state, int stateVersion);
 
+    /** Carry a waveform choice across the day the built-in shapes grew from four
+        to twenty-one.
+
+        Up to stateVersion 3 the list was Sine, Triangle, Saw, Square, then User
+        1..8 -- so a stored 4 meant User 1. From version 4 there are seventeen
+        more shapes in front of the User slots, and that same 4 means Pulse 25%.
+        Every stored value at or above the old base is moved up by the number of
+        shapes that were inserted.
+
+        Applies to the three menus that share the shape list: osc1Waveform,
+        osc2Waveform and subOscWaveform. noiseType and transientType have lists of
+        their own and are untouched.
+
+        WHAT THIS CANNOT FIX: a host's automation lane. The DAW stores a
+        NORMALISED float, not an index, and it never passes through here -- it is
+        written straight into the parameter. Any automation already drawn against
+        a waveform menu will select a different shape after this change. Presets
+        are safe; automation is not, and cannot be made so. */
+    static void migrateWaveformChoicesIfOld(juce::ValueTree& state, int stateVersion);
+
     /** Bumped whenever a stored value changes meaning.
         1 (or absent) = 200 Hz LFO top. 2 = 2 kHz top. 3 = 200 Hz again. */
-    static constexpr int currentStateVersion = 3;
+    /** 4: the built-in oscillator shapes grew from four to twenty-one, moving
+        every User slot up the list. See migrateWaveformChoicesIfOld. */
+    static constexpr int currentStateVersion = 4;
+
+    /** Built-in shapes there were up to stateVersion 3: Sine, Triangle, Saw,
+        Square. Frozen as a number on purpose -- it is a fact about old files, so
+        it must not follow OscShape::numShapes when more shapes are added. */
+    static constexpr int legacyOscUserBase = 4;
 
     // LFO current phases (public for voice access)
     double lfo1CurrentPhase{0.0};         // Current LFO1 phase (0.0 to 1.0)

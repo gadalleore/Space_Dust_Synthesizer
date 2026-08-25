@@ -414,6 +414,26 @@ add_custom_target(trimsession-test
     COMMENT "Running trim session tests")
 
 #==============================================================================
+# shapes-test — standalone check of the built-in oscillator shapes.
+# OscShape::shapeValue is what the audio path AND the Waveforms picture both
+# call, so a shape that is wrong is wrong in two places at once. Staying inside
+# the rails, closing the cycle, carrying no DC and being distinct from every
+# other shape all have answers decided in advance, and none of it needs JUCE.
+# Usage: cmake --build build --config Release --target shapes-test
+#==============================================================================
+add_executable(shapes_test
+    tools/shapestest/shapes_test.cpp)
+set_target_properties(shapes_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/shapes_test")
+target_compile_features(shapes_test PRIVATE cxx_std_17)
+target_include_directories(shapes_test PRIVATE Source)
+
+add_custom_target(shapes-test
+    COMMAND $<TARGET_FILE:shapes_test>
+    DEPENDS shapes_test
+    COMMENT "Running oscillator shape tests")
+
+#==============================================================================
 # lfo-test — measures LFO fold-back (aliasing) across the rate range.
 # Pass "legacy" to the exe to evaluate the pre-band-limiting edges for comparison.
 # Usage: cmake --build build --config Release --target lfo-test
