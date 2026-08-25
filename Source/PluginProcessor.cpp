@@ -2339,7 +2339,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             // self-oscillates and the pre-existing LP/BP/HP sound is unchanged).
             auto configureMirror = [](NonlinearSVF& f, int mode, float cutoffHz, float res)
             {
-                f.setMode(juce::jlimit(0, 4, mode));
+                f.setMode(juce::jlimit(0, NonlinearSVF::numModes - 1, mode));
                 f.setCutoffFrequency(juce::jlimit(20.0f, 20000.0f, cutoffHz));
                 const float resQ = 0.1f + juce::jmin(juce::jlimit(0.0f, 1.0f, res), 0.80f) * 19.9f;
                 f.setResonanceQ(juce::jlimit(0.1f, 16.0f, resQ));
@@ -3582,11 +3582,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     
     // Filter mode. Notch and Peak were appended AFTER High Pass so the stored
     // indices of existing presets (0/1/2) keep meaning the same three modes.
+    // Thirteen modes now, and the first five are the five that were always there,
+    // in the same order -- so every preset and every automation lane still selects
+    // the filter it selected before. The names come from NonlinearSVF, which is
+    // where the modes are defined, rather than being written out again here.
+    juce::StringArray filterModeChoices;
+
+    for (int i = 0; i < NonlinearSVF::numModes; ++i)
+        filterModeChoices.add(safeString(NonlinearSVF::modeNames()[i]));
+
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"filterMode", 1}, "Filter Mode",
-            juce::StringArray(safeString("Low Pass"), safeString("Band Pass"), safeString("High Pass"),
-                              safeString("Notch"), safeString("Peak")), 0),
+            filterModeChoices, 0),
         safeString("filterMode"));
     
     // Filter cutoff (log scale: 20 Hz to 20 kHz)
@@ -4028,8 +4036,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"modFilter1Mode", 1}, "Mod Filter 1 Mode",
-            juce::StringArray(safeString("Low Pass"), safeString("Band Pass"), safeString("High Pass"),
-                              safeString("Notch"), safeString("Peak")), 0),
+            filterModeChoices, 0),
         safeString("modFilter1Mode"));
     
     ADD_PARAM_WITH_LOG(params,
@@ -4068,8 +4075,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     addParameterWithLogging(params,
         std::make_unique<juce::AudioParameterChoice>(
             juce::ParameterID{"modFilter2Mode", 1}, "Mod Filter 2 Mode",
-            juce::StringArray(safeString("Low Pass"), safeString("Band Pass"), safeString("High Pass"),
-                              safeString("Notch"), safeString("Peak")), 0),
+            filterModeChoices, 0),
         safeString("modFilter2Mode"));
     
     ADD_PARAM_WITH_LOG(params,

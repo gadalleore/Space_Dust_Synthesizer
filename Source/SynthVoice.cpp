@@ -968,7 +968,7 @@ void SynthVoice::updateFilter()
 
     // Resonance is passed normalized (0.0-1.0); NonlinearSVF owns the Q curve and
     // the self-oscillation region at the top of the knob.
-    filter.setMode(juce::jlimit(0, 4, filterMode));
+    filter.setMode(juce::jlimit(0, NonlinearSVF::numModes - 1, filterMode));
     filter.setCutoffFrequency(clampedCutoff);
     filter.setResonanceNormalized(filterResonance);
 }
@@ -2503,7 +2503,7 @@ void SynthVoice::setHighShelfAmount(float amount)
 
 void SynthVoice::setFilterMode(int mode)
 {
-    filterMode = juce::jlimit(0, 4, mode);
+    filterMode = juce::jlimit(0, NonlinearSVF::numModes - 1, mode);
     updateFilter();
 }
 
@@ -2616,7 +2616,7 @@ void SynthVoice::setModFilter1(bool show, bool linkToMaster, int mode, float cut
 {
     modFilter1Show = show;
     modFilter1Linked = linkToMaster;
-    modFilter1Mode = juce::jlimit(0, 4, mode);
+    modFilter1Mode = juce::jlimit(0, NonlinearSVF::numModes - 1, mode);
     modFilter1Cutoff = juce::jlimit(20.0f, 20000.0f, cutoffHz);
     modFilter1Resonance = juce::jlimit(0.0f, 1.0f, resonance);
     updateModFilter1();
@@ -2636,7 +2636,7 @@ void SynthVoice::setModFilter2(bool show, bool linkToMaster, int mode, float cut
 {
     modFilter2Show = show;
     modFilter2Linked = linkToMaster;
-    modFilter2Mode = juce::jlimit(0, 4, mode);
+    modFilter2Mode = juce::jlimit(0, NonlinearSVF::numModes - 1, mode);
     modFilter2Cutoff = juce::jlimit(20.0f, 20000.0f, cutoffHz);
     modFilter2Resonance = juce::jlimit(0.0f, 1.0f, resonance);
     updateModFilter2();

@@ -54,7 +54,58 @@ public:
                               bottom of the resonance knob) makes that bell a
                               shallow DIP; the peak only appears once resonance is
                               turned up. */
-    enum Mode { lowpass = 0, bandpass = 1, highpass = 2, notch = 3, peak = 4 };
+    /**
+        The five original taps, then eight more built on the same core.
+
+        ORDER IS A PARAMETER CONTRACT. These indices are stored in presets and in
+        host automation lanes, so the first five keep their places for good and
+        anything new goes on the END.
+
+        The second group needs a SECOND pass of the same filter -- a 24 dB slope
+        is two 12 dB stages, and a wider notch is two notches. That pass has its
+        own integrator states (s3, s4) and is skipped entirely for the modes that
+        do not use it, so a plain Low Pass costs exactly what it always did.
+
+        The last three are the dirty ones. Their character is distortion in or
+        around the resonance path rather than a different slope, which is why they
+        are named for what they sound like instead of for their shape. Massive has
+        filters of similar character called Scream, Daft and Acid; these are ours,
+        built here, and named ours. */
+    enum Mode
+    {
+        lowpass = 0,
+        bandpass = 1,
+        highpass = 2,
+        notch = 3,
+        peak = 4,
+
+        // -- Two-stage: the same core run twice --
+        lowpass4 = 5,      // 24 dB/oct low pass
+        highpass4 = 6,     // 24 dB/oct high pass
+        allpass = 7,       // flat, all phase
+        doubleNotch = 8,   // two notches, spread apart
+        bandReject = 9,    // one notch, twice as deep and wider
+
+        // -- The dirty three --
+        howl = 10,         // low pass whose resonance saturates and screams
+        grit = 11,         // 24 dB low pass with distortion between the stages
+        punch = 12,        // low pass driven hard and clipped: blunt and loud
+
+        numModes = 13
+    };
+
+    /** The names, in index order, for the dropdown and for the parameter. */
+    static const char* const* modeNames() noexcept
+    {
+        static const char* const names[] =
+        {
+            "Low Pass", "Band Pass", "High Pass", "Notch", "Peak",
+            "Low Pass 4", "High Pass 4", "All Pass", "Double Notch", "Band Reject",
+            "Howl", "Grit", "Punch"
+        };
+
+        return names;
+    }
 
     void prepare (const juce::dsp::ProcessSpec& spec) noexcept
     {
@@ -84,10 +135,11 @@ public:
     void reset() noexcept
     {
         s1[0] = s1[1] = s2[0] = s2[1] = 0.0f;
+        s3[0] = s3[1] = s4[0] = s4[1] = 0.0f;
         oscEnv[0] = oscEnv[1] = 0.0f;
     }
 
-    void setMode (int newMode) noexcept { mode = juce::jlimit (0, 4, newMode); }
+    void setMode (int newMode) noexcept { mode = juce::jlimit (0, numModes - 1, newMode); }
     int  getMode() const noexcept       { return mode; }
 
     void setCutoffFrequency (float freqHz) noexcept
@@ -101,6 +153,13 @@ public:
     void setResonanceNormalized (float res) noexcept
     {
         res = juce::jlimit (0.0f, 1.0f, res);
+
+        // Kept as the knob position, not just as damping. Howl, Grit and Punch
+        // read it directly: how hard they distort is the Resonance knob, because
+        // on those three the dirt IS the resonance and one control for both is
+        // what makes them playable.
+        resonanceKnob = res;
+
         // Resonance -> damping (R2 = 1/Q). EXPONENTIAL Q taper (kQMin..kQMax across the
         // damped range) so resonance ramps up in equal PERCEPTUAL steps and reaches a
         // pronounced peak just before self-oscillation. The old linear 0.1..16 map
@@ -139,6 +198,10 @@ public:
         R2 = 1.0f / juce::jmax (0.025f, Q);
         selfOsc      = false;
         selfOscBlend = 0.0f;
+
+        // A caller that owns its own resonance curve wants the plain filter, so
+        // the dirty modes are given nothing to drive with.
+        resonanceKnob = 0.0f;
     }
 
     /** Amplitude envelope (0..1) for the current sample. Scales the self-osc target
@@ -211,10 +274,90 @@ public:
         float out;
         switch (mode)
         {
-            case 1:  out = yBP;         break;
-            case 2:  out = yHP;         break;
-            case 3:  out = yLP + yHP;   break; // notch
-            case 4:  out = yLP - yHP;   break; // peak (flat + resonant bell)
+            case bandpass:  out = yBP;         break;
+            case highpass:  out = yHP;         break;
+            case notch:     out = yLP + yHP;   break; // notch
+            case peak:      out = yLP - yHP;   break; // peak (flat + resonant bell)
+
+            //-- The modes that run the core a second time ---------------------
+            // Everything below feeds one of the taps above back through the same
+            // maths with its own states. Second-stage damping is deliberately
+            // NOT the AGC value: two self-oscillating stages in series fight each
+            // other and the result howls out of control rather than singing. The
+            // second stage always uses the plain R2.
+
+            case lowpass4:
+                out = secondStage (channel, yLP, R2, g).lp;
+                break;
+
+            case highpass4:
+                out = secondStage (channel, yHP, R2, g).hp;
+                break;
+
+            case allpass:
+                // The standard TPT all-pass: the input with twice the damped
+                // resonance taken out. Flat in level, and everything it does is
+                // to the phase -- which is what makes it useful in a chain rather
+                // than on its own.
+                out = x - 2.0f * effR2 * yBP;
+                break;
+
+            case doubleNotch:
+            {
+                // Two notches at different frequencies, so a whole band is
+                // hollowed out instead of one exact pitch. The second sits an
+                // octave and a half up -- far enough apart to hear as two.
+                const float first = yLP + yHP;
+                const auto second = secondStage (channel, first, R2, juce::jmin (g * 3.0f, 12.0f));
+                out = second.lp + second.hp;
+                break;
+            }
+
+            case bandReject:
+            {
+                // One notch through a second at the SAME frequency: twice as deep
+                // and twice as wide as the plain Notch, which is the difference
+                // between taking a pitch out and taking a band out.
+                const float first = yLP + yHP;
+                const auto second = secondStage (channel, first, R2, g);
+                out = second.lp + second.hp;
+                break;
+            }
+
+            //-- The dirty three ------------------------------------------------
+            case howl:
+            {
+                // A low pass whose resonance is driven until it screams. The
+                // bandpass tap IS the resonance, so saturating it and adding it
+                // back is the resonance shouting rather than the whole signal
+                // distorting -- the body of the note stays clean and the peak
+                // tears.
+                const float resonanceDrive = 1.0f + 8.0f * resonanceKnob;
+                out = yLP + std::tanh (yBP * resonanceDrive) * resonanceKnob;
+                break;
+            }
+
+            case grit:
+            {
+                // 24 dB of slope with the signal bent between the two stages.
+                // Distorting in the MIDDLE means the second stage filters the
+                // harmonics the distortion just made, so it grinds without
+                // getting fizzy on top.
+                const float bent = std::tanh (yLP * (1.0f + 6.0f * resonanceKnob));
+                out = secondStage (channel, bent, R2, g).lp;
+                break;
+            }
+
+            case punch:
+            {
+                // Driven hard into a hard clip rather than a soft one. No curve,
+                // no rounding: it is loud, blunt, and the same every time, which
+                // is the point of it.
+                const float driven = yLP * (1.5f + 3.0f * resonanceKnob);
+                out = juce::jlimit (-1.0f, 1.0f, driven);
+                break;
+            }
+
             default: out = yLP;         break;
         }
         if (! std::isfinite (out))
@@ -226,6 +369,51 @@ public:
     }
 
 private:
+    /** The three taps of one pass of the filter. */
+    struct Taps
+    {
+        float lp = 0.0f;
+        float bp = 0.0f;
+        float hp = 0.0f;
+    };
+
+    /**
+        Run the same TPT core a second time, on its own integrators.
+
+        Its damping is passed in rather than taken from effR2, and every caller
+        passes the plain R2. Two self-oscillating stages in series drive each
+        other and the result runs away into a howl instead of singing at the
+        cutoff -- so the AGC belongs to the first stage alone.
+
+        Its g is passed in too, because Double Notch wants its second notch at a
+        different frequency from its first.
+    */
+    Taps secondStage (int channel, float x, float damping, float stageG) noexcept
+    {
+        auto& ls3 = s3[(size_t) channel];
+        auto& ls4 = s4[(size_t) channel];
+
+        const float denom = juce::jmax (1.0f + damping * stageG + stageG * stageG, 1.0e-4f);
+        const float h = 1.0f / denom;
+
+        Taps t;
+        t.hp = h * (x - ls3 * (stageG + damping) - ls4);
+        t.bp = t.hp * stageG + ls3;
+        ls3 = t.hp * stageG + t.bp;
+        t.lp = t.bp * stageG + ls4;
+        ls4 = t.bp * stageG + t.lp;
+
+        // The first stage guards its own output; this one guards its states, so a
+        // burst that got through cannot sit in the integrators for good.
+        if (! std::isfinite (ls3) || ! std::isfinite (ls4))
+        {
+            ls3 = ls4 = 0.0f;
+            t.lp = t.bp = t.hp = 0.0f;
+        }
+
+        return t;
+    }
+
     static float computeTargetAmp (float res) noexcept
     {
         // Intensity RISES with the knob: a gentle, near-clean sine just past the onset
@@ -271,5 +459,16 @@ private:
     float envAmount  = 1.0f;
     float s1[2] { 0.0f, 0.0f };  // integrator states (per channel)
     float s2[2] { 0.0f, 0.0f };
+
+    /** The second stage's integrators, for the modes that need the core run
+        twice -- the 24 dB slopes, the paired notches and the two dirty filters
+        that are built on a 24 dB slope. Untouched, and not even read, by the five
+        original modes. */
+    float s3[2] { 0.0f, 0.0f };
+    float s4[2] { 0.0f, 0.0f };
+
+    /** The Resonance knob as the player set it, 0..1. Howl, Grit and Punch drive
+        their distortion from this directly -- see setResonanceNormalized. */
+    float resonanceKnob = 0.0f;
     float oscEnv[2] { 0.0f, 0.0f }; // amplitude follower (per channel)
 };
