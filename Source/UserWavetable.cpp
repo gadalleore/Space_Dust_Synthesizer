@@ -108,8 +108,12 @@ namespace
 
         juce::FlacAudioFormat flac;
 
-        std::unique_ptr<juce::AudioFormatReader> reader (
-            flac.createReaderFor (new juce::MemoryInputStream (block, false), true));
+        // createReaderFor takes the stream: it holds it for as long as the reader
+        // lives, and the trailing true has it deleted if opening fails instead. So
+        // the raw new below is owned either way, and the reader itself is owned by
+        // the unique_ptr on the next line.
+        auto* stream = new juce::MemoryInputStream (block, false);
+        std::unique_ptr<juce::AudioFormatReader> reader (flac.createReaderFor (stream, true));
 
         if (reader == nullptr || reader->sampleRate <= 0.0 || reader->lengthInSamples <= 0)
             return false;
