@@ -1134,6 +1134,17 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     if (safeGetParam(apvts, "lofiEnabled") <= 0.5f)
         analogDrift = 0.0f;
     
+    // Bend, Spectrum and Sync. Read once here rather than per voice: they are the
+    // same three numbers for every voice, and safeGetParam is not free.
+    const int osc1WaveMode = juce::jlimit(0, PhaseShaper::numModes - 1,
+                                          static_cast<int>(safeGetParam(apvts, "osc1WaveMode")));
+    const int osc2WaveMode = juce::jlimit(0, PhaseShaper::numModes - 1,
+                                          static_cast<int>(safeGetParam(apvts, "osc2WaveMode")));
+    const float osc1Intensity = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc1Intensity"));
+    const float osc2Intensity = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc2Intensity"));
+    const float osc1SyncAmount = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc1Sync"));
+    const float osc2SyncAmount = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc2Sync"));
+
     // Update all voices with current parameter values
     for (int i = 0; i < synth.getNumVoices(); ++i)
     {
@@ -1142,6 +1153,8 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setUserWaveBank(audioUserWaveBank);
             voice->setOsc1Waveform(osc1Wave);
             voice->setOsc2Waveform(osc2Wave);
+            voice->setOsc1WaveShaping(osc1WaveMode, osc1Intensity, osc1SyncAmount);
+            voice->setOsc2WaveShaping(osc2WaveMode, osc2Intensity, osc2SyncAmount);
             voice->setOsc1CoarseTune(osc1CoarseTune);
             voice->setOsc1Detune(osc1Detune);
             voice->setOsc2CoarseTune(osc2CoarseTune);
@@ -3400,7 +3413,64 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"osc2Waveform", 1}, "Osc 2 Waveform",
             waveformChoices, 1),
         safeString("osc2Waveform"));
-    
+
+    //==============================================================================
+    // -- Wave Mode, Intensity and Sync --
+    //
+    // Three controls per oscillator that reshape whatever waveform is selected,
+    // by moving WHERE in the cycle it is read rather than by changing the wave.
+    // That is why they work on an imported single cycle as well as on a built-in
+    // shape: see PhaseShaper.h.
+    //
+    // All three default to doing nothing -- mode Standard, intensity 0, sync 0 --
+    // so every preset written before they existed sounds exactly as it did.
+    //
+    // The sub oscillator deliberately has none of them. Its job is to sit under
+    // the others and be felt rather than heard, and bending it would put
+    // harmonics exactly where they are least wanted.
+    {
+        juce::StringArray waveModeChoices;
+
+        for (int i = 0; i < PhaseShaper::numModes; ++i)
+            waveModeChoices.add(safeString(PhaseShaper::modeNames[i]));
+
+        addParameterWithLogging(params,
+            std::make_unique<juce::AudioParameterChoice>(
+                juce::ParameterID{"osc1WaveMode", 1}, "Osc 1 Wave Mode",
+                waveModeChoices, PhaseShaper::Standard),
+            safeString("osc1WaveMode"));
+
+        addParameterWithLogging(params,
+            std::make_unique<juce::AudioParameterFloat>(
+                juce::ParameterID{"osc1Intensity", 1}, "Osc 1 Intensity",
+                juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f),
+            safeString("osc1Intensity"));
+
+        addParameterWithLogging(params,
+            std::make_unique<juce::AudioParameterFloat>(
+                juce::ParameterID{"osc1Sync", 1}, "Osc 1 Sync",
+                juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f),
+            safeString("osc1Sync"));
+
+        addParameterWithLogging(params,
+            std::make_unique<juce::AudioParameterChoice>(
+                juce::ParameterID{"osc2WaveMode", 1}, "Osc 2 Wave Mode",
+                waveModeChoices, PhaseShaper::Standard),
+            safeString("osc2WaveMode"));
+
+        addParameterWithLogging(params,
+            std::make_unique<juce::AudioParameterFloat>(
+                juce::ParameterID{"osc2Intensity", 1}, "Osc 2 Intensity",
+                juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f),
+            safeString("osc2Intensity"));
+
+        addParameterWithLogging(params,
+            std::make_unique<juce::AudioParameterFloat>(
+                juce::ParameterID{"osc2Sync", 1}, "Osc 2 Sync",
+                juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f),
+            safeString("osc2Sync"));
+    }
+
     //==============================================================================
     // -- Oscillator Pitch Tuning --
     // Each oscillator has independent coarse tuning (Â±24 semitones) and fine detuning (Â±50 cents)

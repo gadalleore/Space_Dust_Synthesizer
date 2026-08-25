@@ -639,6 +639,20 @@ MainPageComponent::MainPageComponent(SpaceDustAudioProcessorEditor& editor)
     addAndMakeVisible(parentEditor.osc1WaveformEditButton);
     addAndMakeVisible(parentEditor.osc2WaveformEditButton);
     addAndMakeVisible(parentEditor.noiseWaveformEditButton);
+    // Wave Mode, Intensity and Sync -- the shaping row under each oscillator.
+    addAndMakeVisible(parentEditor.osc1WaveModeCombo);
+    addAndMakeVisible(parentEditor.osc1WaveModeLabel);
+    addAndMakeVisible(parentEditor.osc1IntensitySlider);
+    addAndMakeVisible(parentEditor.osc1IntensityLabel);
+    addAndMakeVisible(parentEditor.osc1SyncSlider);
+    addAndMakeVisible(parentEditor.osc1SyncLabel);
+    addAndMakeVisible(parentEditor.osc2WaveModeCombo);
+    addAndMakeVisible(parentEditor.osc2WaveModeLabel);
+    addAndMakeVisible(parentEditor.osc2IntensitySlider);
+    addAndMakeVisible(parentEditor.osc2IntensityLabel);
+    addAndMakeVisible(parentEditor.osc2SyncSlider);
+    addAndMakeVisible(parentEditor.osc2SyncLabel);
+
     addAndMakeVisible(parentEditor.osc1CoarseTuneSlider);
     addAndMakeVisible(parentEditor.osc1CoarseTuneLabel);
     addAndMakeVisible(parentEditor.osc1DetuneSlider);
@@ -830,7 +844,11 @@ void MainPageComponent::resized()
     // Left side: Oscillators + Filter
     // Right side: Only Amp Envelope (Master section is now handled by main editor, always visible)
     // First calculate heights (needed before calculating widths)
-    const int oscHeightExtra = 70;  // Ensure Noise section labels (Level, Low/High Shelf) fit inside box
+    // Room for the Noise section's labels, plus the two shaping rows (Wave Mode,
+    // Intensity, Sync) that now sit under each oscillator. Each shaping row is a
+    // label, a combo-or-knob and a value box -- about 84 px -- and the two of them
+    // pushed the Noise section past the bottom of the box at the old 70.
+    const int oscHeightExtra = 210;
     int oscHeight = static_cast<int>((static_cast<int>(availableHeight * 0.50) + oscHeightExtra) * 0.9408f);  // ~6% smaller total (4% + 2%) to give Filter more room
     int filterHeight = availableHeight - oscHeight - topBottomGap; // Filter gets remaining
     
@@ -964,9 +982,47 @@ void MainPageComponent::resized()
     
     // Bottom of row: knob + value text box (no title label below)
     int osc1Bottom = osc1KnobRowY + knobDiameter + oscLabelSpacing;
-    
+
+    //==========================================================================
+    // -- The shaping row: Wave Mode, Intensity, Sync --
+    // A second, shorter row under each oscillator. Its knobs are smaller than the
+    // tuning knobs above on purpose: these three shape the waveform, they are not
+    // part of the Coarse/Detune/Level rhythm, and a smaller size says so without
+    // needing a divider. Laid out by a lambda because the two oscillators want the
+    // identical row and writing it twice is how the two drift apart.
+    const int shapeKnobSize = 40;
+    const int shapeRowGap = 6;
+
+    const auto layOutShapingRow = [&] (int topY, juce::ComboBox& modeCombo,
+                                       juce::Label& modeLabel,
+                                       juce::Slider& intensitySlider, juce::Label& intensityLabel,
+                                       juce::Slider& syncSlider, juce::Label& syncLabel)
+    {
+        modeLabel.setBounds(oscContent.getX(), topY, comboWidth, labelHeight);
+
+        const int controlY = topY + labelHeight + labelGap;
+        modeCombo.setBounds(oscContent.getX(), controlY, comboWidth, comboHeight);
+
+        int x = oscContent.getX() + comboWidth + horizontalSpacing;
+
+        intensityLabel.setBounds(x, topY, shapeKnobSize, labelHeight);
+        intensitySlider.setBounds(x, controlY, shapeKnobSize, shapeKnobSize + oscillatorTextBoxHeight);
+
+        x += knobDiameter + horizontalSpacing;
+        syncLabel.setBounds(x, topY, shapeKnobSize, labelHeight);
+        syncSlider.setBounds(x, controlY, shapeKnobSize, shapeKnobSize + oscillatorTextBoxHeight);
+
+        return controlY + shapeKnobSize + oscillatorTextBoxHeight;
+    };
+
+    const int osc1ShapeBottom = layOutShapingRow(
+        osc1Bottom + shapeRowGap,
+        parentEditor.osc1WaveModeCombo, parentEditor.osc1WaveModeLabel,
+        parentEditor.osc1IntensitySlider, parentEditor.osc1IntensityLabel,
+        parentEditor.osc1SyncSlider, parentEditor.osc1SyncLabel);
+
     // Osc2 - Same layout, below Osc1 with proper spacing to prevent overlaps
-    int osc2Y = osc1Bottom + oscRowSpacing;
+    int osc2Y = osc1ShapeBottom + oscRowSpacing;
     parentEditor.osc2WaveformLabel.setBounds(oscContent.getX(), osc2Y, comboWidth, labelHeight);
     osc2Y += labelHeight + labelGap;
     parentEditor.osc2WaveformCombo.setBounds(oscContent.getX(), osc2Y, comboWidth, comboHeight);
@@ -997,11 +1053,17 @@ void MainPageComponent::resized()
     parentEditor.osc2LevelSlider.setBounds(osc2KnobX, osc2KnobY, knobDiameter, knobDiameter);
     
     int osc2Bottom = osc2KnobRowY + knobDiameter + oscLabelSpacing;
-    
+
+    const int osc2ShapeBottom = layOutShapingRow(
+        osc2Bottom + shapeRowGap,
+        parentEditor.osc2WaveModeCombo, parentEditor.osc2WaveModeLabel,
+        parentEditor.osc2IntensitySlider, parentEditor.osc2IntensityLabel,
+        parentEditor.osc2SyncSlider, parentEditor.osc2SyncLabel);
+
     // Noise - Below Osc2 with proper padding
     // Match the Osc1->Osc2 row gap (oscRowSpacing) so the Waveform2->Noise distance is identical
     const int noisePadding = oscRowSpacing; // Padding between osc2 and noise section
-    int noiseY = osc2Bottom + noisePadding;
+    int noiseY = osc2ShapeBottom + noisePadding;
     parentEditor.noiseColorLabel.setBounds(oscContent.getX(), noiseY, comboWidth, labelHeight);
     noiseY += labelHeight + labelGap;
     parentEditor.noiseColorCombo.setBounds(oscContent.getX(), noiseY, comboWidth, comboHeight);
@@ -4129,6 +4191,87 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // Oscillator 2
     for (int i = 0; i < OscShape::numShapes; ++i)
         osc2WaveformCombo.addItem(safeString(OscShape::names[i]), i + 1);
+
+    //==========================================================================
+    // -- Wave Mode, Intensity and Sync, for both oscillators --
+    // Built in one loop because the two are the same three controls pointed at
+    // different parameters. Written out twice, the pair would drift.
+    {
+        struct ShapingTarget
+        {
+            juce::ComboBox* modeCombo;
+            juce::Slider* intensitySlider;
+            juce::Slider* syncSlider;
+            juce::Label* modeLabel;
+            juce::Label* intensityLabel;
+            juce::Label* syncLabel;
+            std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>* modeAttachment;
+            std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>* intensityAttachment;
+            std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>* syncAttachment;
+            const char* modeParam;
+            const char* intensityParam;
+            const char* syncParam;
+        };
+
+        const ShapingTarget shapingTargets[] =
+        {
+            { &osc1WaveModeCombo, &osc1IntensitySlider, &osc1SyncSlider,
+              &osc1WaveModeLabel, &osc1IntensityLabel, &osc1SyncLabel,
+              &osc1WaveModeAttachment, &osc1IntensityAttachment, &osc1SyncAttachment,
+              "osc1WaveMode", "osc1Intensity", "osc1Sync" },
+            { &osc2WaveModeCombo, &osc2IntensitySlider, &osc2SyncSlider,
+              &osc2WaveModeLabel, &osc2IntensityLabel, &osc2SyncLabel,
+              &osc2WaveModeAttachment, &osc2IntensityAttachment, &osc2SyncAttachment,
+              "osc2WaveMode", "osc2Intensity", "osc2Sync" },
+        };
+
+        for (const auto& t : shapingTargets)
+        {
+            for (int i = 0; i < PhaseShaper::numModes; ++i)
+                t.modeCombo->addItem(safeString(PhaseShaper::modeNames[i]), i + 1);
+
+            t.modeCombo->setSelectedId(PhaseShaper::Standard + 1);
+            t.modeCombo->setLookAndFeel(&customLookAndFeel);
+            t.modeCombo->setTooltip(safeString(
+                "How Intensity reshapes the waveform. Bend leans the cycle one way "
+                "or the other; Spectrum fades it towards a plain sine."));
+
+            *t.modeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+                audioProcessor.getValueTreeState(), t.modeParam, *t.modeCombo);
+
+            for (auto* slider : { t.intensitySlider, t.syncSlider })
+            {
+                slider->setSliderStyle(juce::Slider::RotaryVerticalDrag);
+                slider->setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+                slider->setNumDecimalPlacesToDisplay(2);
+                slider->setLookAndFeel(&customLookAndFeel);
+            }
+
+            t.intensitySlider->setTooltip(safeString(
+                "How far the Wave Mode bends the waveform. At zero the waveform is "
+                "untouched, whatever the mode says."));
+            t.syncSlider->setTooltip(safeString(
+                "Restarts the waveform several times per note -- the hard sync tear. "
+                "At zero the cycle runs once per note, as it always did."));
+
+            *t.intensityAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+                audioProcessor.getValueTreeState(), t.intensityParam, *t.intensitySlider);
+            *t.syncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+                audioProcessor.getValueTreeState(), t.syncParam, *t.syncSlider);
+
+            struct LabelSetup { juce::Label* label; const char* text; };
+
+            for (const auto& l : { LabelSetup{ t.modeLabel, "Wave Mode" },
+                                   LabelSetup{ t.intensityLabel, "Intensity" },
+                                   LabelSetup{ t.syncLabel, "Sync" } })
+            {
+                l.label->setText(safeString(l.text), juce::dontSendNotification);
+                l.label->setJustificationType(juce::Justification::centred);
+                l.label->setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+                l.label->setFont(customLookAndFeel.getBodyFont(12.0f, true));
+            }
+        }
+    }
     osc2WaveformCombo.setSelectedId(2);  // Default to Triangle
     if (auto* osc2WaveformParam = audioProcessor.getValueTreeState().getParameter("osc2Waveform"))
         osc2WaveformAttachment = std::make_unique<WaveformChoiceAttachment>(
@@ -6254,7 +6397,16 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // idle CPU went 1.9% -> 10.2% until this line was put back.
     setOpaque(true);
 
-    designHeight_ = 857 + (standaloneKeyboard != nullptr ? standaloneKeyboardHeight : 0);
+    // 857 became 920 when each oscillator gained a shaping row -- Wave Mode,
+    // Intensity and Sync. The whole UI is authored at this height and scaled to
+    // whatever the window is, so this is a change of proportion, not of pixels.
+    //
+    // 63 more and not a pixel further, deliberately. The shaping rows want about
+    // 160 and most of that comes out of oscHeightExtra, which moves room from the
+    // Filter box into the Oscillators box rather than making the plugin bigger.
+    // At 1000 the standalone opened 1052 tall, which fills a 1080-high screen
+    // top to bottom and leaves nowhere to put a DAW.
+    designHeight_ = 920 + (standaloneKeyboard != nullptr ? standaloneKeyboardHeight : 0);
 
     //==============================================================================
     // -- Make the editor resizable NOW (synchronously, in the ctor) --

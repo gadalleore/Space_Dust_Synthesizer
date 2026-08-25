@@ -434,6 +434,26 @@ add_custom_target(shapes-test
     COMMENT "Running oscillator shape tests")
 
 #==============================================================================
+# shaper-test — standalone check of Bend, Spectrum and Sync.
+# What makes these controls usable rather than merely present is checkable on
+# paper: turning Intensity to zero must give back the untouched phase, a bend
+# must never run backwards, the phase must stay inside the cycle, and full Sync
+# must fit exactly the expected number of cycles into one note. No JUCE.
+# Usage: cmake --build build --config Release --target shaper-test
+#==============================================================================
+add_executable(shaper_test
+    tools/shapertest/shaper_test.cpp)
+set_target_properties(shaper_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/shaper_test")
+target_compile_features(shaper_test PRIVATE cxx_std_17)
+target_include_directories(shaper_test PRIVATE Source)
+
+add_custom_target(shaper-test
+    COMMAND $<TARGET_FILE:shaper_test>
+    DEPENDS shaper_test
+    COMMENT "Running phase shaper tests")
+
+#==============================================================================
 # lfo-test — measures LFO fold-back (aliasing) across the rate range.
 # Pass "legacy" to the exe to evaluate the pre-band-limiting edges for comparison.
 # Usage: cmake --build build --config Release --target lfo-test

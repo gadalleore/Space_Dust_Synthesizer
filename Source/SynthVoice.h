@@ -9,6 +9,7 @@
 #include "RetargetableADSR.h" // juce::ADSR-faithful envelope + live release retargeting
 #include "SynthSound.h"   // Kept for build compatibility (some headers still include it indirectly)
 #include "OscillatorShapes.h" // The built-in shapes, shared with the Waveforms picture
+#include "PhaseShaper.h"      // Bend, Spectrum and Sync -- what is done to the phase
 #include "UserWavetable.h" // Imported samples played as oscillator waveforms
 #include <array>
 #include <numeric>
@@ -157,6 +158,25 @@ public:
     void setOsc1Waveform(int waveform);
     void setOsc2Waveform(int waveform);
 
+    /** Bend, Spectrum and Sync for one oscillator -- see PhaseShaper.h.
+
+        Set together because they are read together: the voice asks once per
+        block whether any of the three would change anything, and takes the old
+        plain path when none of them would. */
+    void setOsc1WaveShaping(int mode, float intensity, float sync) noexcept
+    {
+        osc1WaveMode = mode;
+        osc1Intensity = intensity;
+        osc1Sync = sync;
+    }
+
+    void setOsc2WaveShaping(int mode, float intensity, float sync) noexcept
+    {
+        osc2WaveMode = mode;
+        osc2Intensity = intensity;
+        osc2Sync = sync;
+    }
+
     /** Hand over the imported waveforms for this block.
 
         The bank is owned by the processor, which holds it for the whole of
@@ -295,9 +315,20 @@ private:
     double osc2Angle = 0.0;
     double osc2AngleDelta = 0.0;
     
-    // Waveform selection (0=Sine, 1=Triangle, 2=Saw, 3=Square)
+    // Waveform selection. 0..OscShape::numShapes-1 are the built-in shapes;
+    // anything at or above UserWave::oscUserBase is an imported slot.
     int osc1Waveform = Saw;
     int osc2Waveform = Saw;
+
+    // -- Wave Mode, Intensity and Sync --
+    // What is done to the PHASE before the waveform is read. Defaults do nothing,
+    // so a patch that never touches them behaves exactly as it always did.
+    int osc1WaveMode = PhaseShaper::Standard;
+    int osc2WaveMode = PhaseShaper::Standard;
+    float osc1Intensity = 0.0f;
+    float osc2Intensity = 0.0f;
+    float osc1Sync = 0.0f;
+    float osc2Sync = 0.0f;
     
     // -- Oscillator Pitch Tuning --
     // Each oscillator has independent coarse tuning (±24 semitones) and fine detuning (±50 cents)
@@ -701,8 +732,13 @@ private:
         that can play one passes its own; a built-in shape has no use for it and
         passes nothing.
     */
+    /** The shaping arguments default to doing nothing, so the sub oscillator and
+        the noise source -- which have no Bend, Intensity or Sync of their own --
+        call this exactly as they always did. */
     float generateWaveform(double angle, int waveform, const UserWaveSlot* userSlot,
-                           double freqHz, OneShotState* oneShot = nullptr);
+                           double freqHz, OneShotState* oneShot = nullptr,
+                           int waveMode = PhaseShaper::Standard,
+                           float intensity = 0.0f, float sync = 0.0f);
 
     /**
         Work out which imported waveform each source is set to, and what that does
