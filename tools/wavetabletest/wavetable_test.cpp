@@ -539,6 +539,222 @@ int main()
         check(WaveAnalysis::playbackPhaseScale(44100.0, 185.0, 0) == 1.0, "a zero loop length did not fall back to 1");
     }
 
+    // -- Start and end markers -------------------------------------------------
+    //
+    // What these are really guarding is a read off the end of a buffer on the
+    // audio thread. The interpolator reads one sample back and two forward, so
+    // every region below is checked against the buffer it says to allocate, at
+    // both ends, whatever the markers were dragged to.
+    std::printf("\nStart and end markers:\n");
+    {
+        const double rate = 48000.0;
+        const int fileLength = 48000;              // one second
+        const int maxPad = 48000 * 14;             // what is left of a fifteen second slot
+        const int guard = WaveAnalysis::interpolationGuard;
+
+        // Every region has to be safe to read from both ends, whichever way it
+        // is being read -- so this is asked of all of them rather than of one.
+        const auto checkReadable = [&](const WaveAnalysis::SampleRegion& r, const char* what)
+        {
+            const std::string name(what);
+
+            check(r.playStart - 1 >= 0, name + ": a one-shot reads before the buffer");
+            check(r.playStart + r.playLength + 2 <= r.bufferLength - 1,
+                  name + ": a one-shot reads past the buffer");
+
+            // The loop's crossfade reads a whole loopLength behind itself, which
+            // is the earliest position anything reaches.
+            check(r.loopStart - r.crossfade - 1 >= 0, name + ": the crossfade reads before the buffer");
+            check(r.loopStart + r.loopLength + 2 <= r.bufferLength - 1,
+                  name + ": the loop reads past the buffer");
+            check(r.loopLength > 0, name + ": nothing was left to play");
+        };
+
+        // -- No markers set: the whole file plays, exactly as it did before there
+        //    were markers at all.
+        {
+            const auto r = WaveAnalysis::regionForTrim(fileLength, rate, maxPad, 0, 0);
+
+            std::printf("  whole file: buffer %d, play %d..%d, loop %d..%d, fade %d\n",
+                        r.bufferLength, r.playStart, r.playStart + r.playLength,
+                        r.loopStart, r.loopStart + r.loopLength, r.crossfade);
+
+            check(r.padStart == 0, "an untouched sample was given silence in front");
+            check(r.trimStart == 0 && r.trimEnd == 0, "an untouched sample did not come back untouched");
+            check(r.bufferLength == guard + fileLength + guard, "the buffer was not the file plus its guards");
+            check(r.fileOffset == guard, "the file did not start after the guard");
+            check(r.playStart == guard, "a one-shot did not start at the first sample of the file");
+            check(r.playLength == fileLength, "a one-shot did not play the whole file");
+            check(r.crossfade == (int)(0.010 * rate), "the crossfade was not ten milliseconds");
+            check(r.loopStart == guard + r.crossfade, "the loop did not give up its front to the crossfade");
+            check(r.loopStart + r.loopLength == r.playStart + r.playLength,
+                  "the loop did not end where the sound ends");
+            checkReadable(r, "whole file");
+        }
+
+        // -- Trimmed at both ends. What plays is what is between the marks, and
+        //    the material outside them is still in the buffer to be dragged back.
+        {
+            const auto r = WaveAnalysis::regionForTrim(fileLength, rate, maxPad, 12000, 36000);
+
+            std::printf("  trimmed 0.25 s..0.75 s: play %d..%d of %d\n",
+                        r.playStart, r.playStart + r.playLength, r.bufferLength);
+
+            check(r.padStart == 0, "trimming inside the file added silence");
+            check(r.trimStart == 12000 && r.trimEnd == 36000, "the marks were not kept where they were put");
+            check(r.bufferLength == guard + fileLength + guard, "trimming shortened the buffer");
+            check(r.playStart == guard + 12000, "the sound did not start at the start marker");
+            check(r.playLength == 24000, "the sound was not the length between the marks");
+            checkReadable(r, "trimmed");
+        }
+
+        // -- The end marker at the very end is stored as "all of it", so a slot
+        //    whose sample is later replaced by a longer one still plays all of it.
+        {
+            const auto r = WaveAnalysis::regionForTrim(fileLength, rate, maxPad, 0, fileLength);
+            check(r.trimEnd == 0, "an end marker at the end of the file was not stored as the end");
+        }
+
+        // -- Silence in front. This is the whole point of a signed start marker:
+        //    the sound begins where the marker says, and there is nothing there
+        //    until it does.
+        {
+            const auto r = WaveAnalysis::regionForTrim(fileLength, rate, maxPad, -24000, 0);
+
+            std::printf("  0.5 s of silence first: buffer %d, play %d..%d\n",
+                        r.bufferLength, r.playStart, r.playStart + r.playLength);
+
+            check(r.padStart == 24000, "the silence asked for was not made");
+            check(r.trimStart == -24000, "the start marker was not kept where it was put");
+            check(r.fileOffset == guard + 24000, "the file did not start after the silence");
+            check(r.bufferLength == guard + 24000 + fileLength + guard, "the buffer did not grow by the silence");
+            check(r.playStart == guard, "the sound did not start at the head of the silence");
+            check(r.playLength == 24000 + fileLength, "the silence was not played as part of the sound");
+            checkReadable(r, "with silence");
+        }
+
+        // -- Silence after the file. The other half of the same idea: the sound
+        //    stops where the marker says, and a key goes on sounding past the end
+        //    of the recording until it does.
+        {
+            const auto r = WaveAnalysis::regionForTrim(fileLength, rate, maxPad, 0, fileLength + 24000);
+
+            std::printf("  0.5 s of silence after: buffer %d, play %d..%d\n",
+                        r.bufferLength, r.playStart, r.playStart + r.playLength);
+
+            check(r.padEnd == 24000, "the trailing silence asked for was not made");
+            check(r.padStart == 0, "trailing silence put silence at the front as well");
+            check(r.trimEnd == fileLength + 24000, "the end marker was not kept where it was put");
+            check(r.fileOffset == guard, "trailing silence moved the file");
+            check(r.bufferLength == guard + fileLength + 24000 + guard,
+                  "the buffer did not grow by the trailing silence");
+            check(r.playStart == guard, "trailing silence moved the start of the sound");
+            check(r.playLength == fileLength + 24000, "the trailing silence was not played");
+            checkReadable(r, "trailing silence");
+        }
+
+        // -- Silence at both ends at once, around a trimmed middle.
+        {
+            const auto r = WaveAnalysis::regionForTrim(fileLength, rate, maxPad,
+                                                       -6000, fileLength + 9000);
+
+            check(r.padStart == 6000, "silence at both ends lost the leading silence");
+            check(r.padEnd == 9000, "silence at both ends lost the trailing silence");
+            check(r.playLength == 6000 + fileLength + 9000, "silence at both ends lost length");
+            check(r.bufferLength == guard + 6000 + fileLength + 9000 + guard,
+                  "the buffer did not hold silence at both ends");
+            checkReadable(r, "silence both ends");
+        }
+
+        // -- Silence and a trimmed end together.
+        {
+            const auto r = WaveAnalysis::regionForTrim(fileLength, rate, maxPad, -6000, 30000);
+
+            check(r.padStart == 6000, "silence and an end marker together lost the silence");
+            check(r.padEnd == 0, "an end marker inside the file added trailing silence");
+            check(r.playLength == 6000 + 30000, "silence and an end marker together lost the length");
+            checkReadable(r, "silence and end");
+        }
+
+        // -- More silence than the slot has room for: clamped, not refused. The
+        //    two ends share one allowance, so the second one to ask gets what the
+        //    first one left.
+        {
+            const auto r = WaveAnalysis::regionForTrim(fileLength, rate, 5000, -100000, 0);
+
+            std::printf("  silence past the cap: asked 100000, got %d\n", r.padStart);
+            check(r.padStart == 5000, "silence was not clamped to what the slot had room for");
+            check(r.trimStart == -5000, "the clamped marker was not written back");
+            checkReadable(r, "silence clamped");
+
+            const auto tail = WaveAnalysis::regionForTrim(fileLength, rate, 5000, 0, fileLength + 100000);
+            check(tail.padEnd == 5000, "trailing silence was not clamped to the room available");
+            check(tail.trimEnd == fileLength + 5000, "the clamped end marker was not written back");
+            checkReadable(tail, "trailing silence clamped");
+
+            const auto shared = WaveAnalysis::regionForTrim(fileLength, rate, 5000,
+                                                            -4000, fileLength + 4000);
+            check(shared.padStart + shared.padEnd <= 5000,
+                  "the two ends between them took more silence than the slot had room for");
+            checkReadable(shared, "shared allowance");
+        }
+
+        // -- Markers dragged together, or set beyond the file. A marker outlives
+        //    the sample it was set on, so nonsense has to come back as something
+        //    playable rather than as an empty slot.
+        {
+            const auto together = WaveAnalysis::regionForTrim(fileLength, rate, maxPad, 20000, 20001);
+            check(together.playLength >= WaveAnalysis::minPlayLength,
+                  "marks dragged together left less than the floor");
+            checkReadable(together, "marks together");
+
+            const auto crossed = WaveAnalysis::regionForTrim(fileLength, rate, maxPad, 30000, 10000);
+            check(crossed.playLength >= WaveAnalysis::minPlayLength, "crossed marks left nothing to play");
+            checkReadable(crossed, "crossed marks");
+
+            const auto pastEnd = WaveAnalysis::regionForTrim(fileLength, rate, maxPad, fileLength + 5000, 0);
+            check(pastEnd.trimStart <= fileLength - WaveAnalysis::minPlayLength,
+                  "a start marker past the end of the file was not brought back");
+            checkReadable(pastEnd, "start past the end");
+
+            const auto pastFile = WaveAnalysis::regionForTrim(fileLength, rate, maxPad, 0, fileLength + 5000);
+            check(pastFile.playStart + pastFile.playLength <= pastFile.bufferLength - guard,
+                  "an end marker past the end of the file read past the file");
+            checkReadable(pastFile, "end past the file");
+        }
+
+        // -- Feeding a region's own marks back in must not move them. The slot
+        //    writes them back and is rebuilt from them on every load, so a region
+        //    that drifted would creep every time a song was opened.
+        {
+            const int starts[] = { 0, 12000, -24000, -100000, fileLength + 5000 };
+            const int ends[] = { 0, 36000, 20001, fileLength, fileLength + 24000,
+                                 fileLength + 100000 };
+
+            for (int s : starts)
+            {
+                for (int e : ends)
+                {
+                    const auto once = WaveAnalysis::regionForTrim(fileLength, rate, maxPad, s, e);
+                    const auto twice = WaveAnalysis::regionForTrim(fileLength, rate, maxPad,
+                                                                  once.trimStart, once.trimEnd);
+
+                    check(once.trimStart == twice.trimStart && once.trimEnd == twice.trimEnd
+                              && once.playStart == twice.playStart && once.playLength == twice.playLength,
+                          "a region moved when it was worked out again from its own marks");
+                }
+            }
+
+            std::printf("  marks are stable when fed back in\n");
+        }
+
+        // -- A file too short to play at all.
+        {
+            const auto r = WaveAnalysis::regionForTrim(16, rate, maxPad, 0, 0);
+            check(r.loopLength == 0 && r.bufferLength == 0, "a file too short to play produced a region");
+        }
+    }
+
     // -- Pitch naming ----------------------------------------------------------
     std::printf("\nPitch naming:\n");
     {

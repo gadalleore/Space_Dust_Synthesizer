@@ -23,6 +23,7 @@
 #include "SpaceDustTransient.h"
 #include "SpaceDustFinalEQ.h"
 #include "PresetHotReload.h"
+#include "ResampleCapture.h"
 
 //==============================================================================
 /**
@@ -189,6 +190,71 @@ public:
     // continuous L and R output history so the scope can draw both channels over a
     // long window without stitching non-adjacent blocks together.
     void readScopeSamples(float* destL, float* destR, int numSamples) const;
+
+    //==============================================================================
+    // -- Resample --
+    // The Waveforms window's Resample button: the synth plays itself a middle C
+    // and keeps what comes out of the whole chain. Nothing has to be held down.
+    // See ResampleCapture for how a recording starts, ends and changes hands.
+
+    /** Ask for a recording. It starts at the top of the next audio block and runs
+        until the sound has died away, so this returns at once and the caller has
+        to wait for isResampleRecording() to go false. False here means one is
+        already running, or that audio has never been prepared. */
+    bool startResampleRecording() { return resampleCapture.arm(); }
+
+    bool isResampleRecording() const noexcept { return resampleCapture.isBusy(); }
+
+    /** How far the recording has got, 0 to 1, for the bar the player watches. */
+    float getResampleProgress() const noexcept { return resampleCapture.progress(); }
+
+    /** Take the finished recording, mono, ready to be built into a waveform slot.
+        False while one is still running, and false when it holds no sound.
+
+        stoppedByLength says the tail was still sounding when the recording ran
+        out of room -- see ResampleCapture::take. */
+    bool takeResampleRecording(std::vector<float>& mono, double& sampleRate,
+                               bool& stoppedByLength)
+    {
+        return resampleCapture.take(mono, sampleRate, stoppedByLength);
+    }
+
+    /** Give up on a recording that can never finish, because the host has stopped
+        calling processBlock. */
+    void cancelResampleRecording() { resampleCapture.cancel(); }
+
+    //==============================================================================
+    // -- Where an imported sample has got to --
+    // Drives the playhead in the Waveforms window. Cleared at the top of every
+    // block and written by whichever voices are reading a slot, so it empties by
+    // itself the moment nothing is playing one -- no note-off to catch, no timer
+    // to expire. With a chord down it shows one of the voices; there is one line
+    // and there is nothing to choose between them.
+
+    /** Whether the Waveforms window is open and watching. Nothing is published
+        while it is not, so a shut window costs the audio thread nothing. */
+    void setUserWavePhaseWanted(bool wanted) noexcept
+    {
+        userWavePhaseWanted.store(wanted, std::memory_order_relaxed);
+    }
+
+    bool isUserWavePhaseWanted() const noexcept
+    {
+        return userWavePhaseWanted.load(std::memory_order_relaxed);
+    }
+
+    /** Audio thread: say how far through its sample this source is, 0 to 1. */
+    void publishUserWavePhase(UserWave::Group group, float phase01) noexcept
+    {
+        userWavePhase[(int) group].store(phase01, std::memory_order_relaxed);
+    }
+
+    /** Message thread: how far through, or a negative number when this list's
+        sample is not being read by anything. */
+    float getUserWavePhase(UserWave::Group group) const noexcept
+    {
+        return userWavePhase[(int) group].load(std::memory_order_relaxed);
+    }
 
     // Update all voices with current parameter values (called after preset load)
     void updateVoicesWithParameters(float lfo1Modulation = 0.0f, float lfo2Modulation = 0.0f);
@@ -381,6 +447,20 @@ private:
     std::array<float, scopeFifoSize> scopeFifoL{};
     std::array<float, scopeFifoSize> scopeFifoR{};
     std::atomic<int> scopeFifoWritePos{0};
+
+    // -- Resample --
+    // Far longer than the three FIFOs above, because this one is not read to draw
+    // the last few milliseconds but to take a whole note back in as a waveform.
+    // Sized in prepareToPlay to hold as many seconds as a waveform slot can.
+    ResampleCapture resampleCapture;
+
+    /** How far through its sample each of the five lists is, or -1 for one that
+        nothing is reading. See publishUserWavePhase. */
+    std::atomic<float> userWavePhase[UserWave::numGroups] {};
+
+    /** Whether anything is watching the above. Read once per block and once per
+        voice, so the whole mechanism switches off with the window that uses it. */
+    std::atomic<bool> userWavePhaseWanted { false };
     
     // -- Helper Methods --
     

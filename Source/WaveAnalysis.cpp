@@ -604,6 +604,72 @@ double playbackPhaseScale (double fileSampleRate, double rootHz, int loopLength)
 }
 
 //==============================================================================
+SampleRegion regionForTrim (int fileLength, double sampleRate, int maxPad,
+                            int trimStart, int trimEnd)
+{
+    SampleRegion region;
+
+    if (fileLength < minPlayLength || sampleRate <= 0.0)
+        return region;
+
+    const auto clampInt = [] (int value, int low, int high)
+    {
+        return value < low ? low : (value > high ? high : value);
+    };
+
+    // Silence outside the file is what a marker dragged off either end means:
+    // there is nothing behind the first sample of a recording or after its last
+    // one to reach for, so the only thing a marker can offer out there is
+    // silence. The two shares come out of one allowance, front first.
+    const int room = std::max (0, maxPad);
+    const int padStart = clampInt (trimStart < 0 ? -trimStart : 0, 0, room);
+    const int padEnd = clampInt (trimEnd > fileLength ? trimEnd - fileLength : 0,
+                                 0, room - padStart);
+
+    // The first file sample played. Held back from the very end so there is
+    // always somewhere for the end marker to be.
+    const int first = clampInt (std::max (0, trimStart), 0, fileLength - minPlayLength);
+
+    // Zero, or anything at or before the start, means the end of the file -- see
+    // SampleRegion::trimEnd. That is what a slot with no markers set has, and it
+    // is also where a marker dragged out past the file sits: the file runs to its
+    // end and the silence carries on from there.
+    int last = (trimEnd > first && trimEnd <= fileLength) ? trimEnd : fileLength;
+    last = std::max (last, first + minPlayLength);
+
+    region.padStart = padStart;
+    region.padEnd = padEnd;
+    region.trimStart = padStart > 0 ? -padStart : first;
+    region.trimEnd = padEnd > 0 ? fileLength + padEnd
+                                : (last >= fileLength ? 0 : last);
+
+    region.fileOffset = interpolationGuard + padStart;
+    region.bufferLength = interpolationGuard + padStart + fileLength + padEnd
+                        + interpolationGuard;
+
+    // One expression covers every way round, because the cases cannot overlap: a
+    // start marker in front of the file has first at 0, an end marker past it has
+    // last at fileLength, and a marker inside the file adds no silence at its
+    // own end. So the region begins at the head of the front silence, or at the
+    // start marker, and runs to the end marker or through the trailing silence.
+    region.playStart = interpolationGuard + first;
+    region.playLength = padStart + (last - first) + padEnd;
+
+    // The crossfade comes out of the FRONT of the region, so the loop has real
+    // material to fade into -- the samples immediately before it, which are the
+    // trimmed-off head of the file, or the silence, or the guard. Never out of
+    // the back: the end marker is where the sound is meant to stop.
+    int fade = (int) (0.010 * sampleRate);
+    fade = clampInt (fade, 0, (region.playLength - 16) / 4);
+
+    region.crossfade = fade;
+    region.loopStart = region.playStart + fade;
+    region.loopLength = region.playLength - fade;
+
+    return region;
+}
+
+//==============================================================================
 double semitonesFromMiddleC (double freqHz)
 {
     if (freqHz <= 0.0)

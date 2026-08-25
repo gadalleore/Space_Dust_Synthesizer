@@ -259,6 +259,34 @@ public:
 private:
     SpaceDustSynthesiser* synthesiser = nullptr;
     SpaceDustAudioProcessor* processor = nullptr;  // Pointer to processor for LFO buffer access
+
+    //==============================================================================
+    /** Where a NON-LOOPING sample has got to.
+
+        A Full Sample slot with its loop turned off plays once and then stops, but
+        the thing that reads it is a phase that turns over for ever -- the same
+        phase that gives a sine its pitch. So the turn has to be COUNTED, and the
+        only place that can see one is where the phase is read: an angle that
+        comes back smaller than the last one has just come round.
+
+        Kept per oscillator rather than per voice because the two oscillators, the
+        sub and the noise source can each be playing a different slot at a
+        different pitch, so they come round at different moments. Reset when a note
+        starts, which is the same moment the phase itself is reset. */
+    struct OneShotState
+    {
+        double previousPhase = 0.0;
+        bool finished = false;
+
+        void reset() noexcept
+        {
+            previousPhase = 0.0;
+            finished = false;
+        }
+    };
+
+    OneShotState osc1OneShot, osc2OneShot, subOscOneShot, noiseOneShot;
+
     //==============================================================================
     // -- Oscillator State --
     double osc1Angle = 0.0;
@@ -667,8 +695,13 @@ private:
         freqHz is the pitch this oscillator is sounding at, and decides how much
         bandwidth an imported waveform may use before it would fold back. It is
         ignored by the built-in shapes.
+
+        oneShot is where a NON-LOOPING sample keeps its place. Every oscillator
+        that can play one passes its own; a built-in shape has no use for it and
+        passes nothing.
     */
-    float generateWaveform(double angle, int waveform, const UserWaveSlot* userSlot, double freqHz);
+    float generateWaveform(double angle, int waveform, const UserWaveSlot* userSlot,
+                           double freqHz, OneShotState* oneShot = nullptr);
 
     /**
         Work out which imported waveform each source is set to, and what that does

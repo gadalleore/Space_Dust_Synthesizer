@@ -203,6 +203,89 @@ namespace WaveAnalysis
     double playbackPhaseScale (double fileSampleRate, double rootHz, int loopLength);
 
     //==========================================================================
+    // -- Where a whole sample plays from --
+    //
+    // A whole-sample slot has two markers on it: the start and the end of the
+    // sound inside the file. Nothing is cut when they move -- the slot keeps the
+    // whole file -- so where they stand and what gets read are two different
+    // things, and turning the first into the second is the arithmetic below.
+    //
+    // It is here, and not with the slot, because getting it wrong is not a
+    // slightly wrong sound: the interpolator reads one sample back and two
+    // forward, so a region that reaches an interpolationGuard too far reads off
+    // the end of a buffer on the audio thread. That has a right answer, it can be
+    // checked against known numbers, and so it is checked -- see
+    // tools/wavetabletest/wavetable_test.cpp.
+
+    /** Samples kept clear at each end of a whole-sample buffer, for the four-point
+        interpolator to read into. */
+    inline constexpr int interpolationGuard = 3;
+
+    /** Shortest region the two markers may leave between them. Well under a
+        millisecond at any rate, so it is a floor nobody can feel -- it is there
+        so that dragging the markers together cannot leave a slot with no sound in
+        it at all, which would drop the waveform out of the list. */
+    inline constexpr int minPlayLength = 64;
+
+    /** What a pair of markers works out to.
+
+        Positions are indices into the slot's BUFFER, which is not the file:
+
+            [ guard ][ padStart ][ the whole file ][ padEnd ][ guard ]
+
+        so file sample n lives at fileOffset + n, and the silence either marker
+        asked for lives outside it. */
+    struct SampleRegion
+    {
+        /** How long the buffer holding the sample has to be. */
+        int bufferLength = 0;
+
+        /** Where file sample 0 sits in it, and how much silence is on each side.
+
+            The two shares of silence come out of one allowance -- it is all
+            stored as samples, and a slot holds fifteen seconds of them however
+            they are divided up. */
+        int fileOffset = 0;
+        int padStart = 0;
+        int padEnd = 0;
+
+        /** The markers as they were asked for, brought inside what this file can
+            offer. trimEnd comes back as 0 when it is exactly the end of the file,
+            which is how "all of it" is stored. */
+        int trimStart = 0;
+        int trimEnd = 0;
+
+        /** What a one-shot reads: the silence, then the file between the markers. */
+        int playStart = 0;
+        int playLength = 0;
+
+        /** What a looping slot reads, and the overlap that hides the seam. The
+            loop gives up the front of the region so the crossfade at its end has
+            real material to fade into. */
+        int loopStart = 0;
+        int loopLength = 0;
+        int crossfade = 0;
+    };
+
+    /** Work out the region a pair of markers describes.
+
+        Either marker may be dragged OFF the file, and there it means silence:
+        trimStart below zero is silence in front of the recording, and trimEnd
+        past fileLength is silence after it. Both are the same idea -- the sound
+        starts and stops where the marker says, and there is nothing there until
+        it does, or after it has. Inside the file they are ordinary positions:
+        trimEnd is one past the last file sample played, and zero -- or anything
+        at or before the start -- means the end of the file.
+
+        Everything is clamped rather than refused: markers outlive the sample they
+        were set on, so a start past the end of a shorter file stops at the end of
+        it instead of producing nothing. maxPad is the silence the slot has room
+        for IN ALL, shared between the two ends. An empty region comes back for a
+        file too short to play. */
+    SampleRegion regionForTrim (int fileLength, double sampleRate, int maxPad,
+                                int trimStart, int trimEnd);
+
+    //==========================================================================
     /** Semitones from middle C to freqHz, positive for higher. Fractional: .5 is
         a quarter tone. Returns 0 for a non-positive frequency. */
     double semitonesFromMiddleC (double freqHz);

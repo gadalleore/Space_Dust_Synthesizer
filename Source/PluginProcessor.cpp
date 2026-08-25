@@ -926,7 +926,13 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         goniometerBuffer[1].clear();
         goniometerValidSamples.store(0, std::memory_order_release);
         goniometerReadIndex.store(0);
-        
+
+        // Resample history: as many seconds as a waveform slot can hold, because
+        // that is the most Resample could ever hand to one. Allocated here, on the
+        // message thread, and never from processBlock.
+        resampleCapture.prepare(sampleRate, UserWave::maxSampleSeconds);
+
+
         DBG("Space Dust: prepareToPlay - Step 4: Sample rate set to " + safeStringFromNumber(sampleRate));
     }
     catch (const std::exception& e)
@@ -1563,6 +1569,65 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // how we keep the behaviour exclusive to the Standalone build.
     if (wrapperType == wrapperType_Standalone)
         keyboardState.processNextMidiBuffer(midiMessages, 0, numSamples, true);
+
+    //==============================================================================
+    // -- Resample: the synth plays itself a middle C --
+    // Put into the MIDI stream here, after every other source of notes and before
+    // the synth reads it, so the note is rendered by this very block -- the same
+    // block whose output the recorder begins keeping at the bottom of this
+    // function. Nothing is scheduled, waited for, or timed on the message thread.
+    // Cleared before the voices render, and written by any of them that is reading
+    // an imported sample. A list nothing is playing is therefore left at -1, which
+    // is what takes the playhead off the Waveforms window when a note ends.
+    //
+    // Only while that window is open to look at it. Shut, this whole mechanism --
+    // here and in every voice -- does not run.
+    if (isUserWavePhaseWanted())
+        for (auto& phase : userWavePhase)
+            phase.store(-1.0f, std::memory_order_relaxed);
+
+    const bool resampleStarting = resampleCapture.startsThisBlock();
+
+    if (resampleStarting || resampleCapture.isRecording())
+    {
+        // The keyboard is LOCKED while a recording runs.
+        //
+        // Every note reaching the synth is rendered into the very output being
+        // recorded, so a key pressed while the bar is filling ends up inside the
+        // waveform -- and it is pressed for exactly that reason, because nothing
+        // can be heard and the player is checking whether anything is happening.
+        //
+        // Dropped, not held back: a note played during a recording is not a note
+        // anybody meant to sound three seconds later. This catches the host's
+        // MIDI, the arrangement's and the on-screen keyboard's alike, because all
+        // three have already been merged into this one buffer by now.
+        midiMessages.clear();
+    }
+
+    if (resampleStarting)
+    {
+        // Whatever was sounding is cut first, so the recording is of this note and
+        // of nothing else. Hard, not with a tail: a release ringing on underneath
+        // is exactly what this is meant to keep out of the recording.
+        //
+        // MPE: juce::MPESynthesiser spells allNotesOff(0, allowTailOff) as
+        // turnOffAllVoices(allowTailOff), the same as releaseResources uses.
+        synth.turnOffAllVoices(false);
+        synth.resetNoteState();
+
+        midiMessages.addEvent(juce::MidiMessage::noteOn(1, Resample::middleC,
+                                                        static_cast<juce::uint8>(Resample::velocity)), 0);
+    }
+
+    // Letting the note go again. Asked of the recorder rather than counted here,
+    // so the rule lives in one testable place -- and asked unconditionally, so a
+    // recording that has been given up on still gets its note-off instead of
+    // leaving middle C held down for good.
+    int resampleReleaseAt = 0;
+
+    if (resampleCapture.releaseThisBlock(numSamples, resampleReleaseAt))
+        midiMessages.addEvent(juce::MidiMessage::noteOff(1, Resample::middleC),
+                              resampleReleaseAt);
 
     juce::ScopedNoDenormals noDenormals;
     auto totalNumInputChannels  = getTotalNumInputChannels();
@@ -2936,7 +3001,25 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             swp = (swp + 1) & (scopeFifoSize - 1);
         }
         scopeFifoWritePos.store(swp, std::memory_order_release);
+
+        // -- Resample --
+        // Does nothing unless a recording is running. Written here, at the very
+        // end of the chain, so what Resample keeps is exactly what the player
+        // would have heard -- every effect, the master volume, all of it.
+        resampleCapture.write(L, R, numSamples);
     }
+
+    //==============================================================================
+    // -- Resample: heard by the recorder, and by nobody else --
+    // The note is played into the chain and taken out of it again here, after the
+    // recorder and after every meter and scope -- so the picture on the panel
+    // still moves while the recording is made, and the speakers stay silent.
+    //
+    // Last of all, so nothing downstream can put it back. isRecording() is already
+    // false on the block a recording ends in, but a recording ends BECAUSE the
+    // sound has died away, so the block let through is a block of silence.
+    if (resampleCapture.isRecording())
+        buffer.clear();
 }
 
 //==============================================================================

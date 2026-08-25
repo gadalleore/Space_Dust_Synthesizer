@@ -1,4 +1,4 @@
-#include "SynthVoice.h"
+﻿#include "SynthVoice.h"
 #include "SpaceDustSynthesiser.h"
 #include "PluginProcessor.h"
 #include "MemorySafetyLogger.h"
@@ -28,7 +28,7 @@ namespace
 #endif
 
 //==============================================================================
-// CLICK DEBUG — set to 1 to capture, per note-start and per detected click, the
+// CLICK DEBUG â€” set to 1 to capture, per note-start and per detected click, the
 // voice allocation path + filter/envelope state to Documents\SpaceDust_ClickDebug.txt.
 // Used to pin the "Sunset Beach" persistent snap. Default 0 (compiled out for release).
 #ifndef SPACEDUST_CLICK_DEBUG
@@ -40,7 +40,7 @@ namespace
 {
     // Append one line to Documents\SpaceDust_ClickDebug.txt. Bounded so a long
     // session can't grow without limit. Truncates once on first use. Not strictly
-    // RT-safe (file I/O on the audio thread) — fine for a focused debug build; the
+    // RT-safe (file I/O on the audio thread) â€” fine for a focused debug build; the
     // per-note + throttled-click rate keeps the write volume low.
     void clickDbgLog(const juce::String& line)
     {
@@ -124,7 +124,7 @@ void SynthVoice::noteStarted()
     // currentlyPlayingNote is set by MPESynthesiser::startVoice() before this call.
     //   initialNote                       : MIDI note number 0..127
     //   noteOnVelocity.asUnsignedFloat()  : 0..1 velocity
-    //   totalPitchbendInSemitones         : signed double — combined master +
+    //   totalPitchbendInSemitones         : signed double â€” combined master +
     //                                       per-note pitch bend in semitones,
     //                                       already weighted by the active zone
     //                                       (or legacy-mode) bend range.
@@ -189,7 +189,7 @@ void SynthVoice::noteStarted()
     // is the single source of truth for both the master pitch wheel AND the per-note
     // MPE bend.  For mono/legato voice handoff we deliberately KEEP the existing
     // mpeBendSemitones value (don't reset to 0) so the wheel doesn't snap on legato
-    // overlaps — MPESynthesiser will fire notePitchbendChanged() if it actually
+    // overlaps â€” MPESynthesiser will fire notePitchbendChanged() if it actually
     // changed.
 
     // Target pitch: MIDI note frequency (base frequency, tuning applied in renderNextBlock)
@@ -251,7 +251,7 @@ void SynthVoice::noteStarted()
     // Behaviour:
     // - Legato Glide ON  (legatoGlideEnabled = true):
     //     * In Mono OR Legato voice mode: glide ONLY on overlapping notes
-    //       (isLegatoNote == true)  → classic "fingered glide" / portamento
+    //       (isLegatoNote == true)  â†’ classic "fingered glide" / portamento
     //     * In Poly mode: always glide when glide time > 0 (no overlap concept)
     // - Legato Glide OFF (legatoGlideEnabled = false):
     //     * Glide applies to every note change whenever glideTimeSeconds > 0
@@ -278,7 +278,7 @@ void SynthVoice::noteStarted()
     }
 
     // Poly mode only: when this voice has no valid currentPitch yet, use max pitch from other
-    // voices for glide "from". Mono/Legato must NEVER use that — it picked another voice's Hz
+    // voices for glide "from". Mono/Legato must NEVER use that â€” it picked another voice's Hz
     // and caused random detuning on every note change (regression from aggressive pitch resync).
     const bool allowCrossVoiceGlideFrom = (voiceMode == 0);
 
@@ -286,7 +286,7 @@ void SynthVoice::noteStarted()
                                   (double fallBackTarget) -> double
     {
         double fromPitch = currentPitch;
-        // Poly mode: don't reuse currentPitch when the voice was idle — that voice
+        // Poly mode: don't reuse currentPitch when the voice was idle â€” that voice
         // might have last played a completely unrelated note.
         if (!wasVoiceActive && voiceMode == 0)
             fromPitch = 0.0;
@@ -324,7 +324,7 @@ void SynthVoice::noteStarted()
             const double fromPitch = computeGlideFromPitch(targetPitch);
             if (fromPitch > 0.0 && std::abs(fromPitch - targetPitch) > 0.01)
             {
-                // Anti-click: legato with no user glide — tiny 3ms auto-glide
+                // Anti-click: legato with no user glide â€” tiny 3ms auto-glide
                 currentPitch = fromPitch;
                 const double samplesToGlide = 0.003 * sampleRate;
                 glideDelta = (targetPitch - currentPitch) / samplesToGlide;
@@ -359,7 +359,7 @@ void SynthVoice::noteStarted()
     }
     else if (isMonoRetrigger && currentPitch > 0.0 && std::abs(currentPitch - targetPitch) > 0.01)
     {
-        // Anti-click: mono retrigger with no user glide — apply a tiny 3ms auto-glide
+        // Anti-click: mono retrigger with no user glide â€” apply a tiny 3ms auto-glide
         // to prevent the abrupt frequency change that causes clicks at low frequencies.
         // 3ms is imperceptible as a glide but smooths the waveform transition.
         const double samplesToGlide = 0.003 * sampleRate;
@@ -386,7 +386,7 @@ void SynthVoice::noteStarted()
     // - Poly voice steal (chord change while previous notes are still sounding):
     //   Hard-resetting phases + zeroing smoothers on a voice that was contributing
     //   audio is the root cause of the observed polarity-flip clicks at beat-grid
-    //   aligned chord transitions (see the two-step noteStopped(false) →
+    //   aligned chord transitions (see the two-step noteStopped(false) â†’
     //   noteStarted() sequence that defeats the voiceFade).
     //   We now:
     //     * Leave any pending voiceFade running.
@@ -401,6 +401,20 @@ void SynthVoice::noteStarted()
     // because raw filterAdsr jumps into the log-space cutoff math were perturbing
     // the StateVariableTPTFilter internal state (especially at high resonance).
     const bool shouldHardResetForPoly = !isMonoRetrigger && !isPolySteal;
+
+    // A non-looping sample starts again on every note, by every path into this
+    // function -- a fresh voice, a stolen one, a mono retrigger. A note that is
+    // played is a note that is meant to be heard, and a one-shot that stayed
+    // finished from the last note would answer it with silence.
+    //
+    // Above the branch, because only one of the three paths resets the phases and
+    // the other two carry on from wherever theirs are. Zero is a safe place to
+    // start counting from either way: a phase is never below it, so the first
+    // sample after this can never be mistaken for a turn.
+    osc1OneShot.reset();
+    osc2OneShot.reset();
+    subOscOneShot.reset();
+    noiseOneShot.reset();
 
     if (shouldHardResetForPoly)
     {
@@ -431,8 +445,8 @@ void SynthVoice::noteStarted()
         modFilter2.reset();
         // CRITICAL: also clear the filter OVERSAMPLERS. filter.reset() only zeroes the
         // SVF state; the oversampler keeps a ~17-sample FIR history of the PREVIOUS note.
-        // Left un-reset, a fresh voice's first samples convolve out that stale tail —
-        // a step from 0 to ±0.1+ at note-start while the amp envelope is still 0 (the
+        // Left un-reset, a fresh voice's first samples convolve out that stale tail â€”
+        // a step from 0 to Â±0.1+ at note-start while the amp envelope is still 0 (the
         // "Sunset Beach" snap; loudest on fast playing, which leaves big residue in the FIR).
         masterFilterOS.reset();
         oscOsc12OS.reset(); oscSubOS.reset();
@@ -497,7 +511,7 @@ void SynthVoice::noteStarted()
             // (smoothedEnvelope still holds the last sample of the previous note.)
             // The filter's resonant / self-osc output is NOT gated by the amplitude
             // envelope, so a still-loud previous note means the filter is ringing at
-            // an AUDIBLE level — and you cannot move that ring abruptly without an
+            // an AUDIBLE level â€” and you cannot move that ring abruptly without an
             // artifact: resetting it steps the output to zero (POP), and snapping its
             // cutoff jumps the resonant peak to a new frequency (CLICK, worst with
             // key-tracking, where every note has a different cutoff).
@@ -528,8 +542,8 @@ void SynthVoice::noteStarted()
             else
             {
                 // Previous note still loud (long Release + fast "running bass"). Leave
-                // the ringing filter running (no reset → no pop) and move the cutoff
-                // GENTLY to the new note via the slow-slew window (no snap → no click).
+                // the ringing filter running (no reset â†’ no pop) and move the cutoff
+                // GENTLY to the new note via the slow-slew window (no snap â†’ no click).
                 // A smooth filter glide between crashing notes instead of an abrupt
                 // peak jump. snapFilterCutoffOnNote stays false here.
                 postStealCutoffSlowdownSamples = kPostStealCutoffSlowdownLength;
@@ -558,11 +572,11 @@ void SynthVoice::noteStarted()
 void SynthVoice::noteStopped(bool allowTailOff)
 {
     // MPE replacement for juce::SynthesiserVoice::stopNote(velocity, allowTailOff).
-    // The semantics are identical: allowTailOff=true → release the envelope normally;
-    // allowTailOff=false → hard stop (we apply a short voice fade to avoid clicks).
+    // The semantics are identical: allowTailOff=true â†’ release the envelope normally;
+    // allowTailOff=false â†’ hard stop (we apply a short voice fade to avoid clicks).
 
     // Memory-safety logger: voice stop. Only log when the voice was actually
-    // active — turnOffAllVoices()/prepare sweeps call noteStopped() on every
+    // active â€” turnOffAllVoices()/prepare sweeps call noteStopped() on every
     // voice including idle ones, which previously flooded the log with thousands
     // of redundant "HARD" entries per transport edge.
     if (isActive)
@@ -575,7 +589,7 @@ void SynthVoice::noteStopped(bool allowTailOff)
     }
 
     // Preserving-voice / legato handoff: noteStarted follows immediately inside
-    // MPESynthesiser::startVoice.  Do NOT start a fade or touch ADSR — just
+    // MPESynthesiser::startVoice.  Do NOT start a fade or touch ADSR â€” just
     // clear the currentlyPlayingNote so the synth can reassign.  The voice keeps
     // producing audio with all DSP state intact (oscillator phases, ADSR level,
     // filter).  This is the standard JUCE mono/legato approach.
@@ -599,7 +613,7 @@ void SynthVoice::noteStopped(bool allowTailOff)
     {
         // Hard stop (turnOffAllVoices, voice stealing, etc.): start a short linear
         // fade-out instead of instantly killing the signal.  The voice keeps
-        // running with all DSP intact while voiceFade ramps 1→0.  Only when
+        // running with all DSP intact while voiceFade ramps 1â†’0.  Only when
         // it reaches zero does renderNextBlock do the full cleanup.
         voiceFade = 1.0f;
         voiceFadeSamplesRemaining = kVoiceFadeLength;
@@ -614,10 +628,10 @@ void SynthVoice::forceFadeOut()
         return;
 
     // Mono/Legato single-voice guarantee: this is a STRAY voice (e.g. a long
-    // release left over from a previous note or a poly→mono switch) that must
+    // release left over from a previous note or a polyâ†’mono switch) that must
     // not keep ringing under the new note.  Bypass the legato/preserve handoff
     // (we are NOT reusing this voice) and start the short click-safe fade; the
-    // existing fade→cleanup path in renderNextBlock finishes the job.
+    // existing fadeâ†’cleanup path in renderNextBlock finishes the job.
     voiceFade = 1.0f;
     voiceFadeSamplesRemaining = kVoiceFadeLength;
 }
@@ -641,7 +655,7 @@ juce::String SynthVoice::getDebugState() const
 // Fired from MPESynthesiser when the controller updates pressure / pitch-bend /
 // timbre / key state for this voice's currently playing MPENote.  These are
 // real-time safe (called in the audio rendering callback by MPEInstrument),
-// so we keep them lock-free — just cache the new value, the audio thread will
+// so we keep them lock-free â€” just cache the new value, the audio thread will
 // pick it up in the next renderNextBlock sample loop.
 
 void SynthVoice::notePressureChanged()
@@ -667,7 +681,7 @@ void SynthVoice::noteTimbreChanged()
 void SynthVoice::noteKeyStateChanged()
 {
     // No-op: sustain/sostenuto pedal state changes don't require any audio-side
-    // action here — the ADSR is already in its sustain/release stage as appropriate.
+    // action here â€” the ADSR is already in its sustain/release stage as appropriate.
 }
 
 void SynthVoice::debugLogPitchAfterStartNote(int midiNoteNumber)
@@ -738,7 +752,7 @@ void SynthVoice::debugLogPitchRenderSample0(double osc1HzFinal, double baseHzAft
 // MPESynthesiser routes all expression (pitch bend, channel pressure, CC74 timbre)
 // through the MPENote dimensions, surfaced via the notePitchbendChanged /
 // notePressureChanged / noteTimbreChanged callbacks above.  We therefore no
-// longer need controllerMoved() or pitchWheelMoved() overrides — they belonged
+// longer need controllerMoved() or pitchWheelMoved() overrides â€” they belonged
 // to the old juce::SynthesiserVoice API.  Generic non-MPE MIDI CCs would arrive
 // at SpaceDustSynthesiser::handleController if we ever choose to override it.
 
@@ -778,7 +792,8 @@ void SynthVoice::refreshUserWaveSelection() noexcept
     if (noiseUserSlot != nullptr) noisePhaseScale = noiseUserSlot->phaseIncrementScale;
 }
 
-float SynthVoice::generateWaveform(double angle, int waveform, const UserWaveSlot* userSlot, double freqHz)
+float SynthVoice::generateWaveform(double angle, int waveform, const UserWaveSlot* userSlot,
+                                   double freqHz, OneShotState* oneShot)
 {
     // An imported waveform replaces the shape entirely. The angle still means the
     // same thing, so everything that drives the angle -- tuning, glide, LFO pitch
@@ -786,7 +801,30 @@ float SynthVoice::generateWaveform(double angle, int waveform, const UserWaveSlo
     if (userSlot != nullptr)
     {
         constexpr double oneOverTwoPi = 1.0 / (2.0 * juce::MathConstants<double>::pi);
-        return userSlot->read(angle * oneOverTwoPi, freqHz, sampleRate);
+        const double phase = angle * oneOverTwoPi;
+
+        // A sample with its loop turned off is heard once and then no more.
+        //
+        // Counted here, where the phase is READ, rather than where it is advanced:
+        // it is advanced in two different places -- once normally and once per
+        // sub-step while the oscillator is oversampling -- and both of them wrap
+        // it, so this is the one point that sees every turn of it exactly once.
+        //
+        // The phase only ever runs forwards (an angle delta is a frequency, and a
+        // frequency is positive), so coming back smaller means it has come round.
+        if (oneShot != nullptr && ! userSlot->loop
+            && userSlot->mode == UserWave::Mode::FullSample)
+        {
+            if (phase < oneShot->previousPhase)
+                oneShot->finished = true;
+
+            oneShot->previousPhase = phase;
+
+            if (oneShot->finished)
+                return 0.0f;
+        }
+
+        return userSlot->read (phase, freqHz, sampleRate);
     }
 
     switch (waveform)
@@ -823,7 +861,7 @@ float SynthVoice::generateWaveform(double angle, int waveform, const UserWaveSlo
 
 //==============================================================================
 // -- Oscillator Pitch Tuning --
-// Each oscillator has independent coarse tuning (±24 semitones) and fine detuning (±50 cents)
+// Each oscillator has independent coarse tuning (Â±24 semitones) and fine detuning (Â±50 cents)
 // Final pitch calculation: midiNote + coarseTune + (detune / 100) [all in semitones]
 // Convert cents to semitones by dividing by 100
 
@@ -933,7 +971,7 @@ void SynthVoice::updateNoiseEqFilters()
     else if (lowShelfAmount > 0.0f)
     {
         // Positive: use low shelf for strong boost (+24 dB max)
-        float lowGainDb = lowShelfAmount * 24.0f; // ±24 dB range for dramatic effect
+        float lowGainDb = lowShelfAmount * 24.0f; // Â±24 dB range for dramatic effect
         *lowShelfFilter.coefficients = *juce::dsp::IIR::Coefficients<float>::makeLowShelf(
             sampleRate, lowShelfFreq, 0.707f, lowGainDb);
     }
@@ -958,7 +996,7 @@ void SynthVoice::updateNoiseEqFilters()
     else if (highShelfAmount > 0.0f)
     {
         // Positive: use high shelf for strong boost (+24 dB max)
-        float highGainDb = highShelfAmount * 24.0f; // ±24 dB range for dramatic effect
+        float highGainDb = highShelfAmount * 24.0f; // Â±24 dB range for dramatic effect
         *highShelfFilter.coefficients = *juce::dsp::IIR::Coefficients<float>::makeHighShelf(
             sampleRate, highShelfFreq, 0.707f, highGainDb);
     }
@@ -1029,12 +1067,12 @@ void SynthVoice::updateAdsrParameters()
     // Mid-release handling. We can't push a full setParameters() here: juce::ADSR's
     // (and our faithful copy's) recalculateRates() rewrites releaseRate = sustain/
     // (release*sr); when sustain == 0 (plucks/bass) that rate is 0 and the envelope
-    // is forced straight to idle — instantly cutting the tail. Instead retarget the
+    // is forced straight to idle â€” instantly cutting the tail. Instead retarget the
     // live release click-free: setReleaseRetainingLevel() re-derives the slope from
     // the CURRENT level (level/(release*sr)) the way noteOff() does, so shortening or
     // lengthening Release re-shapes the ringing note itself (and lets you audition the
     // tail while dragging), not just future notes. Attack/Decay/Sustain don't affect
-    // an in-progress release, so we defer them — leaving their lastAdsr* sentinels
+    // an in-progress release, so we defer them â€” leaving their lastAdsr* sentinels
     // unchanged so they're applied as soon as the voice leaves release (next note-on).
     if (inReleasePhase)
     {
@@ -1083,7 +1121,7 @@ void SynthVoice::updateFilterAdsrParameters()
     // Same mid-release handling as the amp envelope (see updateAdsrParameters):
     // retarget the live filter-envelope release from its current level instead of
     // pushing setParameters() (which, at sustain == 0, would let recalculateRates()
-    // kill the tail and jump the cutoff to its resting value — a click/zip). The amp
+    // kill the tail and jump the cutoff to its resting value â€” a click/zip). The amp
     // + filter envelopes enter release together, so inReleasePhase gates both.
     if (inReleasePhase)
     {
@@ -1132,7 +1170,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
     // 3. Generate Noise (white noise)
     // 4. Apply independent levels (osc1Level, osc2Level, noiseLevel)
     // 5. Additive mixing: sum all sources
-    // 6. Apply ADSR envelope (Attack → Decay → Sustain → Release)
+    // 6. Apply ADSR envelope (Attack â†’ Decay â†’ Sustain â†’ Release)
     // 7. Process through multimode filter (LowPass/BandPass/HighPass/Notch/Peak)
     // 8. Write to output buffer (stereo)
     //
@@ -1153,7 +1191,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
     // SAFETY: a host may render a block LARGER than it declared to prepareToPlay
     // (Ableton does this during freeze/bounce/render). The per-voice scratch buffer
     // is sized to the prepared max; the per-sample writes and clear() below address
-    // up to `numSamples`, so grow it if this block exceeds its capacity — otherwise
+    // up to `numSamples`, so grow it if this block exceeds its capacity â€” otherwise
     // they overrun the buffer and corrupt the heap (ASan-confirmed). Grows only on
     // the first oversized block, then stays grown.
     if (voiceTempBuffer.getNumSamples() < numSamples)
@@ -1176,8 +1214,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
     int samplesProcessed = 0;
 
     // -- Keyboard tracking --
-    // The cutoff shift is computed once per block for a STATIC (non-gliding) note —
-    // bit-identical to before — and re-derived per sample from the live gliding pitch
+    // The cutoff shift is computed once per block for a STATIC (non-gliding) note â€”
+    // bit-identical to before â€” and re-derived per sample from the live gliding pitch
     // while a portamento is in progress (see the per-sample block below) so the filter
     // tracks the glide instead of snapping to the destination note. keyTrackLogOffset
     // is added in log-frequency space for the master filter; keyTrackMultiplier scales
@@ -1191,7 +1229,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                                         * kFilterKeyTrackLogPerSemi;
     const float keyTrackMultiplierStatic = std::exp(keyTrackLogOffsetStatic);
     // GLIDE-AWARE key-track: during a portamento the cutoff must follow the live
-    // gliding pitch (currentPitch) instead of snapping to the destination note — the
+    // gliding pitch (currentPitch) instead of snapping to the destination note â€” the
     // frozen-at-target tracking made note transitions sound disconnected. We derive
     // the shift from currentPitch / refNoteHz per sample (below). When not gliding,
     // currentPitch == the note's Hz so the static values above are used verbatim (no
@@ -1229,7 +1267,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
     // Log-frequency constants for the filter cutoff math.
     const float logMin = std::log(20.0f);
     const float logMax = std::log(20000.0f);
-    const float timbreLogScale = static_cast<float>(std::log(4.0)); // ±2 octaves of timbre sweep
+    const float timbreLogScale = static_cast<float>(std::log(4.0)); // Â±2 octaves of timbre sweep
 
     // Generate oscillator waveforms, mix, and apply envelope
     for (int i = 0; i < maxSamples; ++i)
@@ -1254,13 +1292,13 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             double pitchEnvRatio = std::pow(2.0, static_cast<double>(pitchModSemitones) / 12.0);
             // Anchor pitch env to the intended note (targetPitch), not the glide-tracking
             // currentPitch. Rapid notes whose glide hasn't completed would otherwise produce
-            // a meaningless attack of (mid-glide) × envRatio. Crossfade in Hz from the
+            // a meaningless attack of (mid-glide) Ã— envRatio. Crossfade in Hz from the
             // env-shifted target back to currentPitch as the curve decays, so glide takes
             // over naturally once the env attack is past.
             const double envedTargetHz = targetPitch * pitchEnvRatio;
             const double curveD = static_cast<double>(curve);
             pitchForOscillators = envedTargetHz * curveD + currentPitch * (1.0 - curveD);
-            pitchEnvShapingNow = (curve > 0.0f);  // curve==0 → env settled, pitchForOscillators==currentPitch
+            pitchEnvShapingNow = (curve > 0.0f);  // curve==0 â†’ env settled, pitchForOscillators==currentPitch
         }
         // Cap pitchEnvSamplesElapsed to avoid float precision loss on very long holds
         if (pitchEnvSamplesElapsed < 1e7f)
@@ -1274,12 +1312,12 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         //                    pitchBendAmountFloat semitones).
         //
         // mpeBendSemitones is populated by notePitchbendChanged() AND by noteStarted()
-        // — it's already in semitones, already correctly weighted by the active
+        // â€” it's already in semitones, already correctly weighted by the active
         // zone's per-note bend range (or the legacy-mode pitchbend range).  For a
         // Seaboard sending per-note pitch CC on its own channel this captures the
         // smooth glissando perfectly; for a regular keyboard sending master pitch
         // bend on channel 1, the legacy-mode bend range applies (48 semitones by
-        // default — see SpaceDustSynthesiser).
+        // default â€” see SpaceDustSynthesiser).
         //
         // The manual UI bend slider is still useful for users who want a software
         // pitch bend independent of any hardware wheel.
@@ -1311,7 +1349,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             // LFO1: 0=Pitch, 1=Filter, 2=MasterVol(processor), 3=Osc1, 4=Osc2, 5=Noise
             if (lfo1Target == 0)  // Pitch
             {
-                float pitchModCents = lfo1Val * 1200.0f;  // ±24 semitones at full LFO swing
+                float pitchModCents = lfo1Val * 1200.0f;  // Â±24 semitones at full LFO swing
                 const double pitchModRatio = std::pow(2.0, pitchModCents / 1200.0);
                 osc1Freq *= pitchModRatio;
                 osc2Freq *= pitchModRatio;
@@ -1330,7 +1368,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             // LFO2: same targets
             if (lfo2Target == 0)  // Pitch
             {
-                float pitchModCents = lfo2Val * 1200.0f;  // ±24 semitones at full LFO swing
+                float pitchModCents = lfo2Val * 1200.0f;  // Â±24 semitones at full LFO swing
                 const double pitchModRatio = std::pow(2.0, pitchModCents / 1200.0);
                 osc1Freq *= pitchModRatio;
                 osc2Freq *= pitchModRatio;
@@ -1347,7 +1385,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             else if (lfo2Target == 5) noiseVolMod += lfo2Val;
         }
         
-        // Apply oscillator tuning (constant per block — ratios cached above).
+        // Apply oscillator tuning (constant per block â€” ratios cached above).
         osc1Freq = osc1Freq * osc1TuneRatio;
         osc2Freq = osc2Freq * osc2TuneRatio;
 
@@ -1356,9 +1394,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         {
             const float a = analogDriftAmount;
             // Two INDEPENDENT slow random walks so the oscillators wander apart and
-            // back over a few seconds — the slow evolving beating of a real analog
+            // back over a few seconds â€” the slow evolving beating of a real analog
             // pair (the old code shared one walk, so both moved in lockstep with no
-            // beating). Static per-note offset ±12 cents + ±6 cents wander at max.
+            // beating). Static per-note offset Â±12 cents + Â±6 cents wander at max.
             analogOscWalk  += analogDriftWalkCoeff * ((random.nextFloat() * 2.0f - 1.0f) - analogOscWalk);
             analogOscWalk2 += analogDriftWalkCoeff * ((random.nextFloat() * 2.0f - 1.0f) - analogOscWalk2);
             const float cents1 = osc1DriftOffset * 12.0f * a + analogOscWalk  * 6.0f * a;
@@ -1368,13 +1406,13 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         }
         
         // CRITICAL: Clamp frequencies to prevent runaway pitch on long holds/legato.
-        // jlimit does not fix NaN/Inf — those would propagate into phase and blow up the output.
+        // jlimit does not fix NaN/Inf â€” those would propagate into phase and blow up the output.
         osc1Freq = juce::jlimit(20.0, 20000.0, osc1Freq);
         osc2Freq = juce::jlimit(20.0, 20000.0, osc2Freq);
         if (!std::isfinite(osc1Freq) || !std::isfinite(osc2Freq))
         {
             reportDspSanitize(processor);
-            // MPE: getCurrentlyPlayingNote() returns MPENote — use initialNote when valid.
+            // MPE: getCurrentlyPlayingNote() returns MPENote â€” use initialNote when valid.
             const int n = currentlyPlayingNote.isValid()
                              ? static_cast<int>(currentlyPlayingNote.initialNote)
                              : -1;
@@ -1422,9 +1460,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         if (!oscOSActive)
         {
             // Base rate. Phases are advanced at the bottom of the loop, as always.
-            osc1Sample = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq);
-            osc2Sample = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq);
-            subOscSample = subOscOn ? generateWaveform(subOscAngle, subOscWaveform, subOscUserSlot, subOscFreq) * subOscLevel : 0.0f;
+            osc1Sample = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq, &osc1OneShot);
+            osc2Sample = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq, &osc2OneShot);
+            subOscSample = subOscOn ? generateWaveform(subOscAngle, subOscWaveform, subOscUserSlot, subOscFreq, &subOscOneShot) * subOscLevel : 0.0f;
         }
         else
         {
@@ -1450,14 +1488,14 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             // upsampler still runs on zeros, which costs a little and changes nothing.
             osc1Sample = oscOsc12OS.process(0, 0.0f, [&] (float) -> float
             {
-                const float v = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq);
+                const float v = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq, &osc1OneShot);
                 osc1Angle += d1; wrap(osc1Angle);
                 return v;
             });
 
             osc2Sample = oscOsc12OS.process(1, 0.0f, [&] (float) -> float
             {
-                const float v = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq);
+                const float v = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq, &osc2OneShot);
                 osc2Angle += d2; wrap(osc2Angle);
                 return v;
             });
@@ -1466,7 +1504,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             {
                 subOscSample = oscSubOS.process(0, 0.0f, [&] (float) -> float
                 {
-                    const float v = generateWaveform(subOscAngle, subOscWaveform, subOscUserSlot, subOscFreq);
+                    const float v = generateWaveform(subOscAngle, subOscWaveform, subOscUserSlot, subOscFreq, &subOscOneShot);
                     subOscAngle += ds; wrap(subOscAngle);
                     return v;
                 }) * subOscLevel;
@@ -1484,9 +1522,11 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         {
             // An imported waveform in this slot is not noise at all -- it is a
             // third oscillator, tracking the played note, with the noise level
-            // knob as its volume and the noise shelves as its tone controls.
-            constexpr double oneOverTwoPi = 1.0 / (2.0 * juce::MathConstants<double>::pi);
-            noiseSample = noiseUserSlot->read(noiseWaveAngle * oneOverTwoPi, noiseWaveFreq, sampleRate);
+            // knob as its volume and the noise shelves as its tone controls. So it
+            // goes through generateWaveform like the others, and a non-looping
+            // sample in it stops after one pass like the others.
+            noiseSample = generateWaveform(noiseWaveAngle, noiseType, noiseUserSlot,
+                                           noiseWaveFreq, &noiseOneShot);
         }
         else if (noiseType == White)
         {
@@ -1495,8 +1535,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         else // Pink
         {
             // Voss-McCartney update (16 rows). The row index is the index of the lowest
-            // set bit of a running counter. With only pinkState[0..15], that index must stay ≤15.
-            // The old int counter could reach 65536 → bitPos 16 → out-of-bounds writes and
+            // set bit of a running counter. With only pinkState[0..15], that index must stay â‰¤15.
+            // The old int counter could reach 65536 â†’ bitPos 16 â†’ out-of-bounds writes and
             // intermittent digital garbage (often bright/harsh) after ~1.3 s @ 48 kHz per voice.
             pinkNoiseCounter = (pinkNoiseCounter + 1u) & 0xFFFFu;
             std::uint32_t p = pinkNoiseCounter;
@@ -1540,7 +1580,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         float rightMix = osc1Out * gainR1 + osc2Out * gainR2 + noiseOut * centerGain + subOscSample * centerGain;
         
         // Step 6: Process envelopes (returns current amplitude value 0.0-1.0)
-        // JUCE's ADSR handles all four stages automatically: Attack → Decay → Sustain → Release
+        // JUCE's ADSR handles all four stages automatically: Attack â†’ Decay â†’ Sustain â†’ Release
         float rawEnvelope = adsr.getNextSample();
         // Anti-click: one-pole lowpass smooths any discontinuity from ADSR retrigger
         smoothedEnvelope += envSmoothCoeff * (rawEnvelope - smoothedEnvelope);
@@ -1553,21 +1593,21 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         float filterEnvOutput = smoothedFilterEnvelope;
 
         //==============================================================================
-        // -- MPE PRESSURE → AMPLITUDE MODULATION --
+        // -- MPE PRESSURE â†’ AMPLITUDE MODULATION --
         // Pressure (Y-axis on a Seaboard / channel aftertouch on a normal keyboard) is
         // 0..1.  Map it to a smooth multiplicative amplitude boost (1.0 .. 2.0): at
-        // rest the pressure is 0 → no change, at full pressure the envelope is
+        // rest the pressure is 0 â†’ no change, at full pressure the envelope is
         // doubled.  This is real-time safe (single mul) and feels natural on Roli /
         // Sensel / Linnstrument controllers without any extra parameter wiring.
         //
         // For non-MPE controllers that don't send channel pressure, mpePressure01
-        // stays at 0 → no effect, full backward compatibility.
+        // stays at 0 â†’ no effect, full backward compatibility.
         // mpePressureDepth (0..1) scales the modulation: 0 = pressure ignored, 1 = full boost.
         envelope *= juce::jlimit(0.0f, 2.0f, 1.0f + mpePressure01 * mpePressureDepth);
         
         // Modulate filter cutoff with filter envelope and LFO.
         // Amount blends unmodulated cutoff (0%) with full-range envelope sweep (100%):
-        // E=1 → top of range, E=0 → bottom; sustain/decay set where E lands vs the knob.
+        // E=1 â†’ top of range, E=0 â†’ bottom; sustain/decay set where E lands vs the knob.
         // Log-frequency space for perceptually even motion across octaves.
         // (logMin / logMax computed once per block above.)
         float filterBaseHz = baseFilterCutoff;
@@ -1575,9 +1615,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         {
             analogFilterWalk += analogDriftWalkCoeff * ((random.nextFloat() * 2.0f - 1.0f) - analogFilterWalk);
             const float a = analogDriftAmount;
-            // Proportional to cutoff (not a fixed ±Hz, which vanished at high cutoffs)
-            // so the wander is audible anywhere: ±5% per-note offset + ±3.5% slow
-            // wander at max — the filter "breathes" like a warm hardware VCF.
+            // Proportional to cutoff (not a fixed Â±Hz, which vanished at high cutoffs)
+            // so the wander is audible anywhere: Â±5% per-note offset + Â±3.5% slow
+            // wander at max â€” the filter "breathes" like a warm hardware VCF.
             const float driftFrac = filterDriftOffset * 0.05f * a + analogFilterWalk * 0.035f * a;
             filterBaseHz = juce::jlimit(20.0f, 20000.0f, baseFilterCutoff * (1.0f + driftFrac));
         }
@@ -1594,24 +1634,24 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         float lfoFactor = juce::jmax(0.0f, 1.0f + filterMod * lfoFilterScale);
 
         //==============================================================================
-        // -- MPE TIMBRE → FILTER CUTOFF MODULATION --
+        // -- MPE TIMBRE â†’ FILTER CUTOFF MODULATION --
         // Timbre (Z-axis / CC74 / Seaboard slide) is 0..1.  Centre (no slide) = 0.5.
-        // We map (timbre - 0.5) * 2 → -1..+1 and treat it as a log-frequency offset of
-        // up to ±2 octaves (4 octaves total range) on the filter cutoff.  Adding it
+        // We map (timbre - 0.5) * 2 â†’ -1..+1 and treat it as a log-frequency offset of
+        // up to Â±2 octaves (4 octaves total range) on the filter cutoff.  Adding it
         // *after* the env+drift logKnob computation in log-space means it sweeps the
         // filter cleanly across octaves regardless of where the cutoff knob sits.
         //
-        // For non-MPE controllers that don't send CC74, mpeTimbre01 stays at 0.5 →
+        // For non-MPE controllers that don't send CC74, mpeTimbre01 stays at 0.5 â†’
         // zero offset, full backward compatibility.
-        // mpeTimbreDepth (0..1) scales the modulation: 0 = slide ignored, 1 = full ±2 octaves.
+        // mpeTimbreDepth (0..1) scales the modulation: 0 = slide ignored, 1 = full Â±2 octaves.
         const float timbreBipolar = juce::jlimit(-1.0f, 1.0f, (mpeTimbre01 - 0.5f) * 2.0f) * mpeTimbreDepth;
-        // ±2 octaves = ±ln(4) ≈ ±1.386 in natural-log units (timbreLogScale cached above).
+        // Â±2 octaves = Â±ln(4) â‰ˆ Â±1.386 in natural-log units (timbreLogScale cached above).
         const float timbreLogOffset = timbreBipolar * timbreLogScale;
 
         // Glide-, pitch-env-, AND MPE-pitch-bend-aware key-track for all three filters.
         // The cutoff must follow the actual SOUNDING pitch, which is
-        // pitchForOscillators (glide + pitch env) × bendRatio (MPE per-note bend +
-        // manual UI bend) — exactly the frequency fed to the oscillators above. Without
+        // pitchForOscillators (glide + pitch env) Ã— bendRatio (MPE per-note bend +
+        // manual UI bend) â€” exactly the frequency fed to the oscillators above. Without
         // the bend term the filter snapped to the played key while a Seaboard glissando
         // (or the manual bend slider) slid the oscillators, so key-tracking lagged the
         // audible pitch. pitchForOscillators == currentPitch and bendRatio == 1.0 when
@@ -1640,7 +1680,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         {
             // First sample of a fresh note: jump the cutoff straight to the new
             // note's target so the resonant peak doesn't sweep into the note (the
-            // note-on click). Click-safe — the amplitude envelope is ~0 here.
+            // note-on click). Click-safe â€” the amplitude envelope is ~0 here.
             snapFilterCutoffOnNote = false;
             smoothedFilterCutoffHz = modulatedCutoff;
         }
@@ -1659,13 +1699,13 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         
         // Check if envelope has completed (release phase finished)
         // If not active, clear the note and stop rendering
-        // (Skip during voice fade — ADSR may hit zero before fade completes)
+        // (Skip during voice fade â€” ADSR may hit zero before fade completes)
         if (!adsr.isActive() && voiceFadeSamplesRemaining <= 0)
         {
             // A self-oscillating filter rings under its own feedback, so its output
             // is NOT enveloped to zero. If it is still ringing when the amplitude
             // envelope completes here, a hard cut steps the output to zero and
-            // clicks (worst on low notes — the residual sine sits far from a zero
+            // clicks (worst on low notes â€” the residual sine sits far from a zero
             // crossing). Hand off to the existing voice-fade ramp, which declicks
             // the residual over kVoiceFadeLength and resets the filters when it
             // completes, instead of breaking now.
@@ -1725,7 +1765,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // MASTER filter runs FIRST. When no mod filters are active it is the only
         // filter in the chain, so the master-only sound is bit-for-bit unchanged.
         // When an unlinked mod filter is active it now sits AFTER the master, making
-        // the mod the last (dominant, untamed) voice — as powerful as the master,
+        // the mod the last (dominant, untamed) voice â€” as powerful as the master,
         // instead of having its grit smoothed away by the master downstream.
         // (Master cutoff was already set above via smoothedFilterCutoffHz.)
         filter.setEnvelope(envelope);
@@ -1754,7 +1794,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         }
         else
         {
-            filtL = masterNL(0, filtL);   // host rate — bit-identical to before
+            filtL = masterNL(0, filtL);   // host rate â€” bit-identical to before
             filtR = masterNL(1, filtR);
         }
 
@@ -1809,7 +1849,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             }
         }
 
-        // Final safety clip (idempotent — each stage above already clipped).
+        // Final safety clip (idempotent â€” each stage above already clipped).
         float outL = juce::jlimit(-1.0f, 1.0f, filtL);
         float outR = juce::jlimit(-1.0f, 1.0f, filtR);
         if (!std::isfinite(outL) || !std::isfinite(outR))
@@ -1831,7 +1871,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             if (voiceFade < 0.0f) voiceFade = 0.0f;
             if (--voiceFadeSamplesRemaining <= 0)
             {
-                // Fade complete: full cleanup — voice is now silent
+                // Fade complete: full cleanup â€” voice is now silent
                 voiceFade = 0.0f;
                 adsr.reset();
                 smoothedEnvelope = 0.0f;
@@ -1889,14 +1929,14 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // ====================================================================
         // Goal: catch genuine discontinuities (pops) while IGNORING the natural
         // steepness of an ordinary waveform.  An absolute per-sample-step
-        // threshold is wrong: the max step of a clean sine is A·2π·f/sr, so a
+        // threshold is wrong: the max step of a clean sine is AÂ·2Ï€Â·f/sr, so a
         // loud (A>0.75) or high note legitimately steps far past any audible
         // threshold every cycle and floods the log with false positives.
         //
-        // Instead we compare each step against the LOCAL slope envelope — an EMA
+        // Instead we compare each step against the LOCAL slope envelope â€” an EMA
         // of recent |step| (kClickSlopeEmaCoeff, ~5 ms time constant).  A clean
         // waveform's step stays within ~1.6x of this average (sine max/mean of
-        // |slope| = π/2); a real click is a single step many times larger.  We
+        // |slope| = Ï€/2); a real click is a single step many times larger.  We
         // flag only when the step is BOTH well above the local slope (ratio test)
         // AND above a small absolute floor (so near-silence, where the EMA ~0,
         // can't make a tiny step look like a huge ratio).
@@ -2046,6 +2086,36 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                 outputBuffer.addFrom(ch, startSample, voiceTempBuffer, 0, 0, samplesProcessed);
         }
     }
+
+    //==============================================================================
+    // -- Where each imported sample has got to --
+    // For the playhead in the Waveforms window. Once per block, not per sample:
+    // the line is redrawn about twenty times a second, so a phase from the end of
+    // the block is as current as anything on screen can be, and this costs one
+    // store per source instead of one per source per sample.
+    //
+    // A one-shot that has finished publishes nothing, so its line disappears at
+    // the moment its sound does rather than sitting at the end of the sample.
+    if (processor != nullptr && samplesProcessed > 0 && processor->isUserWavePhaseWanted())
+    {
+        const auto publish = [this] (const UserWaveSlot* slot, const OneShotState& oneShot,
+                                     double angle, UserWave::Group group)
+        {
+            if (slot == nullptr || oneShot.finished)
+                return;
+
+            constexpr double toPhase = 1.0 / (2.0 * juce::MathConstants<double>::pi);
+            processor->publishUserWavePhase(group, (float) (angle * toPhase));
+        };
+
+        publish(osc1UserSlot, osc1OneShot, osc1Angle, UserWave::Group::Osc1);
+        publish(osc2UserSlot, osc2OneShot, osc2Angle, UserWave::Group::Osc2);
+
+        if (subOscOn)
+            publish(subOscUserSlot, subOscOneShot, subOscAngle, UserWave::Group::Sub);
+
+        publish(noiseUserSlot, noiseOneShot, noiseWaveAngle, UserWave::Group::Noise);
+    }
 }
 
 //==============================================================================
@@ -2192,7 +2262,7 @@ void SynthVoice::setCurrentSampleRate(double newRate)
     // MPESynthesiser whenever its setCurrentPlaybackSampleRate() runs.
     //
     // This method is called:
-    // 1. Automatically when voices are added (with sampleRate=0) ← we must ignore!
+    // 1. Automatically when voices are added (with sampleRate=0) â† we must ignore!
     // 2. When synth.setCurrentPlaybackSampleRate() is called explicitly
     //
     // IMPORTANT: DSP initialization happens in prepareToPlay(), NOT here.
@@ -2277,13 +2347,13 @@ void SynthVoice::setOsc2Waveform(int waveform)
 
 //==============================================================================
 // -- Oscillator Pitch Tuning Methods --
-// Each oscillator has independent coarse tuning (±24 semitones) and fine detuning (±50 cents)
+// Each oscillator has independent coarse tuning (Â±24 semitones) and fine detuning (Â±50 cents)
 // Double-click any knob to reset to 0
 
 void SynthVoice::setOsc1CoarseTune(float semitones)
 {
     osc1CoarseTune = juce::jlimit(-24.0f, 24.0f, semitones);
-    // Update frequency if note is playing — base Hz must match renderNextBlock's currentPitch
+    // Update frequency if note is playing â€” base Hz must match renderNextBlock's currentPitch
     // (glide / legato). getMidiNoteInHertz(getCurrentlyPlayingNote()) can disagree for a whole
     // block because updateVoicesWithParameters runs before MIDI is applied in renderNextBlock.
     if (isActive)
@@ -2437,12 +2507,12 @@ void SynthVoice::updateOversampleLatch() noexcept
 {
     // A filter needs oversampling when its nonlinear stage is engaged: warm
     // saturation, or resonance high enough to clip/ring. Mod stages additionally
-    // must be shown AND unlinked (linked mods aren't processed — the master covers
+    // must be shown AND unlinked (linked mods aren't processed â€” the master covers
     // them). When the global oversample param is off, nothing oversamples.
     //
     // It ALSO needs oversampling when an LFO is sweeping its cutoff at audio rate,
     // whatever the resonance. That is the case this parameter was added for in the
-    // first place, but the test was only ever nonlinearity — so a fast LFO on a
+    // first place, but the test was only ever nonlinearity â€” so a fast LFO on a
     // clean, low-resonance filter folded back with oversampling sitting switched
     // off. Audible as soon as the LFO range was widened past a few hundred Hz.
     const bool lfo1FastFilter = lfo1TargetCached == 1 && lfo1RateHz >= kOversampleLfoHzThreshold;
@@ -2507,7 +2577,7 @@ void SynthVoice::setFilterOversample(bool enabled)
     oversampleFilter = enabled;
     // Idle voices re-derive immediately so their filter scale stays consistent with
     // the render routing. ACTIVE voices keep their per-note latch until the next note
-    // start — switching the sample-rate scale on a ringing filter would click. The
+    // start â€” switching the sample-rate scale on a ringing filter would click. The
     // param defaults ON and is rarely toggled live, so the one-note delay is benign.
     if (!isActive)
         updateOversampleLatch();
@@ -2644,11 +2714,11 @@ void SynthVoice::setGlideTime(float seconds)
     //
     // CRITICAL: only do this when glide is actually ON (glideTimeSeconds > 0). This
     // method is called every processBlock, and an in-progress glideDelta is NOT
-    // necessarily a user glide — noteStarted() sets a short 3 ms anti-click auto-glide
+    // necessarily a user glide â€” noteStarted() sets a short 3 ms anti-click auto-glide
     // on every mono/legato note change even when glide is off. The old code's else
     // branch zeroed glideDelta ("instant") for that auto-glide but left currentPitch
     // STRANDED partway between the two notes (it never set currentPitch = targetPitch),
-    // so the note played at a wrong, in-between pitch — and it compounded across note
+    // so the note played at a wrong, in-between pitch â€” and it compounded across note
     // changes ("out of key"). It only bit in small-buffer hosts (FL Studio), where the
     // 3 ms auto-glide spans several blocks so this clobber landed mid-glide; large-
     // buffer hosts (Ableton) finished the auto-glide within one block, hiding it.
