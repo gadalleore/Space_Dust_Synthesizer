@@ -10,6 +10,7 @@
 #include "SynthSound.h"   // Kept for build compatibility (some headers still include it indirectly)
 #include "OscillatorShapes.h" // The built-in shapes, shared with the Waveforms picture
 #include "PhaseShaper.h"      // Bend, Spectrum and Sync -- what is done to the phase
+#include "UnisonSpread.h"     // Several detuned copies of one oscillator
 #include "UserWavetable.h" // Imported samples played as oscillator waveforms
 #include <array>
 #include <numeric>
@@ -167,6 +168,17 @@ public:
         it a sample at a time -- see advanceShapingSmoothing. */
     void setOsc1WaveShaping(const PhaseShaper::Amounts& a) noexcept { osc1ShapingTarget = a; }
     void setOsc2WaveShaping(const PhaseShaper::Amounts& a) noexcept { osc2ShapingTarget = a; }
+
+    /** Unison for one oscillator: how many copies, how far apart, how wide. */
+    void setOsc1Unison(int voices, float detune, float width) noexcept
+    {
+        updateUnison(osc1Unison, voices, detune, width);
+    }
+
+    void setOsc2Unison(int voices, float detune, float width) noexcept
+    {
+        updateUnison(osc2Unison, voices, detune, width);
+    }
 
     /** Hand over the imported waveforms for this block.
 
@@ -337,6 +349,57 @@ private:
         thread over at high polyphony. */
     bool osc1Stereo = false;
     bool osc2Stereo = false;
+
+    //==========================================================================
+    // -- Unison --
+    //
+    // Several detuned copies of one oscillator, spread across the field. What
+    // each copy's speed and position ARE is Unison::layout, which is checked
+    // without a synth; what is here is the running of them.
+    //
+    // Each copy keeps its own phase. They are given DIFFERENT starting phases at
+    // note-on, because copies that start together sum coherently for the first
+    // instant and the note begins with a click of one loud copy before the detune
+    // pulls them apart.
+    struct UnisonState
+    {
+        double angle[Unison::maxVoices] {};
+        Unison::Copy copies[Unison::maxVoices] {};
+        int voices = 1;
+        float compensation = 1.0f;
+
+        /** Whether this is doing anything at all. One copy at the note's own
+            pitch, dead centre, is the plain oscillator -- and the render path
+            takes its old route when this is false, so an untouched patch pays
+            nothing for unison existing. */
+        bool active() const noexcept { return voices > 1; }
+    };
+
+    UnisonState osc1Unison;
+    UnisonState osc2Unison;
+
+    /** Set the copies up for this block, from the three parameters. */
+    void updateUnison (UnisonState& state, int voices, float detune, float width) noexcept;
+
+    /** Read and advance every copy, and return the summed pair.
+
+        Advances the copies' phases itself, because each runs at its own speed --
+        the caller's single angle is not what any of them uses. The caller's angle
+        is still advanced separately, so switching unison off mid-note leaves it
+        where it should be.
+
+        Returns the left channel and writes the right through rightOut. */
+    float renderUnison (UnisonState& state, int waveform, const UserWaveSlot* slot,
+                        double freqHz, double baseDelta,
+                        const PhaseShaper::Amounts& shaping,
+                        bool slotIsStereo, float& rightOut) noexcept;
+
+    /** Give every copy its own starting phase, spread around the turn.
+
+        Spread rather than randomised: a random phase per note makes the attack of
+        the same note different every time, which on a short percussive patch is
+        heard as an inconsistent transient. */
+    static void seedUnisonPhases (UnisonState& state, double startAngle) noexcept;
 
     PhaseShaper::Amounts osc1ShapingTarget;
     PhaseShaper::Amounts osc2ShapingTarget;

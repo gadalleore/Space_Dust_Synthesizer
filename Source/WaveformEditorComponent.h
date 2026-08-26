@@ -79,6 +79,17 @@ public:
 
         juce::Slider* knobs[numKnobs] = {};
         juce::Label* labels[numKnobs] = {};
+
+        /** Voices, Detune and Width -- the unison box beside the shaping one.
+
+            A second group rather than three more knobs in the same box: unison
+            makes SEVERAL of the oscillator, where Bend and Spectrum change the
+            one. Kept in the same struct because they are borrowed and given back
+            together, on the same gesture, for the same oscillator. */
+        static constexpr int numUnisonKnobs = 3;
+
+        juce::Slider* unisonKnobs[numUnisonKnobs] = {};
+        juce::Label* unisonLabels[numUnisonKnobs] = {};
     };
 
     WaveformEditorComponent (UserWaveLibrary& library, SpaceDustLookAndFeel& lookAndFeel);
@@ -418,6 +429,16 @@ private:
         through them. A box of their own says that, where a bare row of knobs
         under the list read as five more things belonging to the selected row. */
     juce::GroupComponent shapingGroup;
+
+    /** The box around Voices, Detune and Width. Shown on exactly the lists that
+        show the shaping box -- the two oscillators, and nothing else. */
+    juce::GroupComponent unisonGroup;
+
+    /** How the foot of the panel is split between the two boxes: five knobs for
+        shaping and three for unison, so the shaping box takes the larger share
+        and both hold knobs of the same size. */
+    static constexpr int shapingKnobCount = ShapingControls::numKnobs;
+    static constexpr int unisonKnobCount = ShapingControls::numUnisonKnobs;
 
     /** Take the borrowed knobs as children, or give the last set back. Called
         from setTarget, which is the only thing that changes which list is shown. */

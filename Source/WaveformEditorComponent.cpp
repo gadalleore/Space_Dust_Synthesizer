@@ -220,6 +220,15 @@ void WaveformEditorComponent::adoptShapingControls (const ShapingControls* shapi
             if (shapingControls->labels[i] != nullptr)
                 removeChildComponent (shapingControls->labels[i]);
         }
+
+        for (int i = 0; i < ShapingControls::numUnisonKnobs; ++i)
+        {
+            if (shapingControls->unisonKnobs[i] != nullptr)
+                removeChildComponent (shapingControls->unisonKnobs[i]);
+
+            if (shapingControls->unisonLabels[i] != nullptr)
+                removeChildComponent (shapingControls->unisonLabels[i]);
+        }
     }
 
     shapingControls = shaping;
@@ -242,6 +251,19 @@ void WaveformEditorComponent::adoptShapingControls (const ShapingControls* shapi
             // the panel gives them back below.
             knob->onValueChange = [this] { repaint(); };
         }
+    }
+
+    for (int i = 0; i < ShapingControls::numUnisonKnobs; ++i)
+    {
+        if (shapingControls->unisonLabels[i] != nullptr)
+            addAndMakeVisible (shapingControls->unisonLabels[i]);
+
+        // No repaint callback on these. Unison makes SEVERAL of the oscillator
+        // rather than changing the shape of it, so the picture of one cycle is
+        // the same picture whatever Voices says -- and a repaint per turn of a
+        // knob that changes nothing on screen is work for nothing.
+        if (shapingControls->unisonKnobs[i] != nullptr)
+            addAndMakeVisible (shapingControls->unisonKnobs[i]);
     }
 
     // Lay out NOW, and not by waiting for a size change.
@@ -394,6 +416,10 @@ WaveformEditorComponent::WaveformEditorComponent (UserWaveLibrary& libraryToUse,
     // more pointer that has to outlive it.
     shapingGroup.setText ("Wave Shaping");
     addChildComponent (shapingGroup);
+
+    unisonGroup.setText ("Unison");
+    addChildComponent (unisonGroup);
+    unisonGroup.getProperties().set ("viewportGlow", true);
 
     // The blue is not a colour anyone sets -- it comes from this property, which
     // the LookAndFeel reads to pick the box's outline and its inward glow. Without
@@ -1927,6 +1953,7 @@ void WaveformEditorComponent::resized()
     // goes through them. Sitting them among the Load and Clear buttons would say
     // the opposite.
     shapingGroup.setVisible (shapingControls != nullptr);
+    unisonGroup.setVisible (shapingControls != nullptr);
 
     if (shapingControls != nullptr)
     {
@@ -1936,32 +1963,56 @@ void WaveformEditorComponent::resized()
                                      .removeFromBottom (shapingStripHeight)
                                      .reduced (margin, 0);
 
-        shapingGroup.setBounds (strip);
+        // Split by knob count, so a knob is the same size in both boxes. Five and
+        // three, plus the padding each box spends on its own border.
+        const int totalKnobs = shapingKnobCount + unisonKnobCount;
+        const int shapingWidth = (strip.getWidth() - groupPadding)
+                               * shapingKnobCount / totalKnobs;
 
-        // Inside the box, below its title.
-        strip.removeFromTop (shapingTitleInset);
-        strip = strip.reduced (groupPadding, 0);
+        auto shapingArea = strip.removeFromLeft (shapingWidth);
+        strip.removeFromLeft (groupPadding);
+        auto unisonArea = strip;
 
-        const int cell = strip.getWidth() / ShapingControls::numKnobs;
+        shapingGroup.setBounds (shapingArea);
+        unisonGroup.setBounds (unisonArea);
 
-        for (int i = 0; i < ShapingControls::numKnobs; ++i)
+        // One routine for both boxes: same title inset, same label, same knob,
+        // same value box. Written twice, the two would drift apart by a pixel and
+        // read as two different kinds of control.
+        const auto layOutKnobs = [this] (juce::Rectangle<int> area,
+                                         juce::Slider* const* knobs,
+                                         juce::Label* const* labels, int count)
         {
-            auto column = strip.removeFromLeft (cell);
+            area.removeFromTop (shapingTitleInset);
+            area = area.reduced (groupPadding, 0);
 
-            if (shapingControls->labels[i] != nullptr)
-                shapingControls->labels[i]->setBounds (column.removeFromTop (shapingLabelHeight));
-            else
-                column.removeFromTop (shapingLabelHeight);
+            const int cell = count > 0 ? area.getWidth() / count : area.getWidth();
 
-            column.removeFromTop (2);
-
-            if (shapingControls->knobs[i] != nullptr)
+            for (int i = 0; i < count; ++i)
             {
-                const int x = column.getX() + (column.getWidth() - shapingKnobSize) / 2;
-                shapingControls->knobs[i]->setBounds (x, column.getY(), shapingKnobSize,
-                                                      shapingKnobSize + shapingValueHeight);
+                auto column = area.removeFromLeft (cell);
+
+                if (labels[i] != nullptr)
+                    labels[i]->setBounds (column.removeFromTop (shapingLabelHeight));
+                else
+                    column.removeFromTop (shapingLabelHeight);
+
+                column.removeFromTop (2);
+
+                if (knobs[i] != nullptr)
+                {
+                    const int x = column.getX() + (column.getWidth() - shapingKnobSize) / 2;
+                    knobs[i]->setBounds (x, column.getY(), shapingKnobSize,
+                                         shapingKnobSize + shapingValueHeight);
+                }
             }
-        }
+        };
+
+        layOutKnobs (shapingArea, shapingControls->knobs, shapingControls->labels,
+                     ShapingControls::numKnobs);
+
+        layOutKnobs (unisonArea, shapingControls->unisonKnobs, shapingControls->unisonLabels,
+                     ShapingControls::numUnisonKnobs);
     }
 
     // Two rows of controls. One row could not hold the name box at a width worth

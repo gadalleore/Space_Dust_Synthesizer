@@ -454,6 +454,25 @@ add_custom_target(shaper-test
     COMMENT "Running phase shaper tests")
 
 #==============================================================================
+# unison-test — standalone check of the unison spread.
+# How fast each copy runs and where it sits are pure arithmetic: one voice must
+# be the untouched oscillator, the copies must be symmetric about the note, and
+# turning Voices up must not change the level. None of it needs JUCE.
+# Usage: cmake --build build --config Release --target unison-test
+#==============================================================================
+add_executable(unison_test
+    tools/unisontest/unison_test.cpp)
+set_target_properties(unison_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/unison_test")
+target_compile_features(unison_test PRIVATE cxx_std_17)
+target_include_directories(unison_test PRIVATE Source)
+
+add_custom_target(unison-test
+    COMMAND $<TARGET_FILE:unison_test>
+    DEPENDS unison_test
+    COMMENT "Running unison spread tests")
+
+#==============================================================================
 # lfo-test — measures LFO fold-back (aliasing) across the rate range.
 # Pass "legacy" to the exe to evaluate the pre-band-limiting edges for comparison.
 # Usage: cmake --build build --config Release --target lfo-test

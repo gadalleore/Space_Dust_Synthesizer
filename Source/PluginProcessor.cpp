@@ -1153,6 +1153,16 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     const auto osc2Shaping = readShaping("osc2BendPlus", "osc2BendMinus",
                                          "osc2BendPlusMinus", "osc2Spectrum", "osc2Sync");
 
+    // Unison, read once for the same reason as the shaping above.
+    const int osc1UnisonVoices = juce::jlimit(1, Unison::maxVoices,
+                                              (int) std::lround(safeGetParam(apvts, "osc1UnisonVoices")));
+    const int osc2UnisonVoices = juce::jlimit(1, Unison::maxVoices,
+                                              (int) std::lround(safeGetParam(apvts, "osc2UnisonVoices")));
+    const float osc1UnisonDetune = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc1UnisonDetune"));
+    const float osc2UnisonDetune = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc2UnisonDetune"));
+    const float osc1UnisonWidth = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc1UnisonWidth"));
+    const float osc2UnisonWidth = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc2UnisonWidth"));
+
     // Update all voices with current parameter values
     for (int i = 0; i < synth.getNumVoices(); ++i)
     {
@@ -1163,6 +1173,8 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setOsc2Waveform(osc2Wave);
             voice->setOsc1WaveShaping(osc1Shaping);
             voice->setOsc2WaveShaping(osc2Shaping);
+            voice->setOsc1Unison(osc1UnisonVoices, osc1UnisonDetune, osc1UnisonWidth);
+            voice->setOsc2Unison(osc2UnisonVoices, osc2UnisonDetune, osc2UnisonWidth);
             voice->setOsc1CoarseTune(osc1CoarseTune);
             voice->setOsc1Detune(osc1Detune);
             voice->setOsc2CoarseTune(osc2CoarseTune);
@@ -3456,12 +3468,66 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             { "osc2Sync",          "Osc 2 Sync" },
         };
 
+        // Two decimals, said HERE rather than on the slider.
+        //
+        // A SliderAttachment takes its text from the PARAMETER, so a slider told
+        // to show two decimals still read 0.00000 -- the parameter's own default
+        // conversion was winning, and setNumDecimalPlacesToDisplay never had a
+        // say. The unison count showed "1" correctly the whole time because an
+        // AudioParameterInt formats itself as a whole number, which is what made
+        // the real cause visible (Giuseppe, 2026-08-26).
+        const auto twoDecimals = [] (float value, int)
+        {
+            return juce::String (value, 2);
+        };
+
         for (const auto& sp : shapingParams)
             addParameterWithLogging(params,
                 std::make_unique<juce::AudioParameterFloat>(
                     juce::ParameterID{sp.id, 1}, sp.name,
-                    juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f),
+                    juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f,
+                    juce::AudioParameterFloatAttributes().withStringFromValueFunction(twoDecimals)),
                 safeString(sp.id));
+
+        //======================================================================
+        // -- Unison --
+        //
+        // Voices defaults to 1 and Detune and Width to 0, so an untouched patch
+        // runs one copy at the note's own pitch, dead centre -- which is the
+        // oscillator exactly as it was before any of this existed.
+        //
+        // An INT rather than a float for the count: it is a number of things, the
+        // host should show it as one, and a float would let automation land
+        // between two counts.
+        struct UnisonParam { const char* id; const char* name; };
+
+        const UnisonParam unisonCounts[] =
+        {
+            { "osc1UnisonVoices", "Osc 1 Unison Voices" },
+            { "osc2UnisonVoices", "Osc 2 Unison Voices" },
+        };
+
+        for (const auto& up : unisonCounts)
+            addParameterWithLogging(params,
+                std::make_unique<juce::AudioParameterInt>(
+                    juce::ParameterID{up.id, 1}, up.name, 1, Unison::maxVoices, 1),
+                safeString(up.id));
+
+        const UnisonParam unisonAmounts[] =
+        {
+            { "osc1UnisonDetune", "Osc 1 Unison Detune" },
+            { "osc1UnisonWidth",  "Osc 1 Unison Width" },
+            { "osc2UnisonDetune", "Osc 2 Unison Detune" },
+            { "osc2UnisonWidth",  "Osc 2 Unison Width" },
+        };
+
+        for (const auto& up : unisonAmounts)
+            addParameterWithLogging(params,
+                std::make_unique<juce::AudioParameterFloat>(
+                    juce::ParameterID{up.id, 1}, up.name,
+                    juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f,
+                    juce::AudioParameterFloatAttributes().withStringFromValueFunction(twoDecimals)),
+                safeString(up.id));
     }
 
     //==============================================================================

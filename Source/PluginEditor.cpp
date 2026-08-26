@@ -4312,6 +4312,56 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
                 controls.labels[i] = &l;
             }
         }
+
+        //======================================================================
+        // -- Voices, Detune and Width --
+        const char* const unisonLabels[numUnisonKnobs] = { "Voices", "Detune", "Width" };
+
+        const char* const osc1UnisonIds[numUnisonKnobs] =
+            { "osc1UnisonVoices", "osc1UnisonDetune", "osc1UnisonWidth" };
+        const char* const osc2UnisonIds[numUnisonKnobs] =
+            { "osc2UnisonVoices", "osc2UnisonDetune", "osc2UnisonWidth" };
+
+        const char* const unisonTips[numUnisonKnobs] =
+        {
+            "How many copies of this oscillator play at once. One is the plain oscillator.",
+            "How far apart the copies are tuned. At zero they sit on top of each other.",
+            "How far the copies are spread across the stereo field. At zero they are all centred."
+        };
+
+        for (int osc = 0; osc < 2; ++osc)
+        {
+            auto* sliders = osc == 0 ? osc1UnisonSliders : osc2UnisonSliders;
+            auto* labels = osc == 0 ? osc1UnisonLabels : osc2UnisonLabels;
+            auto* attachments = osc == 0 ? osc1UnisonAttachments : osc2UnisonAttachments;
+            auto* const* ids = osc == 0 ? osc1UnisonIds : osc2UnisonIds;
+            auto& controls = osc == 0 ? osc1ShapingControls : osc2ShapingControls;
+
+            for (int i = 0; i < numUnisonKnobs; ++i)
+            {
+                auto& s = sliders[i];
+                s.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+                s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 46, 16);
+                s.setLookAndFeel(&customLookAndFeel);
+                s.setTooltip(safeString(unisonTips[i]));
+
+                attachments[i] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+                    audioProcessor.getValueTreeState(), ids[i], s);
+
+                // AFTER the attachment, which sets the range and resets this.
+                // Voices is a count, so it shows none: "3", not "3.00".
+                s.setNumDecimalPlacesToDisplay(i == 0 ? 0 : 2);
+
+                auto& l = labels[i];
+                l.setText(safeString(unisonLabels[i]), juce::dontSendNotification);
+                l.setJustificationType(juce::Justification::centred);
+                l.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+                l.setFont(customLookAndFeel.getBodyFont(11.0f, true));
+
+                controls.unisonKnobs[i] = &s;
+                controls.unisonLabels[i] = &l;
+            }
+        }
     }
 
 

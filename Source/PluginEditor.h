@@ -714,6 +714,19 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
         osc2ShapingAttachments[numShapingKnobs];
 
+    /** Voices, Detune and Width per oscillator, lent to the Waveforms panel the
+        same way the shaping knobs are. */
+    static constexpr int numUnisonKnobs = 3;
+
+    juce::Slider osc1UnisonSliders[numUnisonKnobs];
+    juce::Slider osc2UnisonSliders[numUnisonKnobs];
+    juce::Label osc1UnisonLabels[numUnisonKnobs];
+    juce::Label osc2UnisonLabels[numUnisonKnobs];
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
+        osc1UnisonAttachments[numUnisonKnobs];
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
+        osc2UnisonAttachments[numUnisonKnobs];
+
     WaveformEditorComponent::ShapingControls osc1ShapingControls;
     WaveformEditorComponent::ShapingControls osc2ShapingControls;
 

@@ -448,6 +448,13 @@ void SynthVoice::noteStarted()
     restartWholeSample (subOscUserSlot, subOscAngle);
     restartWholeSample (noiseUserSlot, noiseWaveAngle);
 
+    // The unison copies start spread around the turn rather than stacked. Seven
+    // copies all starting at the same phase sum coherently for the first instant,
+    // so the note would begin with one copy's worth of level and thin out as the
+    // detune pulled them apart -- an attack whose shape changed with Voices.
+    seedUnisonPhases (osc1Unison, osc1Angle);
+    seedUnisonPhases (osc2Unison, osc2Angle);
+
     if (shouldHardResetForPoly)
     {
         // Truly new poly voice: safe to do full reset
@@ -829,6 +836,78 @@ void SynthVoice::refreshUserWaveSelection() noexcept
     osc2Stereo = osc2UserSlot != nullptr && osc2UserSlot->isStereo();
     if (subOscUserSlot != nullptr) subOscPhaseScale = subOscUserSlot->phaseIncrementScale;
     if (noiseUserSlot != nullptr) noisePhaseScale = noiseUserSlot->phaseIncrementScale;
+}
+
+void SynthVoice::updateUnison (UnisonState& state, int voices, float detune, float width) noexcept
+{
+    const int wanted = juce::jlimit (1, Unison::maxVoices, voices);
+
+    // A change in the COUNT needs the new copies given phases; a change in detune
+    // or width does not, and re-seeding on every block would restart the copies
+    // sixty times a second and kill the beating that is the whole effect.
+    const bool countChanged = wanted != state.voices;
+
+    state.voices = wanted;
+    state.compensation = Unison::layout (wanted, (double) detune, (double) width, state.copies);
+
+    if (countChanged)
+        seedUnisonPhases (state, state.angle[0]);
+}
+
+void SynthVoice::seedUnisonPhases (UnisonState& state, double startAngle) noexcept
+{
+    constexpr double twoPi = 2.0 * juce::MathConstants<double>::pi;
+
+    for (int i = 0; i < state.voices; ++i)
+    {
+        // Spread evenly around the turn. Copies that all start together sum
+        // coherently for the first instant, so the note begins with one loud
+        // copy and thins out as the detune pulls them apart -- an attack that
+        // changes shape as Voices is turned up.
+        double a = startAngle + twoPi * ((double) i / (double) state.voices);
+
+        while (a >= twoPi) a -= twoPi;
+        while (a < 0.0)    a += twoPi;
+
+        state.angle[i] = a;
+    }
+}
+
+float SynthVoice::renderUnison (UnisonState& state, int waveform, const UserWaveSlot* slot,
+                                double freqHz, double baseDelta,
+                                const PhaseShaper::Amounts& shaping,
+                                bool slotIsStereo, float& rightOut) noexcept
+{
+    constexpr double twoPi = 2.0 * juce::MathConstants<double>::pi;
+
+    float left = 0.0f;
+    float right = 0.0f;
+
+    for (int i = 0; i < state.voices; ++i)
+    {
+        const auto& copy = state.copies[i];
+
+        // Each copy is the SAME oscillator read at its own phase. No one-shot
+        // state is passed: a one-shot belongs to the note, and seven copies each
+        // deciding the note had finished would silence it as the first one wrapped.
+        float channelRight = 0.0f;
+        const float value = generateWaveform (state.angle[i], waveform, slot, freqHz, nullptr,
+                                              shaping, slotIsStereo ? &channelRight : nullptr);
+
+        if (! slotIsStereo)
+            channelRight = value;
+
+        left += value * copy.gainLeft;
+        right += channelRight * copy.gainRight;
+
+        state.angle[i] += baseDelta * copy.ratio;
+
+        if (state.angle[i] >= twoPi) state.angle[i] -= twoPi;
+        if (state.angle[i] < 0.0)    state.angle[i] += twoPi;
+    }
+
+    rightOut = right * state.compensation;
+    return left * state.compensation;
 }
 
 void SynthVoice::advanceShapingSmoothing() noexcept
@@ -1590,13 +1669,31 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             // rightOut only where there is a second channel to fetch. On anything
             // mono the two sides are the same number, and asking for both makes
             // the slot do a second interpolation to produce a copy.
-            osc1Sample = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq, &osc1OneShot, osc1Shaping,
-                                          osc1Stereo ? &osc1Right : nullptr);
-            osc2Sample = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq, &osc2OneShot, osc2Shaping,
-                                          osc2Stereo ? &osc2Right : nullptr);
+            if (osc1Unison.active())
+            {
+                osc1Sample = renderUnison(osc1Unison, osc1Waveform, osc1UserSlot, osc1Freq,
+                                          osc1AngleDelta, osc1Shaping, osc1Stereo, osc1Right);
+            }
+            else
+            {
+                osc1Sample = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq, &osc1OneShot, osc1Shaping,
+                                              osc1Stereo ? &osc1Right : nullptr);
 
-            if (! osc1Stereo) osc1Right = osc1Sample;
-            if (! osc2Stereo) osc2Right = osc2Sample;
+                if (! osc1Stereo) osc1Right = osc1Sample;
+            }
+
+            if (osc2Unison.active())
+            {
+                osc2Sample = renderUnison(osc2Unison, osc2Waveform, osc2UserSlot, osc2Freq,
+                                          osc2AngleDelta, osc2Shaping, osc2Stereo, osc2Right);
+            }
+            else
+            {
+                osc2Sample = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq, &osc2OneShot, osc2Shaping,
+                                              osc2Stereo ? &osc2Right : nullptr);
+
+                if (! osc2Stereo) osc2Right = osc2Sample;
+            }
             subOscSample = subOscOn ? generateWaveform(subOscAngle, subOscWaveform, subOscUserSlot, subOscFreq, &subOscOneShot) * subOscLevel : 0.0f;
         }
         else
@@ -1631,7 +1728,25 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             // and paying it everywhere pushed the audio thread over at high
             // polyphony, which sounded like notes refusing to play
             // (Giuseppe, 2026-08-26).
-            if (osc1Stereo)
+            // Unison sums its copies INSIDE the oversampler's loop, not around it.
+            // The expensive part of the stage is the filter, and one pass filters
+            // the sum of seven copies for the price of filtering one. Seven copies
+            // each through their own pass would be seven times the filter work,
+            // which is what makes unison affordable at all.
+            if (osc1Unison.active())
+            {
+                oscOsc12OS.processStereo(0, 2, 0.0f, [&] (float, float& right) -> float
+                {
+                    const float v = renderUnison(osc1Unison, osc1Waveform, osc1UserSlot, osc1Freq,
+                                                 d1, osc1Shaping, osc1Stereo, right);
+
+                    // The voice's own angle still runs, so switching unison off
+                    // mid-note picks up where the plain oscillator would be.
+                    osc1Angle += d1; wrap(osc1Angle);
+                    return v;
+                }, osc1Sample, osc1Right);
+            }
+            else if (osc1Stereo)
             {
                 // Both channels through ONE pass. The lambda advances the phase,
                 // so a second pass would step the oscillator twice per sample and
@@ -1655,7 +1770,18 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                 osc1Right = osc1Sample;
             }
 
-            if (osc2Stereo)
+            if (osc2Unison.active())
+            {
+                oscOsc12OS.processStereo(1, 3, 0.0f, [&] (float, float& right) -> float
+                {
+                    const float v = renderUnison(osc2Unison, osc2Waveform, osc2UserSlot, osc2Freq,
+                                                 d2, osc2Shaping, osc2Stereo, right);
+
+                    osc2Angle += d2; wrap(osc2Angle);
+                    return v;
+                }, osc2Sample, osc2Right);
+            }
+            else if (osc2Stereo)
             {
                 oscOsc12OS.processStereo(1, 3, 0.0f, [&] (float, float& right) -> float
                 {
