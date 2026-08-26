@@ -4134,6 +4134,126 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // Oscillator 2
     for (int i = 0; i < OscShape::numShapes; ++i)
         osc2WaveformCombo.addItem(safeString(OscShape::names[i]), i + 1);
+    osc2WaveformCombo.setSelectedId(2);  // Default to Triangle
+    if (auto* osc2WaveformParam = audioProcessor.getValueTreeState().getParameter("osc2Waveform"))
+        osc2WaveformAttachment = std::make_unique<WaveformChoiceAttachment>(
+            *osc2WaveformParam, osc2WaveformCombo);
+    osc2WaveformLabel.setText(safeString("Waveform 2"), juce::dontSendNotification);
+    osc2WaveformLabel.setJustificationType(juce::Justification::centred);
+    osc2WaveformLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
+    osc2WaveformLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+    
+    osc2CoarseTuneSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    osc2CoarseTuneSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    osc2CoarseTuneSlider.setTextValueSuffix(" st");
+    osc2CoarseTuneAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "osc2CoarseTune", osc2CoarseTuneSlider);
+    osc2CoarseTuneLabel.setText(safeString("Coarse"), juce::dontSendNotification);
+    osc2CoarseTuneLabel.setJustificationType(juce::Justification::centred);
+    osc2CoarseTuneLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
+    osc2CoarseTuneLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+    
+    osc2DetuneSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    osc2DetuneSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    osc2DetuneSlider.setTextValueSuffix(" ct");
+    osc2DetuneAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "osc2Detune", osc2DetuneSlider);
+    osc2DetuneLabel.setText(safeString("Detune"), juce::dontSendNotification);
+    osc2DetuneLabel.setJustificationType(juce::Justification::centred);
+    osc2DetuneLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
+    osc2DetuneLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+    
+    osc2LevelSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    osc2LevelSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    osc2LevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "osc2Level", osc2LevelSlider);
+    osc2LevelLabel.setText(safeString("Level"), juce::dontSendNotification);
+    osc2LevelLabel.setJustificationType(juce::Justification::centred);
+    osc2LevelLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
+    osc2LevelLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+    
+    osc2PanSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+    osc2PanSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    osc2PanAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "osc2Pan", osc2PanSlider);
+    osc2PanLabel.setText(safeString("Pan"), juce::dontSendNotification);
+    osc2PanLabel.setJustificationType(juce::Justification::centred);
+    osc2PanLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    osc2PanLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+    osc2PanLabel.setInterceptsMouseClicks(true, true);  // Clickable to reset pan to center
+    
+    // Noise
+    noiseColorCombo.addItem(safeString("White"), 1);
+    noiseColorCombo.addItem(safeString("Pink"), 2);
+    noiseColorCombo.setLookAndFeel(&customLookAndFeel);
+    // Attach to the "noiseType" parameter (White=0, Pink=1) so it can be automated
+    // and saved like any other control. Items must be added before the attachment.
+    if (auto* noiseTypeParam = audioProcessor.getValueTreeState().getParameter("noiseType"))
+        noiseColorAttachment = std::make_unique<WaveformChoiceAttachment>(
+            *noiseTypeParam, noiseColorCombo);
+    noiseColorLabel.setText(safeString("Noize Type"), juce::dontSendNotification);
+    noiseColorLabel.setJustificationType(juce::Justification::centred);
+    noiseColorLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
+    noiseColorLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+
+    //==========================================================================
+    // -- The three buttons that open the Waveforms window --
+    // One beside each dropdown that can select an imported sample. They open the
+    // same window; the only difference is which slot it lands on, taken from what
+    // that dropdown is currently set to.
+    {
+        using Kind = WaveformEditorComponent::BuiltInKind;
+
+        struct EditButtonTarget
+        {
+            SpaceDustToggleStyleButton* button;
+            juce::ComboBox* combo;
+            int userBase;
+            Kind kind;
+            UserWave::Group group;
+            const char* tip;
+        };
+
+        // The sub oscillator's and the Transient's buttons are set up here too,
+        // even though their dropdowns are built further down and in other
+        // sections of the panel: what makes these five one thing is that they all
+        // open the same window, and that is easier to see when they are written
+        // out together. Each one opens it on its OWN eight slots -- the group
+        // column -- so a sample loaded for one of them changes that waveform and
+        // no other.
+        const EditButtonTarget targets[] =
+        {
+            { &osc1WaveformEditButton,   &osc1WaveformCombo,   UserWave::oscUserBase,       Kind::Shapes,
+              UserWave::Group::Osc1,      "Import a sample as an Oscillator 1 waveform" },
+            { &osc2WaveformEditButton,   &osc2WaveformCombo,   UserWave::oscUserBase,       Kind::Shapes,
+              UserWave::Group::Osc2,      "Import a sample as an Oscillator 2 waveform" },
+            { &noiseWaveformEditButton,  &noiseColorCombo,     UserWave::noiseUserBase,     Kind::Noise,
+              UserWave::Group::Noise,     "Import a sample as a Noize source" },
+            { &subOscWaveformEditButton, &subOscWaveformCombo, UserWave::oscUserBase,       Kind::Shapes,
+              UserWave::Group::Sub,       "Import a sample as the Sub Oscillator waveform" },
+            { &transientTypeEditButton,  &transientTypeCombo,  UserWave::transientUserBase, Kind::Drums,
+              UserWave::Group::Transient, "Import a sample to play as the Transient hit" },
+        };
+
+        for (const auto& target : targets)
+        {
+            // No colours set here. The button paints itself through the same
+            // routine that draws the toggles beside it, so its navy, its border
+            // and its bloom all come from that one place.
+            target.button->setButtonText(safeString("Edit"));
+            target.button->setTooltip(safeString(target.tip));
+
+            auto* combo = target.combo;
+            auto* button = target.button;
+            const int userBase = target.userBase;
+            const Kind kind = target.kind;
+            const auto group = target.group;
+            target.button->onClick = [this, button, combo, userBase, kind, group]
+            {
+                openWaveformWindow(button, combo, userBase, kind, group);
+            };
+        }
+    }
 
     //==========================================================================
     // -- The five shaping knobs per oscillator --
