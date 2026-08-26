@@ -337,11 +337,26 @@ private:
     /** How far the list is scrolled, in pixels. */
     int listScroll = 0;
 
-    /** How tall the dashed drop box under the last row is.
+    /** How tall the dashed drop box at the foot of the list is.
 
-        Counted as part of the list's content, so the scroll reaches past the last
-        row far enough to show it. */
-    static constexpr int dropGhostHeight = 68;
+        PINNED, not scrolled. The rows scroll in the space above it and it never
+        moves, so the invitation to drag a sample in is on screen whatever the
+        list is showing -- which it was not when it lived under the last row,
+        twenty-one shapes down. */
+    static constexpr int dropGhostHeight = 62;
+
+    /** Where the rows are allowed to be: the list box less the pinned drop box.
+
+        One place, so the clip that draws them, the hit test that finds them and
+        the scroll that limits them all agree about where the rows end. */
+    juce::Rectangle<int> rowsViewArea() const;
+
+    /** An arrow coming down into a waveform, drawn inside the drop box.
+
+        The gesture and its result in one picture, because the box has to say
+        what it is for before anyone reads it -- and there is room beside it for
+        one short line of words and no more. */
+    void paintDropIcon (juce::Graphics&, juce::Rectangle<int> area, juce::Colour) const;
 
     //==========================================================================
     // -- Making room for a dropped file --
@@ -383,8 +398,21 @@ private:
     static constexpr int shapingValueHeight = 16;
     static constexpr int shapingLabelHeight = 14;
     static constexpr int shapingStripPad = 6;
-    static constexpr int shapingStripHeight = shapingLabelHeight + 2 + shapingKnobSize
-                                            + shapingValueHeight + shapingStripPad;
+
+    /** Room for the group box's own title above the knobs. */
+    static constexpr int shapingTitleInset = 22;
+
+    static constexpr int shapingStripHeight = shapingTitleInset + shapingLabelHeight + 2
+                                            + shapingKnobSize + shapingValueHeight
+                                            + shapingStripPad;
+
+    /** The box around the five shaping knobs.
+
+        They are the one group of controls here that does not act on the slot on
+        screen -- they act on the oscillator, and every waveform it plays goes
+        through them. A box of their own says that, where a bare row of knobs
+        under the list read as five more things belonging to the selected row. */
+    juce::GroupComponent shapingGroup;
 
     /** Take the borrowed knobs as children, or give the last set back. Called
         from setTarget, which is the only thing that changes which list is shown. */

@@ -2,6 +2,8 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "SpaceDustLookAndFeel.h"
+
 /**
     A pair of little arrows that step a ComboBox one item at a time.
 
@@ -137,9 +139,29 @@ private:
 
         arrow.closeSubPath();
 
-        // The same light blue the panel's labels use, brightening under the
-        // pointer so an arrow says it can be pressed.
-        g.setColour (lit ? juce::Colour (0xff00d4ff) : juce::Colour (0xff5a7a94));
+        // The knobs' cyan, and the knobs' bloom, taken from the LookAndFeel rather
+        // than written here.
+        //
+        // getMeterResponsiveKnobArcColour goes red with the output when it clips,
+        // and glowPath carries the one meter-driven law every glowing thing in the
+        // plugin reaches its alpha through -- so the arrows breathe with the sound
+        // like the arcs beside them instead of sitting flat while everything else
+        // moves. A colour written out here would have missed both.
+        if (auto* laf = dynamic_cast<SpaceDustLookAndFeel*> (&getLookAndFeel()))
+        {
+            const auto colour = laf->getMeterResponsiveKnobArcColour();
+
+            // Stroked, though the arrow is filled: the bloom is a halo around its
+            // outline, which is what glowPath gives a shape of this size.
+            laf->glowPath (g, arrow, colour, 1.0f);
+
+            g.setColour (colour.withAlpha (lit ? 1.0f : 0.7f));
+        }
+        else
+        {
+            g.setColour (juce::Colour (0xff00d4ff).withAlpha (lit ? 1.0f : 0.7f));
+        }
+
         g.fillPath (arrow);
     }
 

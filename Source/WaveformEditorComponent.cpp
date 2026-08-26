@@ -169,21 +169,27 @@ int WaveformEditorComponent::preferredHeight (int userBase, bool withShaping)
     return juce::jmin (wanted, maxPanelHeight);
 }
 
+juce::Rectangle<int> WaveformEditorComponent::rowsViewArea() const
+{
+    auto area = listBounds().reduced (groupPadding, 0);
+    area.removeFromTop (groupTitleInset);
+    area.removeFromBottom (groupPadding);
+
+    // The drop box is pinned across the foot of the list, so the rows get what is
+    // left above it and scroll within that.
+    area.removeFromBottom (dropGhostHeight);
+
+    return area;
+}
+
 int WaveformEditorComponent::listContentHeight() const
 {
-    // The rows AND the drop box under them.
-    //
-    // Counting only the rows was why the drop box never appeared: the scroll
-    // stopped with the last row flush against the bottom of the list, so the box
-    // had nought pixels to live in, failed its own minimum height and returned
-    // without drawing. It has to be part of what scrolls, because it is part of
-    // what the list holds (Giuseppe, 2026-08-26).
-    return numVisibleRows() * rowHeight + dropGhostHeight;
+    return numVisibleRows() * rowHeight;
 }
 
 int WaveformEditorComponent::listViewHeight() const
 {
-    return juce::jmax (0, listBounds().getHeight() - groupTitleInset - groupPadding);
+    return juce::jmax (0, rowsViewArea().getHeight());
 }
 
 int WaveformEditorComponent::maxListScroll() const
@@ -249,6 +255,60 @@ void WaveformEditorComponent::adoptShapingControls (const ShapingControls* shapi
     //
     // Which children a component has is reason enough to lay it out again.
     resized();
+}
+
+void WaveformEditorComponent::paintDropIcon (juce::Graphics& g, juce::Rectangle<int> area,
+                                             juce::Colour colour) const
+{
+    // An arrow coming down into a waveform: the gesture and its result, in one
+    // picture. The box has to say what it is for before anyone reads it, and
+    // there is room for one short line of words beside this and no more.
+    auto box = area.toFloat().reduced (1.0f, 0.0f);
+
+    const float centreX = box.getCentreX();
+    const float waveTop = box.getBottom() - box.getHeight() * 0.42f;
+
+    //-- The arrow, in the upper part -------------------------------------------
+    {
+        const float tipY = waveTop - 3.0f;
+        const float topY = box.getY() + 1.0f;
+        const float headW = box.getWidth() * 0.30f;
+
+        g.setColour (colour);
+        g.drawLine (centreX, topY, centreX, tipY - 3.0f, 1.8f);
+
+        juce::Path head;
+        head.startNewSubPath (centreX, tipY);
+        head.lineTo (centreX + headW, tipY - 6.0f);
+        head.lineTo (centreX - headW, tipY - 6.0f);
+        head.closeSubPath();
+
+        g.fillPath (head);
+    }
+
+    //-- The waveform it lands in, along the bottom -----------------------------
+    {
+        juce::Path wave;
+        const float left = box.getX();
+        const float width = box.getWidth();
+        const float mid = box.getBottom() - box.getHeight() * 0.20f;
+        const float amp = box.getHeight() * 0.16f;
+
+        for (int i = 0; i <= 24; ++i)
+        {
+            const float t = (float) i / 24.0f;
+            const float x = left + t * width;
+            const float y = mid - amp * std::sin (t * juce::MathConstants<float>::twoPi);
+
+            if (i == 0)
+                wave.startNewSubPath (x, y);
+            else
+                wave.lineTo (x, y);
+        }
+
+        g.setColour (colour);
+        g.strokePath (wave, juce::PathStrokeType (1.8f));
+    }
 }
 
 PhaseShaper::Amounts WaveformEditorComponent::currentShaping() const
@@ -326,6 +386,20 @@ WaveformEditorComponent::WaveformEditorComponent (UserWaveLibrary& libraryToUse,
 
     addAndMakeVisible (listGroup);
     addAndMakeVisible (detailGroup);
+
+    // Added hidden. Only the two oscillators have shaping, and the box must not
+    // be drawn around nothing on the lists that have none.
+    // No setLookAndFeel here, on purpose: listGroup and detailGroup inherit theirs
+    // from this component, and a look-and-feel set explicitly on a child is one
+    // more pointer that has to outlive it.
+    shapingGroup.setText ("Wave Shaping");
+    addChildComponent (shapingGroup);
+
+    // The blue is not a colour anyone sets -- it comes from this property, which
+    // the LookAndFeel reads to pick the box's outline and its inward glow. Without
+    // it a group draws in the plain grey default and reads as a different kind of
+    // thing from the two boxes beside it.
+    shapingGroup.getProperties().set ("viewportGlow", true);
 
     loadButton.setButtonText ("Load File...");
     clearButton.setButtonText ("Clear Slot");
@@ -1820,6 +1894,12 @@ void WaveformEditorComponent::updateDragGap (juce::Point<int> position, bool dra
 
 int WaveformEditorComponent::rowAt (juce::Point<int> position) const
 {
+    // A point over the pinned drop box is not over a row, whatever the arithmetic
+    // says: rows are drawn clipped to the area above it, so one scrolled under
+    // the box is on screen nowhere and must not answer to the mouse.
+    if (! rowsViewArea().contains (position))
+        return -1;
+
     for (int row = 0; row < numRows(); ++row)
         if (isRowVisible (row) && rowBounds (row).contains (position))
             return row;
@@ -1845,6 +1925,8 @@ void WaveformEditorComponent::resized()
     // the slot on screen: they act on the oscillator, and every waveform it plays
     // goes through them. Sitting them among the Load and Clear buttons would say
     // the opposite.
+    shapingGroup.setVisible (shapingControls != nullptr);
+
     if (shapingControls != nullptr)
     {
         // listBounds() has already given up this height, so the strip goes in the
@@ -1852,6 +1934,12 @@ void WaveformEditorComponent::resized()
         auto strip = getLocalBounds().withTrimmedBottom (statusHeight + margin)
                                      .removeFromBottom (shapingStripHeight)
                                      .reduced (margin, 0);
+
+        shapingGroup.setBounds (strip);
+
+        // Inside the box, below its title.
+        strip.removeFromTop (shapingTitleInset);
+        strip = strip.reduced (groupPadding, 0);
 
         const int cell = strip.getWidth() / ShapingControls::numKnobs;
 
@@ -2276,14 +2364,17 @@ void WaveformEditorComponent::paintList (juce::Graphics& g)
     const int selected = rowForSelection();
 
     // Rows are drawn at a scrolled offset, so one at either end is partly outside
-    // the list box. Clipped to the box, or a half-scrolled row would spill over
-    // the group's border and into the panel around it.
-    auto clip = listBounds().reduced (groupPadding, 0);
-    clip.removeFromTop (groupTitleInset);
-    clip.removeFromBottom (groupPadding);
-
+    // the list box. Clipped to the rows' own area -- which stops short of the
+    // pinned drop box -- or a half-scrolled row would spill over the group's
+    // border, or slide underneath the box that is supposed to sit below them all.
+    //
+    // BRACED, so the clip ends with the loop. Left at function scope it went on
+    // clipping everything after it, and everything after it includes the drop box
+    // -- which sits in the one strip this area is defined to exclude. The box was
+    // drawn every frame and clipped away every frame (Giuseppe, 2026-08-26).
+    {
     juce::Graphics::ScopedSaveState saved (g);
-    g.reduceClipRegion (clip);
+    g.reduceClipRegion (rowsViewArea());
 
     for (int row = 0; row < numRows(); ++row)
     {
@@ -2346,6 +2437,7 @@ void WaveformEditorComponent::paintList (juce::Graphics& g)
         g.setFont (lookAndFeel.getBodyFont (10.5f, false));
         g.drawText (rowDetail (row), content, juce::Justification::topLeft, true);
     }
+    }   // the rows' clip ends here, and NOT at the end of this function
 
     //==========================================================================
     // The line between what came with the plugin and what the player brought,
@@ -2358,58 +2450,69 @@ void WaveformEditorComponent::paintList (juce::Graphics& g)
     // been is the whole point: it puts the offer exactly where the thing it
     // offers will appear.
     {
-        auto list = listBounds().reduced (groupPadding, 0);
+        auto rows = rowsViewArea();
 
-        auto clip = list;
-        clip.removeFromTop (groupTitleInset);
-        clip.removeFromBottom (groupPadding);
-
-        juce::Graphics::ScopedSaveState saved (g);
-        g.reduceClipRegion (clip);
-
-        // Where the built-ins end. userBase is their count, so it is also the
-        // display position of the first slot -- built-ins are never hidden.
-        const int dividerY = list.getY() + groupTitleInset + userBase * rowHeight
-                           - listScroll
-                           + (dragGap > 0.0f && dragInsertPosition >= 0
-                              && dragInsertPosition <= userBase
-                                  ? juce::roundToInt (dragGap * (float) rowHeight) : 0);
-
-        g.setColour (toggleBorder.withAlpha (0.6f));
-        g.fillRect (list.getX(), dividerY, list.getWidth(), 1);
-
-        // The drop box, under the last row the list actually shows -- which is
-        // where the empty slots would have been.
-        //
-        // A fixed height, and one the scroll knows about, rather than "whatever
-        // is left at the bottom": what was left at the bottom was nothing.
-        const int ghostTop = list.getY() + groupTitleInset
-                           + numVisibleRows() * rowHeight - listScroll
-                           + (dragGap > 0.0f ? juce::roundToInt (dragGap * (float) rowHeight) : 0);
-
-        auto ghost = juce::Rectangle<int> (list.getX(), ghostTop,
-                                           list.getWidth(), dropGhostHeight).reduced (2, 6);
-
-        if (! clip.getIntersection (ghost).isEmpty())
+        // The line between the two sections, drawn only while the join is on
+        // screen. userBase is the number of built-ins, so it is also the display
+        // position of the first slot -- built-ins are never hidden.
         {
-            const bool lit = dragActive;
+            juce::Graphics::ScopedSaveState saved (g);
+            g.reduceClipRegion (rows);
 
-            juce::Path dashed;
-            dashed.addRoundedRectangle (ghost.toFloat().reduced (1.0f), 5.0f);
+            const int dividerY = rows.getY() + userBase * rowHeight - listScroll
+                               + (dragGap > 0.0f && dragInsertPosition >= 0
+                                  && dragInsertPosition <= userBase
+                                      ? juce::roundToInt (dragGap * (float) rowHeight) : 0);
 
-            const float dashes[] = { 5.0f, 5.0f };
-            juce::Path strokedDashes;
-            juce::PathStrokeType (lit ? 2.0f : 1.0f)
-                .createDashedStroke (strokedDashes, dashed, dashes, 2);
-
-            g.setColour (lit ? knobArcCyan : toggleBorder.withAlpha (0.75f));
-            g.fillPath (strokedDashes);
-
-            g.setColour (lit ? knobArcCyan : dimText.withAlpha (0.8f));
-            g.setFont (lookAndFeel.getBodyFont (11.0f, false));
-            g.drawFittedText ("Drag samples here to tune and play them",
-                              ghost.reduced (8, 4), juce::Justification::centred, 3);
+            g.setColour (toggleBorder.withAlpha (0.6f));
+            g.fillRect (rows.getX(), dividerY, rows.getWidth(), 1);
         }
+
+        // The drop box, pinned across the foot of the list and never scrolled.
+        //
+        // It used to sit under the last row, which put it twenty-one shapes down
+        // and out of sight until the list was scrolled to its end -- an invitation
+        // nobody was going to find. A dropped file lands in the first free slot,
+        // which appears at the bottom of the list, so the box sits where what it
+        // makes will appear.
+        auto ghost = listBounds().reduced (groupPadding, 0);
+        ghost.removeFromBottom (groupPadding);
+        ghost = ghost.removeFromBottom (dropGhostHeight).reduced (2, 5);
+
+        const bool lit = dragActive;
+
+        // Filled, not just outlined. A one-pixel dashed line at three-quarter
+        // alpha on this navy is very nearly not there, and a thing nobody can see
+        // invites nobody to do anything (Giuseppe, 2026-08-26).
+        g.setColour (lit ? knobArcCyan.withAlpha (0.18f)
+                         : juce::Colour (0xff00d4ff).withAlpha (0.06f));
+        g.fillRoundedRectangle (ghost.toFloat(), 5.0f);
+
+        juce::Path dashed;
+        dashed.addRoundedRectangle (ghost.toFloat().reduced (1.0f), 5.0f);
+
+        const float dashes[] = { 5.0f, 4.0f };
+        juce::Path strokedDashes;
+        juce::PathStrokeType (lit ? 2.4f : 1.6f)
+            .createDashedStroke (strokedDashes, dashed, dashes, 2);
+
+        g.setColour (lit ? knobArcCyan : juce::Colour (0xff00d4ff).withAlpha (0.65f));
+        g.fillPath (strokedDashes);
+
+        // The picture: a file coming down into a waveform. Drawn rather than
+        // written because the box has to say what it is for before it is read --
+        // and there is only room for one short line of words beside it.
+        auto content = ghost.reduced (8, 5);
+        auto iconArea = content.removeFromLeft (34);
+        content.removeFromLeft (6);
+
+        paintDropIcon (g, iconArea, lit ? knobArcCyan
+                                        : juce::Colour (0xff00d4ff).withAlpha (0.8f));
+
+        g.setColour (lit ? knobArcCyan : juce::Colour (0xffa0d8ff).withAlpha (0.9f));
+        g.setFont (lookAndFeel.getBodyFont (11.0f, true));
+        g.drawFittedText ("Drag samples here\nto tune and play them",
+                          content, juce::Justification::centredLeft, 2);
     }
 
     //==========================================================================

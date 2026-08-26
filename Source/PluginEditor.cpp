@@ -8185,7 +8185,16 @@ void SpaceDustAudioProcessorEditor::layoutPlate()
         const int gap = 4;
         int px = 8;
 
-        presetCombo.setBounds(px, presetY, 142, presetH);
+        // The preset box gives up its left edge to the stepper arrows rather than
+        // taking room from the buttons beside it: it starts where the arrows end,
+        // and is narrower by exactly what they need. px advances by the original
+        // 142 either way, so Save, Initialize and Folder do not move a pixel.
+        //
+        // Without this the box sat hard against x = 8, the arrows wanted to be at
+        // -6, and they clamped to the window edge and sat on top of it.
+        const int stepperRoom = ComboStepper::stripWidth + ComboStepper::gapToBox + 2;
+
+        presetCombo.setBounds(px + stepperRoom, presetY, 142 - stepperRoom, presetH);
         px += 142 + gap;
 
         savePresetButton.setBounds(px, presetY, 80, presetH);
