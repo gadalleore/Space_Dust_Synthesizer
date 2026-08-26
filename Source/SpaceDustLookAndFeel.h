@@ -247,6 +247,14 @@ public:
                                    const juce::String& text,
                                    const juce::Justification& position,
                                    juce::GroupComponent& group) override;
+    /** Leave the combo's text clear of the stepper arrows.
+
+        Every dropdown carries a ComboStepper laid over its left edge. Without
+        this the text would start underneath the arrows. Indenting here rather
+        than moving the box means no layout around it has to change -- see
+        ComboStepper. */
+    void positionComboBoxText(juce::ComboBox& box, juce::Label& label) override;
+
     void drawComboBox(juce::Graphics& g, int width, int height, bool isButtonDown,
                       int buttonX, int buttonY, int buttonW, int buttonH,
                       juce::ComboBox& box) override;

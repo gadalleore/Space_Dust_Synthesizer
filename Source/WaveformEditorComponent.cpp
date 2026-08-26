@@ -1,6 +1,7 @@
 ﻿#include "WaveformEditorComponent.h"
 
 #include "OscillatorShapes.h"
+#include "PhaseShaper.h"
 #include "WaveAnalysis.h"
 
 #if JUCE_WINDOWS
@@ -66,6 +67,14 @@ namespace
     constexpr int resampleTimerId = 0;
     constexpr int playheadTimerId = 1;
     constexpr int trimTimerId = 2;
+    constexpr int dragTimerId = 3;
+
+    /** How often the gap under a dragged file is eased, and how much of the way
+        it closes the distance each time. Sixty a second, a fifth of the way, so
+        the rows slide aside in about a tenth of a second -- fast enough to feel
+        like a response and slow enough to be seen. */
+    constexpr int dragGapIntervalMs = 16;
+    constexpr float dragGapEase = 0.2f;
 
     /** How often a drag is put into the slot and published: about thirty times a
         second.
@@ -104,21 +113,20 @@ namespace
         return mode == UserWave::Mode::SingleCycle ? "Single Cycle" : "Full Sample";
     }
 
-    /** The built-in shapes, for drawing only.
+    /** A built-in shape, drawn as the oscillator will actually play it.
 
-        These mirror the switch in SynthVoice::generateWaveform. They are written
-        out again here rather than shared with it because the voice's version is
-        the hot path -- up to four times per sample per oscillator -- and because
-        what is wanted here is a picture, not a signal: no band limiting and no
-        phase, just the outline, at a size where a few pixels could not be seen. */
-    float builtInShapeValue (int shape, double phase01)
+        The same two functions the voice reads -- the shape, and then Bend,
+        Spectrum and Sync over it -- so the picture and the sound cannot disagree.
+        This was a second copy of the shape maths once, which was survivable at
+        four shapes and would not be at twenty-one: the picture is how a shape gets
+        chosen, so a picture that lies is worse than no picture at all.
+
+        The shaping matters twice over now those knobs live in this panel. Turning
+        Bend + up and watching the shape lean is the whole reason for putting them
+        here rather than on the main page. */
+    float builtInShapeValue (int shape, double phase01, const PhaseShaper::Amounts& shaping)
     {
-        // The same function the oscillator reads, so the row draws the shape that
-        // will actually sound. It used to be a second copy of the maths, which was
-        // survivable at four shapes and would not be at twenty-one -- the picture
-        // is how the player picks a shape, so a picture that lies is worse than no
-        // picture at all.
-        return OscShape::shapeValue (shape, phase01);
+        return PhaseShaper::shapedValue (shape, phase01, shaping);
     }
 
     /** How near a marker the pointer has to be to pick it up, in pixels. A line
@@ -188,8 +196,13 @@ void WaveformEditorComponent::adoptShapingControls (const ShapingControls* shapi
     {
         for (int i = 0; i < ShapingControls::numKnobs; ++i)
         {
-            if (shapingControls->knobs[i] != nullptr)
-                removeChildComponent (shapingControls->knobs[i]);
+            if (auto* knob = shapingControls->knobs[i])
+            {
+                // Drop the repaint callback with the knob. Left behind, it would
+                // fire at a panel that is no longer showing this oscillator.
+                knob->onValueChange = nullptr;
+                removeChildComponent (knob);
+            }
 
             if (shapingControls->labels[i] != nullptr)
                 removeChildComponent (shapingControls->labels[i]);
@@ -206,9 +219,38 @@ void WaveformEditorComponent::adoptShapingControls (const ShapingControls* shapi
         if (shapingControls->labels[i] != nullptr)
             addAndMakeVisible (shapingControls->labels[i]);
 
-        if (shapingControls->knobs[i] != nullptr)
-            addAndMakeVisible (shapingControls->knobs[i]);
+        if (auto* knob = shapingControls->knobs[i])
+        {
+            addAndMakeVisible (knob);
+
+            // Redraw the shapes as the knob moves, so the picture bends under the
+            // hand. onValueChange rather than a listener: the editor owns these
+            // and attaches nothing else to them, and the callback is dropped when
+            // the panel gives them back below.
+            knob->onValueChange = [this] { repaint(); };
+        }
     }
+}
+
+PhaseShaper::Amounts WaveformEditorComponent::currentShaping() const
+{
+    PhaseShaper::Amounts a;
+
+    if (shapingControls == nullptr)
+        return a;
+
+    const auto valueOf = [this] (int index) -> double
+    {
+        auto* knob = shapingControls->knobs[index];
+        return knob != nullptr ? knob->getValue() : 0.0;
+    };
+
+    a.bendPlus      = valueOf (0);
+    a.bendMinus     = valueOf (1);
+    a.bendPlusMinus = valueOf (2);
+    a.spectrum      = valueOf (3);
+    a.sync          = valueOf (4);
+    return a;
 }
 
 void WaveformEditorComponent::setListScroll (int newScroll)
@@ -560,8 +602,11 @@ juce::String WaveformEditorComponent::rowDetail (int row) const
 {
     const int slot = slotForRow (row);
 
+    // A built-in row says nothing under its name. It used to read "Built in",
+    // which told the player something they could already see: the row has a
+    // shape drawn beside it and no file behind it.
     if (slot < 0)
-        return "Built in";
+        return {};
 
     const auto& entry = library.bank().slot (group, slot);
 
@@ -879,6 +924,29 @@ void WaveformEditorComponent::timerCallback (int timerID)
         return;
     }
 
+    if (timerID == dragTimerId)
+    {
+        // Ease the gap towards open while a file is over the list and towards
+        // shut once it has gone, then stop once it has arrived. A timer that runs
+        // only while something is moving costs nothing the rest of the time.
+        const float target = dragActive ? 1.0f : 0.0f;
+        dragGap += (target - dragGap) * dragGapEase;
+
+        if (std::abs (target - dragGap) < 0.01f)
+        {
+            dragGap = target;
+            stopTimer (dragTimerId);
+
+            // Forget where the gap was only once it has finished closing, or the
+            // rows would snap back before the gap had gone.
+            if (! dragActive)
+                dragInsertPosition = -1;
+        }
+
+        repaint();
+        return;
+    }
+
     if (timerID == trimTimerId)
     {
         // Nothing to do when the mouse has stopped: updateTrimSession compares
@@ -1079,14 +1147,18 @@ void WaveformEditorComponent::fileDragEnter (const juce::StringArray&, int x, in
 {
     dragActive = true;
     dragTargetRow = rowAt ({ x, y });
+    updateDragGap ({ x, y }, true);
     repaint();
 }
 
 void WaveformEditorComponent::fileDragMove (const juce::StringArray&, int x, int y)
 {
     const int row = rowAt ({ x, y });
+    const int wasInsert = dragInsertPosition;
 
-    if (row != dragTargetRow)
+    updateDragGap ({ x, y }, true);
+
+    if (row != dragTargetRow || wasInsert != dragInsertPosition)
     {
         dragTargetRow = row;
         repaint();
@@ -1097,6 +1169,7 @@ void WaveformEditorComponent::fileDragExit (const juce::StringArray&)
 {
     dragActive = false;
     dragTargetRow = -1;
+    updateDragGap ({}, false);
     repaint();
 }
 
@@ -1106,6 +1179,7 @@ void WaveformEditorComponent::filesDropped (const juce::StringArray& files, int 
 
     dragActive = false;
     dragTargetRow = -1;
+    updateDragGap ({}, false);
 
     if (files.isEmpty())
     {
@@ -1689,9 +1763,40 @@ juce::Rectangle<int> WaveformEditorComponent::rowBounds (int row) const
     // hit-testing follows the scroll for free and cannot disagree with what is
     // drawn -- which is exactly the sort of pair that drifts apart when the
     // offset is applied in two places.
-    return { list.getX(),
-             list.getY() + groupTitleInset + position * rowHeight - listScroll,
-             list.getWidth(), rowHeight };
+    int y = list.getY() + groupTitleInset + position * rowHeight - listScroll;
+
+    // And the same for the gap a dragged file opens. Everything from the landing
+    // place downwards slides out of the way.
+    if (dragGap > 0.0f && dragInsertPosition >= 0 && position >= dragInsertPosition)
+        y += juce::roundToInt (dragGap * (float) rowHeight);
+
+    return { list.getX(), y, list.getWidth(), rowHeight };
+}
+
+int WaveformEditorComponent::dropPositionAt (juce::Point<int> position) const
+{
+    // The slot a drop here would go into, as a display position.
+    //
+    // filesDropped decides the same thing and must reach the same answer, or the
+    // gap would open in one place and the file land in another.
+    const int row = rowAt (position);
+    const int slot = slotForRow (row);
+
+    const int landing = slot >= 0 ? slot : fallbackImportSlot();
+
+    return displayPositionForRow (userBase + landing);
+}
+
+void WaveformEditorComponent::updateDragGap (juce::Point<int> position, bool dragging)
+{
+    const int wanted = dragging ? dropPositionAt (position) : -1;
+
+    if (dragging && wanted >= 0)
+        dragInsertPosition = wanted;
+
+    // The gap eases open and shut on its own timer; this only says which way.
+    if (! isTimerRunning (dragTimerId))
+        startTimer (dragTimerId, dragGapIntervalMs);
 }
 
 int WaveformEditorComponent::rowAt (juce::Point<int> position) const
@@ -1811,9 +1916,24 @@ void WaveformEditorComponent::paint (juce::Graphics& g)
     auto status = juce::Rectangle<int> (margin + 4, getHeight() - statusHeight - margin,
                                         getWidth() - 2 * margin - 8, statusHeight);
 
-    g.setFont (lookAndFeel.getBodyFont (12.0f, false));
-    g.setColour (statusIsError ? errorRed : dimText);
-    g.drawText (statusMessage, status, juce::Justification::centredLeft, true);
+    // The status line says what just happened. When nothing has, it says what the
+    // player can do that the panel does not otherwise show -- dragging a file in
+    // is the one action here with no button to press, so it is the one that needs
+    // telling. A real message always wins: it is the answer to something they
+    // just did, and this is only an offer.
+    if (statusMessage.isNotEmpty())
+    {
+        g.setFont (lookAndFeel.getBodyFont (12.0f, false));
+        g.setColour (statusIsError ? errorRed : dimText);
+        g.drawText (statusMessage, status, juce::Justification::centredLeft, true);
+    }
+    else
+    {
+        g.setFont (lookAndFeel.getBodyFont (12.0f, false));
+        g.setColour (dimText.withAlpha (0.75f));
+        g.drawText ("Drag a waveform into the list or editor to tune and use the sample",
+                    status, juce::Justification::centredLeft, true);
+    }
 }
 
 //==============================================================================
@@ -2032,6 +2152,10 @@ void WaveformEditorComponent::paintRowWaveform (juce::Graphics& g, juce::Rectang
 
     const int width = area.getWidth();
 
+    // Read once for the whole picture, not per column: five slider reads a column
+    // across nineteen rows would be thousands of them per frame.
+    const auto shaping = currentShaping();
+
     for (int x = 0; x < width; ++x)
     {
         const double across = (double) x / (double) (width - 1);
@@ -2042,7 +2166,7 @@ void WaveformEditorComponent::paintRowWaveform (juce::Graphics& g, juce::Rectang
         // above -- because a cycle has one value per column and a sample has not.
         if (entry == nullptr)
         {
-            value = builtInShapeValue (row, across * repeats);
+            value = builtInShapeValue (row, across * repeats, shaping);
         }
         else if (! entry->tables.empty())
         {
@@ -2202,41 +2326,46 @@ void WaveformEditorComponent::paintList (juce::Graphics& g)
     }
 
     //==========================================================================
-    // Everything below the last row is the drop zone. Hiding the empty slots left
-    // this space behind, and it is exactly the affordance their absence removed:
-    // somewhere to aim a file, that says where the file will land.
-    const bool hasRoom = ! library.bank().slot (group, fallbackImportSlot()).isPlayable();
+    // The gap a dragged file has opened, drawn as the shape of the row that will
+    // appear there. The rows either side have already slid apart to make it -- see
+    // rowBounds -- so this only has to fill what they left.
+    //
+    // This replaced a fixed drop zone drawn below the last row. That worked while
+    // a list was four shapes and eight slots; at twenty-one shapes it fell past
+    // the bottom of the box, was clamped to nothing and stopped being drawn at
+    // all, which is how the invitation to drop a file went missing.
+    if (dragGap > 0.005f && dragInsertPosition >= 0)
+    {
+        auto list = listBounds().reduced (groupPadding, 0);
 
-    auto list = listBounds().reduced (groupPadding, 0);
+        auto gap = juce::Rectangle<int> (
+            list.getX(),
+            list.getY() + groupTitleInset + dragInsertPosition * rowHeight - listScroll,
+            list.getWidth(),
+            juce::roundToInt (dragGap * (float) rowHeight)).reduced (0, 2);
 
-    auto zone = juce::Rectangle<int> (list.getX(),
-                                      list.getY() + groupTitleInset + numVisibleRows() * rowHeight,
-                                      list.getWidth(), rowHeight * 2).reduced (0, 4);
+        // Clipped to the list, like the rows are: a gap opened near the bottom of
+        // a scrolled list would otherwise spill past the box.
+        auto clip = list;
+        clip.removeFromTop (groupTitleInset);
+        clip.removeFromBottom (groupPadding);
 
-    if (zone.getBottom() > listBounds().getBottom() - groupPadding)
-        zone.setBottom (listBounds().getBottom() - groupPadding);
+        if (gap.getHeight() > 3 && ! clip.getIntersection (gap).isEmpty())
+        {
+            juce::Graphics::ScopedSaveState saved (g);
+            g.reduceClipRegion (clip);
 
-    if (zone.getHeight() < 28)
-        return;
+            juce::Path dashed;
+            dashed.addRoundedRectangle (gap.toFloat().reduced (1.0f), 4.0f);
 
-    const bool zoneIsTarget = dragActive && dragTargetRow < 0;
+            const float dashes[] = { 4.0f, 4.0f };
+            juce::Path strokedDashes;
+            juce::PathStrokeType (2.0f).createDashedStroke (strokedDashes, dashed, dashes, 2);
 
-    juce::Path dashed;
-    dashed.addRoundedRectangle (zone.toFloat().reduced (1.0f), 4.0f);
-
-    const float dashes[] = { 4.0f, 4.0f };
-    juce::Path strokedDashes;
-    juce::PathStrokeType (zoneIsTarget ? 2.0f : 1.0f).createDashedStroke (strokedDashes, dashed,
-                                                                          dashes, 2);
-
-    g.setColour (zoneIsTarget ? knobArcCyan : toggleBorder);
-    g.fillPath (strokedDashes);
-
-    g.setColour (zoneIsTarget ? knobArcCyan : dimText);
-    g.setFont (lookAndFeel.getBodyFont (11.5f, false));
-    g.drawFittedText (hasRoom ? "Drop an audio file here to add a waveform"
-                              : "All eight slots are full. Drop on one to replace it.",
-                      zone.reduced (8, 4), juce::Justification::centred, 2);
+            g.setColour (knobArcCyan.withAlpha (dragGap));
+            g.fillPath (strokedDashes);
+        }
+    }
 }
 
 //==============================================================================

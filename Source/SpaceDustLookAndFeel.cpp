@@ -1,4 +1,5 @@
 #include "SpaceDustLookAndFeel.h"
+#include "ComboStepper.h"
 #include "BinaryData.h"
 #include "SpaceDustDither.h"
 #include <juce_graphics/juce_graphics.h>
@@ -201,6 +202,16 @@ void SpaceDustLookAndFeel::drawGroupComponentOutline(juce::Graphics& g, int widt
 
 //==============================================================================
 // -- ComboBox Drawing --
+
+void SpaceDustLookAndFeel::positionComboBoxText(juce::ComboBox& box, juce::Label& label)
+{
+    // The arrow strip on the left, then the same right-hand room JUCE's own
+    // version leaves for the drop-down triangle.
+    const int left = ComboStepper::stripWidth + 4;
+
+    label.setBounds(left, 1, box.getWidth() - left - 30, box.getHeight() - 2);
+    label.setFont(getLabelFont(label));
+}
 
 void SpaceDustLookAndFeel::drawComboBox(juce::Graphics& g, int width, int height, bool isButtonDown,
                                         int buttonX, int buttonY, int buttonW, int buttonH,

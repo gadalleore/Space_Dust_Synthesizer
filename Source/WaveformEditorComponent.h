@@ -2,6 +2,7 @@
 
 #include <juce_gui_basics/juce_gui_basics.h>
 
+#include "PhaseShaper.h"
 #include "SpaceDustLookAndFeel.h"
 #include "UserWavetable.h"
 
@@ -330,6 +331,37 @@ private:
     int listScroll = 0;
 
     //==========================================================================
+    // -- Making room for a dropped file --
+    //
+    // While a file is dragged over the list, the rows from the landing place
+    // downwards slide out of the way and leave a gap the width of a row. The gap
+    // is not decoration: it opens at the slot the file will ACTUALLY go into, so
+    // the panel answers "where will this land" before the button is let go.
+    //
+    // Hovering an import slot means that slot -- a drop there replaces it.
+    // Hovering anywhere else means the first free slot, which is where a drop
+    // outside the slots goes. See filesDropped.
+
+    /** How far open the gap is, 0 to 1. Eased on a timer so the rows slide
+        rather than jump. */
+    float dragGap = 0.0f;
+
+    /** The display position the gap opens above, or -1 for none. A position, not
+        a row, because that is what the geometry below is written in. */
+    int dragInsertPosition = -1;
+
+    /** Where a file would land if it were dropped at this point: the display
+        position of the slot that would take it.
+
+        Worked out WITHOUT the gap. Asking rowAt() would read the rows where the
+        gap has already pushed them, so the answer would move the gap, which
+        would move the answer. */
+    int dropPositionAt (juce::Point<int> position) const;
+
+    /** Open or close the gap for a drag at this point. */
+    void updateDragGap (juce::Point<int> position, bool dragging);
+
+    //==========================================================================
     // -- The shaping strip --
 
     /** How tall the strip of shaping knobs is: a label, a knob and its value
@@ -344,6 +376,18 @@ private:
     /** Take the borrowed knobs as children, or give the last set back. Called
         from setTarget, which is the only thing that changes which list is shown. */
     void adoptShapingControls (const ShapingControls* shaping);
+
+    /** What the five knobs are set to right now.
+
+        Read from the sliders rather than kept in a member, because the sliders are
+        the truth: a parameter changed by automation, by a preset or by the host
+        moves them, and nothing here would be told. All zero when this list has no
+        shaping, so a picture drawn without knobs is the plain shape.
+
+        The knobs' own order is fixed by the editor that builds them -- Bend +,
+        Bend -, Bend +/-, Spectrum, Sync -- and this is the one place that
+        knowledge is written down. */
+    PhaseShaper::Amounts currentShaping() const;
 
     /** The knobs on screen, or null when this list has none. Borrowed, never
         owned -- see ShapingControls. */

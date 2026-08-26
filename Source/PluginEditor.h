@@ -14,6 +14,7 @@
 #include "PresetManager.h"
 #include "CheezeGuyGame.h"
 #include "WaveformChoiceAttachment.h"
+#include "ComboStepper.h"
 #include "WaveformEditorComponent.h"
 #include "SpaceDustDither.h"
 
@@ -539,6 +540,10 @@ private:
     /** The Waveforms window. Built on first use and then kept, hidden, so that
         closing and reopening it does not lose the selected slot or move it back
         to the middle of the screen. */
+    /** One per dropdown, built by attachComboSteppers. Each lays itself over its
+        combo box and follows it, so no layout here has to make room. */
+    std::vector<std::unique_ptr<ComboStepper>> comboSteppers;
+
     std::unique_ptr<WaveformEditorPanel> waveformWindow;
 
     /** Open the Waveforms window, pointed at the dropdown that asked for it.
@@ -551,6 +556,13 @@ private:
         what the entries before them are so the window can draw them, and group
         says which of the five sets of import slots the window is to show --
         each dropdown has its own. */
+    /** Give every dropdown in the plugin a pair of stepper arrows.
+
+        Walks the tree rather than naming twenty-six combos by hand: a list
+        written out here would go stale the first time a dropdown was added, and
+        a dropdown without arrows among twenty-five with them reads as a bug. */
+    void attachComboSteppers(juce::Component& root);
+
     void openWaveformWindow(juce::Component* anchorButton, juce::ComboBox* combo,
                             int userBase, WaveformEditorComponent::BuiltInKind kind,
                             UserWave::Group group);

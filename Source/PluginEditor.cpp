@@ -6461,6 +6461,15 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             // resized() must NOT call setSize() again to prevent infinite recursion
             designHeight_ = calculatedHeight;
 
+            // A pair of stepper arrows on every dropdown in the plugin.
+            //
+            // Here, and by walking the tree, rather than named one by one beside
+            // each combo: there are twenty-six of them across five pages, and a
+            // list written by hand is a list that goes stale the first time a
+            // dropdown is added. Everything exists by now -- the pages build their
+            // controls in their constructors, which ran before this timer.
+            attachComboSteppers(*this);
+
             // Auto-fit the INITIAL window size to the display (the user can then drag-resize).
             // Largest scale <= 0.95 that fits the primary display's user area; on a normal
             // 1080p+ screen the fit factors exceed 0.95 so it opens at the design 0.95.
@@ -6759,6 +6768,41 @@ void SpaceDustAudioProcessorEditor::rebuildWaveformMenus()
 
     if (waveformWindow != nullptr)
         waveformWindow->refreshContent();
+}
+
+void SpaceDustAudioProcessorEditor::attachComboSteppers(juce::Component& root)
+{
+    // Gathered first, attached second. A stepper adds itself to its combo's
+    // parent, so attaching during the walk would grow the very child list being
+    // walked.
+    std::vector<juce::ComboBox*> combos;
+
+    const std::function<void(juce::Component&)> gather = [&](juce::Component& parent)
+    {
+        for (auto* child : parent.getChildren())
+        {
+            if (auto* combo = dynamic_cast<juce::ComboBox*>(child))
+            {
+                // Not into a combo: its own children are the text label and the
+                // popup's parts, and neither wants arrows of its own.
+                combos.push_back(combo);
+                continue;
+            }
+
+            gather(*child);
+        }
+    };
+
+    gather(root);
+
+    comboSteppers.reserve(comboSteppers.size() + combos.size());
+
+    for (auto* combo : combos)
+    {
+        auto stepper = std::make_unique<ComboStepper>();
+        stepper->attachTo(*combo);
+        comboSteppers.push_back(std::move(stepper));
+    }
 }
 
 void SpaceDustAudioProcessorEditor::openWaveformWindow(juce::Component* anchorButton,
