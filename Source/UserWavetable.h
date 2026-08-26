@@ -297,6 +297,14 @@ struct UserWaveSlot
         first. Empty in Full Sample mode. */
     std::vector<float> tables;
 
+    /** The right channel's band-limited tables, or empty on a mono slot.
+
+        A separate array rather than interleaving: every read walks one channel at
+        a time, and interleaving would halve the useful length of each cache line
+        the mipmap lookup touches. It also keeps every existing mono read exactly
+        as it was, reading exactly the memory it always read. */
+    std::vector<float> tablesRight;
+
     //==========================================================================
     // -- Full Sample --
 
@@ -316,6 +324,14 @@ struct UserWaveSlot
         trimming is a pair of numbers, not a cut, so material outside the markers
         is still there to be drawn behind them and still there to be taken back. */
     std::vector<float> sample;
+
+    /** The right channel of a whole sample, or empty on a mono slot.
+
+        Exactly as long as `sample` when it is there, and laid out identically --
+        the guards, the silence and the trim all belong to the slot, not to a
+        channel, so every position worked out for the left is the position for the
+        right. */
+    std::vector<float> sampleRight;
 
     double fileSampleRate = 0.0;
 
@@ -374,8 +390,40 @@ struct UserWaveSlot
 
         freqHz and sampleRate choose how much bandwidth to read in Single Cycle
         mode and are ignored in Full Sample mode. */
+    /** The left channel, or the only one on a mono slot. */
     float read (double phase01, double freqHz, double sampleRate) const noexcept;
 
+    /** Both channels at once.
+
+        A mono slot answers with the same value twice, so a caller never has to
+        ask which kind it holds. That matters because most slots ARE mono -- every
+        one imported before stereo existed, and every one made from a mono file --
+        and the read path must not grow a branch per sample for them. */
+    void readStereo (double phase01, double freqHz, double sampleRate,
+                     float& left, float& right) const noexcept;
+
+    /** Whether a second channel was kept.
+
+        False for anything imported from a mono file, and false for every slot
+        saved before slots could hold two channels -- those load with their right
+        side empty and play as they always did. */
+    bool isStereo() const noexcept
+    {
+        return mode == UserWave::Mode::SingleCycle ? ! tablesRight.empty()
+                                                   : ! sampleRight.empty();
+    }
+
+private:
+    /** One channel's worth of the read above.
+
+        Both channels share every position this works out -- the guards, the trim,
+        the loop points and the crossfade all belong to the slot -- so the only
+        difference between them is which arrays are walked. Written once and given
+        the arrays, rather than twice with the second copy free to drift. */
+    float readChannel (const std::vector<float>& tbl, const std::vector<float>& smp,
+                       double phase01, double freqHz, double sampleRate) const noexcept;
+
+public:
     /** Whether this slot can produce sound. */
     bool isPlayable() const noexcept
     {
@@ -512,7 +560,8 @@ public:
         summed and normalised the same way, analysed the same way, and stored in
         the slot the same way. The slot names no file, because there is no file:
         the sound never existed anywhere but inside the plugin. */
-    bool importAudio (std::vector<float> mono, double sampleRate, const juce::String& name,
+    bool importAudio (std::vector<float> mono, std::vector<float> right,
+                      double sampleRate, const juce::String& name,
                       UserWave::Group group, int slotIndex, UserWave::Mode mode,
                       juce::String& errorMessage);
 
@@ -677,8 +726,15 @@ private:
         The audio handed in is the WHOLE imported file, every time. Where the
         markers stand is read out of the slot, so this is also what rebuilds a
         slot after they move. */
+    /** rightIn is the second channel, and empty means mono.
+
+        Kept only when it is the same length as the left AND actually different
+        from it: a file whose two sides are identical is a mono file that happened
+        to be saved as stereo, and a second copy of it would double the slot for
+        nothing. */
     static void buildSlot (UserWaveSlot& slot, const std::vector<float>& mono,
-                           double sampleRate, UserWave::Mode mode);
+                           double sampleRate, UserWave::Mode mode,
+                           const std::vector<float>& rightIn = {});
 
     /** Work out phaseIncrementScale for a slot as it now stands.
 
@@ -693,7 +749,8 @@ private:
         Slots imported before the audio travelled inside them keep a copy in the
         Wavetables folder instead, and this is where that copy is taken into the
         slot for good -- so a rebuild is the last time it is ever looked for. */
-    bool loadSlotAudio (UserWaveSlot& slot, std::vector<float>& mono, double& sampleRate,
+    bool loadSlotAudio (UserWaveSlot& slot, std::vector<float>& mono,
+                        std::vector<float>& right, double& sampleRate,
                         juce::String& errorMessage);
 
     /** Put mono audio into a slot and make it permanent: analyse it, keep the
@@ -703,6 +760,7 @@ private:
         audio came from and in whether there is a file to name. The slot is left
         empty on any failure, so a slot that says it holds something always does. */
     bool storeSlot (const std::vector<float>& mono, double sampleRate,
+                    const std::vector<float>& rightIn,
                     const juce::String& name, const juce::String& sourceFile,
                     bool allowRetune, UserWave::Group group, int slotIndex,
                     UserWave::Mode mode, juce::String& errorMessage);
@@ -718,7 +776,11 @@ private:
                              const std::map<int, juce::MemoryBlock>& sharedAudio);
 
     /** Read any audio file the host can decode into mono, truncated to the cap. */
+    /** right comes back empty for a mono file. Still named "AsMono" because the
+        left channel is what everything wanting a single channel wants -- the
+        pitch detection, the harmonic analysis and the picture all read it. */
     bool readFileAsMono (const juce::File& file, std::vector<float>& mono,
+                         std::vector<float>& right,
                          double& sampleRate, juce::String& errorMessage);
 
     /** Deep copy, because a bank is immutable once published. */
@@ -743,6 +805,14 @@ private:
         marker too expensive to move while a note was sounding. */
     TrimSession trimSession;
     std::vector<float> trimAudio;
+
+    /** The right channel held for the same gesture, or empty on a mono slot.
+
+        Held alongside rather than left to be decoded again: a stereo slot rebuilt
+        from its left channel alone would collapse to mono the first time a marker
+        was dragged, which is a strange way to lose a sample's width. */
+    std::vector<float> trimAudioRight;
+
     double trimAudioRate = 0.0;
 
     juce::AudioFormatManager formatManager;

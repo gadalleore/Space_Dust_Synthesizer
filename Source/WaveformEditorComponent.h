@@ -147,8 +147,13 @@ public:
     /** What one press of Resample brings back. */
     struct Capture
     {
-        /** Mono, at sampleRate. */
+        /** Both channels, at sampleRate, and the same length as each other.
+
+            Still called `mono` on the left because everything downstream that
+            only wants one channel wants that one, and a resample of a patch with
+            no width in it gives two identical channels. */
         std::vector<float> mono;
+        std::vector<float> right;
         double sampleRate = 0.0;
 
         /** How loud it was BEFORE it was normalised on the way into the slot.

@@ -56,10 +56,13 @@ public:
         box = &comboToStep;
         box->addComponentListener (this);
 
+        // addChildComponent, not addAndMakeVisible: whether the arrows show is
+        // decided by followVisibility below, from the box they belong to.
         if (auto* parent = box->getParentComponent())
-            parent->addAndMakeVisible (this);
+            parent->addChildComponent (this);
 
         followBox();
+        followVisibility();
     }
 
     void paint (juce::Graphics& g) override
@@ -186,6 +189,20 @@ private:
     }
 
     void componentMovedOrResized (juce::Component&, bool, bool) override { followBox(); }
+
+    /** Arrows for a control that is not there are arrows for nothing.
+
+        The sub oscillator's dropdown is hidden while the sub is off, and its
+        stepper sat on beside the empty space -- so the rule is general: the
+        arrows are exactly as present as the box they step. */
+    void componentVisibilityChanged (juce::Component&) override { followVisibility(); }
+    void componentEnablementChanged (juce::Component&) override { followVisibility(); }
+
+    void followVisibility()
+    {
+        if (box != nullptr)
+            setVisible (box->isVisible() && box->isEnabled());
+    }
 
     void componentBeingDeleted (juce::Component& c) override
     {

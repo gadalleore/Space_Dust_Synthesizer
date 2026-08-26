@@ -422,6 +422,32 @@ void SynthVoice::noteStarted()
     subOscOneShot.reset();
     noiseOneShot.reset();
 
+    // A WHOLE SAMPLE starts again on every note, legato included.
+    //
+    // The phase of a built-in shape is a position in a cycle, and carrying it
+    // across a legato note is exactly what makes legato smooth -- so the branch
+    // below deliberately leaves it alone on a retrigger or a steal.
+    //
+    // The phase of a Full Sample slot is not that. It is a position in a
+    // RECORDING, so carrying it across means the new note picks the sample up
+    // half way through and plays whatever was left of the last one
+    // (Giuseppe, 2026-08-26). Reset here, above the branch, so it happens by
+    // every path into this function.
+    //
+    // A slot may not be resolved yet on a voice's very first note -- the bank is
+    // looked up per block -- and null is a built-in, which wants the old
+    // behaviour anyway.
+    const auto restartWholeSample = [] (const UserWaveSlot* slot, double& angle)
+    {
+        if (slot != nullptr && slot->mode == UserWave::Mode::FullSample)
+            angle = 0.0;
+    };
+
+    restartWholeSample (osc1UserSlot, osc1Angle);
+    restartWholeSample (osc2UserSlot, osc2Angle);
+    restartWholeSample (subOscUserSlot, subOscAngle);
+    restartWholeSample (noiseUserSlot, noiseWaveAngle);
+
     if (shouldHardResetForPoly)
     {
         // Truly new poly voice: safe to do full reset
@@ -794,6 +820,13 @@ void SynthVoice::refreshUserWaveSelection() noexcept
 
     if (osc1UserSlot != nullptr) osc1PhaseScale = osc1UserSlot->phaseIncrementScale;
     if (osc2UserSlot != nullptr) osc2PhaseScale = osc2UserSlot->phaseIncrementScale;
+
+    // Whether either oscillator has two channels to play. Resolved once per block,
+    // here where the slots are looked up, because the answer cannot change between
+    // one sample and the next -- and the per-sample path branches on it to avoid
+    // running a second decimation filter over a copy of the first.
+    osc1Stereo = osc1UserSlot != nullptr && osc1UserSlot->isStereo();
+    osc2Stereo = osc2UserSlot != nullptr && osc2UserSlot->isStereo();
     if (subOscUserSlot != nullptr) subOscPhaseScale = subOscUserSlot->phaseIncrementScale;
     if (noiseUserSlot != nullptr) noisePhaseScale = noiseUserSlot->phaseIncrementScale;
 }
@@ -817,7 +850,8 @@ void SynthVoice::advanceShapingSmoothing() noexcept
 
 float SynthVoice::generateWaveform(double angle, int waveform, const UserWaveSlot* userSlot,
                                    double freqHz, OneShotState* oneShot,
-                                   const PhaseShaper::Amounts& shapingAmounts)
+                                   const PhaseShaper::Amounts& shapingAmounts,
+                                   float* rightOut)
 {
     // Whether any of Bend, Spectrum or Sync would change anything. A patch that
     // uses none of them takes exactly the path it took before they existed.
@@ -852,8 +886,20 @@ float SynthVoice::generateWaveform(double angle, int waveform, const UserWaveSlo
                 return 0.0f;
         }
 
+        // The right channel of a stereo slot, for a caller that asked for one.
+        // Filled on every path below, so no branch can forget it.
         if (! shaping)
+        {
+            if (rightOut != nullptr)
+            {
+                float l = 0.0f, r = 0.0f;
+                userSlot->readStereo (phase, freqHz, sampleRate, l, r);
+                *rightOut = r;
+                return l;
+            }
+
             return userSlot->read (phase, freqHz, sampleRate);
+        }
 
         // Sync is withheld from a Full Sample slot, and only from that.
         //
@@ -873,15 +919,34 @@ float SynthVoice::generateWaveform(double angle, int waveform, const UserWaveSlo
             forSlot.sync = 0.0;
 
         const double shapedPhase = PhaseShaper::shapedPhase (phase, forSlot);
-        const float sampled = userSlot->read (shapedPhase, freqHz, sampleRate);
+
+        float sampled = 0.0f;
+        float sampledRight = 0.0f;
+
+        if (rightOut != nullptr)
+            userSlot->readStereo (shapedPhase, freqHz, sampleRate, sampled, sampledRight);
+        else
+            sampled = userSlot->read (shapedPhase, freqHz, sampleRate);
 
         if (forSlot.spectrum <= 0.0)
+        {
+            if (rightOut != nullptr)
+                *rightOut = sampledRight;
+
             return sampled;
+        }
 
         // Spectrum on an imported waveform means the same as it does on a built-in
         // one: fade towards the fundamental, which is a sine at the same phase.
         const double amount = forSlot.spectrum > 1.0 ? 1.0 : forSlot.spectrum;
         const float sine = (float) std::sin (OscShape::twoPi * shapedPhase);
+
+        // The same sine into both sides, and the same weight. Fading each channel
+        // towards its own copy of the fundamental is what keeps the image where it
+        // was: at full Spectrum a stereo slot collapses to one centred sine, which
+        // is correct -- one fundamental is one signal, and it has no width.
+        if (rightOut != nullptr)
+            *rightOut = (float) (sampledRight * (1.0 - amount) + sine * amount);
 
         return (float) (sampled * (1.0 - amount) + sine * amount);
     }
@@ -894,10 +959,16 @@ float SynthVoice::generateWaveform(double angle, int waveform, const UserWaveSlo
     // The four original shapes are unchanged in there, to the sample. See
     // OscillatorShapes.h, and the shape test that compares them against the maths
     // this switch used to hold.
-    if (! shaping)
-        return OscShape::shapeValueFromAngle(waveform, angle);
+    // A built-in shape is one signal. Both sides get it, so an oscillator on a
+    // built-in behaves exactly as it always did and its pan does all the placing.
+    const float builtIn = shaping
+        ? PhaseShaper::shapedValue(waveform, angle / OscShape::twoPi, shapingAmounts)
+        : OscShape::shapeValueFromAngle(waveform, angle);
 
-    return PhaseShaper::shapedValue(waveform, angle / OscShape::twoPi, shapingAmounts);
+    if (rightOut != nullptr)
+        *rightOut = builtIn;
+
+    return builtIn;
 }
 
 //==============================================================================
@@ -1506,13 +1577,26 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         advanceShapingSmoothing();
 
         // Step 1-2: Generate oscillator waveforms
+        //
+        // Two values each for the oscillators, one for the sub and the noise. On a
+        // built-in shape or a mono import the two are the same number and every
+        // sum below is what it always was; only a stereo import makes them differ.
         float osc1Sample, osc2Sample, subOscSample;
+        float osc1Right = 0.0f, osc2Right = 0.0f;
 
         if (!oscOSActive)
         {
             // Base rate. Phases are advanced at the bottom of the loop, as always.
-            osc1Sample = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq, &osc1OneShot, osc1Shaping);
-            osc2Sample = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq, &osc2OneShot, osc2Shaping);
+            // rightOut only where there is a second channel to fetch. On anything
+            // mono the two sides are the same number, and asking for both makes
+            // the slot do a second interpolation to produce a copy.
+            osc1Sample = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq, &osc1OneShot, osc1Shaping,
+                                          osc1Stereo ? &osc1Right : nullptr);
+            osc2Sample = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq, &osc2OneShot, osc2Shaping,
+                                          osc2Stereo ? &osc2Right : nullptr);
+
+            if (! osc1Stereo) osc1Right = osc1Sample;
+            if (! osc2Stereo) osc2Right = osc2Sample;
             subOscSample = subOscOn ? generateWaveform(subOscAngle, subOscWaveform, subOscUserSlot, subOscFreq, &subOscOneShot) * subOscLevel : 0.0f;
         }
         else
@@ -1537,19 +1621,60 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
 
             // x is ignored: there is no input signal, only generation. The stage's
             // upsampler still runs on zeros, which costs a little and changes nothing.
-            osc1Sample = oscOsc12OS.process(0, 0.0f, [&] (float) -> float
+            // The stereo path ONLY for an oscillator actually playing a stereo
+            // slot. It runs the decimation filter a second time -- a thirty-three
+            // tap dot product per sample -- and on a built-in shape or a mono
+            // import both channels hold the same number, so that whole second
+            // filter would compute a copy of the first.
+            //
+            // That is not a small waste: it is the common case, it is per voice,
+            // and paying it everywhere pushed the audio thread over at high
+            // polyphony, which sounded like notes refusing to play
+            // (Giuseppe, 2026-08-26).
+            if (osc1Stereo)
             {
-                const float v = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq, &osc1OneShot, osc1Shaping);
-                osc1Angle += d1; wrap(osc1Angle);
-                return v;
-            });
+                // Both channels through ONE pass. The lambda advances the phase,
+                // so a second pass would step the oscillator twice per sample and
+                // play it an octave up.
+                oscOsc12OS.processStereo(0, 2, 0.0f, [&] (float, float& right) -> float
+                {
+                    const float v = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq, &osc1OneShot, osc1Shaping, &right);
+                    osc1Angle += d1; wrap(osc1Angle);
+                    return v;
+                }, osc1Sample, osc1Right);
+            }
+            else
+            {
+                osc1Sample = oscOsc12OS.process(0, 0.0f, [&] (float) -> float
+                {
+                    const float v = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq, &osc1OneShot, osc1Shaping);
+                    osc1Angle += d1; wrap(osc1Angle);
+                    return v;
+                });
 
-            osc2Sample = oscOsc12OS.process(1, 0.0f, [&] (float) -> float
+                osc1Right = osc1Sample;
+            }
+
+            if (osc2Stereo)
             {
-                const float v = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq, &osc2OneShot, osc2Shaping);
-                osc2Angle += d2; wrap(osc2Angle);
-                return v;
-            });
+                oscOsc12OS.processStereo(1, 3, 0.0f, [&] (float, float& right) -> float
+                {
+                    const float v = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq, &osc2OneShot, osc2Shaping, &right);
+                    osc2Angle += d2; wrap(osc2Angle);
+                    return v;
+                }, osc2Sample, osc2Right);
+            }
+            else
+            {
+                osc2Sample = oscOsc12OS.process(1, 0.0f, [&] (float) -> float
+                {
+                    const float v = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq, &osc2OneShot, osc2Shaping);
+                    osc2Angle += d2; wrap(osc2Angle);
+                    return v;
+                });
+
+                osc2Right = osc2Sample;
+            }
 
             if (subOscOn)
             {
@@ -1622,13 +1747,24 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         
         // Step 4: Apply independent levels to each source (real-time safe: atomic parameter reads)
         // LFO volume modulation: multiply by (1 + mod) so depth scales 0-2x at full LFO swing
-        float osc1Out = osc1Sample * osc1Level * juce::jlimit(0.0f, 2.0f, 1.0f + osc1VolMod);
-        float osc2Out = osc2Sample * osc2Level * juce::jlimit(0.0f, 2.0f, 1.0f + osc2VolMod);
+        const float osc1Gain = osc1Level * juce::jlimit(0.0f, 2.0f, 1.0f + osc1VolMod);
+        const float osc2Gain = osc2Level * juce::jlimit(0.0f, 2.0f, 1.0f + osc2VolMod);
+
+        float osc1Out = osc1Sample * osc1Gain;
+        float osc2Out = osc2Sample * osc2Gain;
+        float osc1OutR = osc1Right * osc1Gain;
+        float osc2OutR = osc2Right * osc2Gain;
         float noiseOut = noiseSample * noiseLevel * 0.75f * juce::jlimit(0.0f, 2.0f, 1.0f + noiseVolMod);
-        
+
         // Step 5: Stereo mixing with per-oscillator pan (gains cached per block above)
+        //
+        // Each side of a stereo oscillator is placed by the pan gain for THAT side.
+        // On a mono source the two sides hold the same number, so this is exactly
+        // the sum it always was; on a stereo one the pan moves the whole image
+        // rather than collapsing it, and a centred pan leaves the recording's own
+        // width untouched.
         float leftMix = osc1Out * gainL1 + osc2Out * gainL2 + noiseOut * centerGain + subOscSample * centerGain;
-        float rightMix = osc1Out * gainR1 + osc2Out * gainR2 + noiseOut * centerGain + subOscSample * centerGain;
+        float rightMix = osc1OutR * gainR1 + osc2OutR * gainR2 + noiseOut * centerGain + subOscSample * centerGain;
         
         // Step 6: Process envelopes (returns current amplitude value 0.0-1.0)
         // JUCE's ADSR handles all four stages automatically: Attack â†’ Decay â†’ Sustain â†’ Release

@@ -151,7 +151,8 @@ public:
         a reverb or a delay longer than a waveform slot can hold. The tail is
         genuinely cut in that case, and the player is the only one who can do
         anything about it, so they are told. */
-    bool take (std::vector<float>& mono, double& sampleRate, bool& stoppedByLength);
+    bool take (std::vector<float>& leftOut, std::vector<float>& rightOut,
+               double& sampleRate, bool& stoppedByLength);
 
     /** Give up on a recording that cannot finish -- no audio device, or a host
         that has stopped calling processBlock. */
@@ -180,9 +181,12 @@ public:
 
     bool isRecording() const noexcept;
 
-    /** Keep this block, if a recording is running. Summed to mono here rather
-        than at the far end, because a waveform slot is mono and holding both
-        channels would double the memory for something thrown away. */
+    /** Keep this block, if a recording is running.
+
+        BOTH channels are kept. They used to be summed here, on the grounds that a
+        waveform slot was mono -- which it no longer is. A resampled patch carries
+        its reverb and its chorus, and those ARE the stereo image; summing threw
+        away most of the reason to resample a pad at all. */
     void write (const float* left, const float* right, int numSamples) noexcept;
 
 private:
@@ -197,6 +201,13 @@ private:
     std::atomic<State> state { State::idle };
 
     std::vector<float> buffer;
+
+    /** The right channel, exactly as long as `buffer`.
+
+        Kept now rather than summed away: a resampled patch carries its reverb
+        and its chorus, and both of those ARE the stereo image. Summing threw
+        away most of the reason to resample a pad in the first place. */
+    std::vector<float> bufferRight;
 
     /** How much of the buffer holds sound. Written by the audio thread while it
         is recording and read by the message thread only after the state has moved

@@ -6468,6 +6468,22 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             // list written by hand is a list that goes stale the first time a
             // dropdown is added. Everything exists by now -- the pages build their
             // controls in their constructors, which ran before this timer.
+            // Every page, by name, and then the editor itself for the preset box.
+            //
+            // Walking the editor alone found seven dropdowns of twenty-six: a
+            // TabbedComponent only parents the page that is SHOWING, so four
+            // pages' worth of controls are not in the tree at all until their tab
+            // is picked -- and a walk done once at startup would never see them.
+            // The editor owns the five pages outright, so they can be asked
+            // directly whether they are on screen or not.
+            for (juce::Component* page : { (juce::Component*) mainPage.get(),
+                                           (juce::Component*) modulationPage.get(),
+                                           (juce::Component*) effectsPage.get(),
+                                           (juce::Component*) saturationColorPage.get(),
+                                           (juce::Component*) spectralPage.get() })
+                if (page != nullptr)
+                    attachComboSteppers(*page);
+
             attachComboSteppers(*this);
 
             // Auto-fit the INITIAL window size to the display (the user can then drag-resize).
@@ -6799,10 +6815,18 @@ void SpaceDustAudioProcessorEditor::attachComboSteppers(juce::Component& root)
 
     for (auto* combo : combos)
     {
+        // Once each. The showing page is reached BOTH by its own walk and by the
+        // walk of the editor that contains it, and a second stepper on one box
+        // would sit exactly on the first and step it twice per click.
+        if (std::find(steppedCombos.begin(), steppedCombos.end(), combo) != steppedCombos.end())
+            continue;
+
         auto stepper = std::make_unique<ComboStepper>();
         stepper->attachTo(*combo);
         comboSteppers.push_back(std::move(stepper));
+        steppedCombos.push_back(combo);
     }
+
 }
 
 void SpaceDustAudioProcessorEditor::openWaveformWindow(juce::Component* anchorButton,
@@ -6890,7 +6914,7 @@ void SpaceDustAudioProcessorEditor::setPlaybackPhaseWanted(bool wanted)
 bool SpaceDustAudioProcessorEditor::collectCapture(WaveformEditorComponent::Capture& capture,
                                                    juce::String& errorMessage)
 {
-    if (!audioProcessor.takeResampleRecording(capture.mono, capture.sampleRate, capture.cutShort))
+    if (!audioProcessor.takeResampleRecording(capture.mono, capture.right, capture.sampleRate, capture.cutShort))
     {
         errorMessage = "Middle C made no sound. Check the levels and the waveform.";
         return false;

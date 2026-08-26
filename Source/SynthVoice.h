@@ -328,6 +328,16 @@ private:
     // towards it a sample at a time. The bends need it for the same reason; only
     // Spectrum, which crossfades a value rather than moving a position, would
     // have been safe without it, and it costs nothing to treat all five alike.
+    /** Whether either oscillator is playing a slot with two channels.
+
+        Resolved once per block in updateUserWaveSlots. The per-sample path takes
+        a plainer route when it is false, because running the stereo path over a
+        mono source computes a second decimation filter across a copy of the
+        first -- per voice, on the common case, which is what pushed the audio
+        thread over at high polyphony. */
+    bool osc1Stereo = false;
+    bool osc2Stereo = false;
+
     PhaseShaper::Amounts osc1ShapingTarget;
     PhaseShaper::Amounts osc2ShapingTarget;
     PhaseShaper::Amounts osc1Shaping;
@@ -764,9 +774,17 @@ private:
     /** The shaping arguments default to doing nothing, so the sub oscillator and
         the noise source -- which have no Bend, Intensity or Sync of their own --
         call this exactly as they always did. */
+    /** Returns the LEFT channel, and writes the right through rightOut when one is
+        asked for.
+
+        Null rightOut means the caller wants one signal, which is what the sub
+        oscillator and the noise source want -- and what an oscillator on a
+        built-in shape or a mono slot gets anyway, since both sides are then the
+        same number. Only a stereo import makes the two differ. */
     float generateWaveform(double angle, int waveform, const UserWaveSlot* userSlot,
                            double freqHz, OneShotState* oneShot = nullptr,
-                           const PhaseShaper::Amounts& shaping = {});
+                           const PhaseShaper::Amounts& shaping = {},
+                           float* rightOut = nullptr);
 
     /**
         Work out which imported waveform each source is set to, and what that does

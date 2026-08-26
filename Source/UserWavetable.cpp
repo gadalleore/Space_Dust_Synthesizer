@@ -68,12 +68,22 @@ namespace
     // rather than 24 for the same reason; the noise floor it puts under an
     // imported sample is far below anything the synth then does to it.
 
-    juce::MemoryBlock encodeSlotAudio (const std::vector<float>& mono, double sampleRate)
+    /** The slot's audio as a FLAC stream, in one or two channels.
+
+        The channel count needs no field of its own: FLAC carries it, so a block
+        written before slots could be stereo reads back as the one channel it has
+        and every preset ever saved still loads. That is the whole reason the
+        second channel went in here rather than into a parallel block beside it. */
+    juce::MemoryBlock encodeSlotAudio (const std::vector<float>& mono,
+                                       const std::vector<float>& right, double sampleRate)
     {
         juce::MemoryBlock block;
 
         if (mono.empty() || sampleRate <= 0.0)
             return block;
+
+        const bool stereo = right.size() == mono.size() && right != mono;
+        const int numChannels = stereo ? 2 : 1;
 
         juce::FlacAudioFormat flac;
 
@@ -81,16 +91,16 @@ namespace
         auto stream = std::make_unique<juce::MemoryOutputStream> (block, false);
 
         std::unique_ptr<juce::AudioFormatWriter> writer (
-            flac.createWriterFor (stream.get(), sampleRate, 1, 16, {}, 0));
+            flac.createWriterFor (stream.get(), sampleRate, (unsigned int) numChannels, 16, {}, 0));
 
         if (writer == nullptr)
             return {};
 
         stream.release();
 
-        const float* channels[1] = { mono.data() };
+        const float* channels[2] = { mono.data(), stereo ? right.data() : nullptr };
 
-        if (! writer->writeFromFloatArrays (channels, 1, (int) mono.size()))
+        if (! writer->writeFromFloatArrays (channels, numChannels, (int) mono.size()))
         {
             writer.reset();
             return {};
@@ -100,9 +110,13 @@ namespace
         return block;
     }
 
+    /** right comes back empty for a block written with one channel -- which is
+        every block written before slots could hold two. */
     bool decodeSlotAudio (const juce::MemoryBlock& block, std::vector<float>& mono,
-                          double& sampleRate)
+                          std::vector<float>& right, double& sampleRate)
     {
+        right.clear();
+
         if (block.getSize() == 0)
             return false;
 
@@ -121,19 +135,47 @@ namespace
         const auto cap = (juce::int64) (UserWave::maxSampleSeconds * reader->sampleRate);
         const int length = (int) juce::jmin (reader->lengthInSamples, cap);
 
-        juce::AudioBuffer<float> buffer (1, length);
+        // As many channels as the stream actually has, capped at two: a slot holds
+        // one or two and nothing else, and a block with more would otherwise have
+        // its extra channels read into memory nobody allocated.
+        const int numChannels = juce::jlimit (1, 2, (int) reader->numChannels);
 
-        if (! reader->read (&buffer, 0, length, 0, true, true))
+        juce::AudioBuffer<float> buffer (numChannels, length);
+
+        if (! reader->read (&buffer, 0, length, 0, true, numChannels > 1))
             return false;
 
         sampleRate = reader->sampleRate;
         mono.assign (buffer.getReadPointer (0), buffer.getReadPointer (0) + length);
+
+        if (numChannels > 1)
+            right.assign (buffer.getReadPointer (1), buffer.getReadPointer (1) + length);
+
         return true;
     }
 }
 
 //==============================================================================
 float UserWaveSlot::read (double phase01, double freqHz, double sampleRate) const noexcept
+{
+    return readChannel (tables, sample, phase01, freqHz, sampleRate);
+}
+
+void UserWaveSlot::readStereo (double phase01, double freqHz, double sampleRate,
+                               float& left, float& right) const noexcept
+{
+    left = readChannel (tables, sample, phase01, freqHz, sampleRate);
+
+    // A mono slot answers with the same value twice rather than making every
+    // caller ask which kind it is. Most slots are mono -- everything imported
+    // from a mono file, and everything saved before slots had two channels.
+    right = isStereo() ? readChannel (tablesRight, sampleRight, phase01, freqHz, sampleRate)
+                       : left;
+}
+
+float UserWaveSlot::readChannel (const std::vector<float>& tbl,
+                                 const std::vector<float>& smp,
+                                 double phase01, double freqHz, double sampleRate) const noexcept
 {
     // The caller wraps the phase before calling, but a modulated phase that
     // overshoots by a hair would index off the end of the table, so it is pinned
@@ -145,13 +187,13 @@ float UserWaveSlot::read (double phase01, double freqHz, double sampleRate) cons
 
     if (mode == UserWave::Mode::SingleCycle)
     {
-        if (tables.empty())
+        if (tbl.empty())
             return 0.0f;
 
         // Read the richest version of the waveform that will not fold back at
         // this pitch. High notes get fewer harmonics; that is the whole point.
         const int level = WaveAnalysis::levelForFrequency (freqHz, sampleRate);
-        const float* table = tables.data() + (std::size_t) level * WaveAnalysis::tableSize;
+        const float* table = tbl.data() + (std::size_t) level * WaveAnalysis::tableSize;
 
         const double position = phase01 * (double) WaveAnalysis::tableSize;
         const int index = (int) position;
@@ -190,10 +232,10 @@ float UserWaveSlot::read (double phase01, double freqHz, double sampleRate) cons
     // sample comes out at the speed it went in either way, and the note still
     // plays at the pitch it was recorded at.
     if (! loop)
-        return hermite (sample.data(), (double) playStart + phase01 * (double) playLength);
+        return hermite (smp.data(), (double) playStart + phase01 * (double) playLength);
 
     const double position = (double) loopStart + phase01 * (double) loopLength;
-    float value = hermite (sample.data(), position);
+    float value = hermite (smp.data(), position);
 
     // Fade the end of the loop into the material immediately before its start, so
     // the jump back is inaudible. Without this a sustained note ticks once per
@@ -206,7 +248,7 @@ float UserWaveSlot::read (double phase01, double freqHz, double sampleRate) cons
         if (position >= fadeStart)
         {
             const double weight = (position - fadeStart) / (double) crossfade;
-            const float incoming = hermite (sample.data(), position - (double) loopLength);
+            const float incoming = hermite (smp.data(), position - (double) loopLength);
             value = (float) ((1.0 - weight) * (double) value + weight * (double) incoming);
         }
     }
@@ -311,6 +353,7 @@ juce::File UserWaveLibrary::wavetableFolder()
 
 //==============================================================================
 bool UserWaveLibrary::readFileAsMono (const juce::File& file, std::vector<float>& mono,
+                                      std::vector<float>& right,
                                       double& sampleRate, juce::String& errorMessage)
 {
     if (! file.existsAsFile())
@@ -347,23 +390,52 @@ bool UserWaveLibrary::readFileAsMono (const juce::File& file, std::vector<float>
         return false;
     }
 
-    // Summed to mono. An oscillator produces one signal and is panned afterwards
-    // by the controls already on the panel, so keeping the stereo image here
-    // would only fight them.
+    // Two channels are KEPT. They used to be summed here, on the grounds that an
+    // oscillator makes one signal and the panel pans it afterwards -- true then,
+    // and no longer: a slot holds a stereo image now, and a sampled pad's width
+    // is most of what makes it worth sampling.
+    //
+    // A file with more than two channels is still folded down, because a slot
+    // holds one or two and nothing else.
+    const int numChannels = buffer.getNumChannels();
+
+    right.clear();
+
+    if (numChannels >= 2)
+    {
+        mono.assign (buffer.getReadPointer (0), buffer.getReadPointer (0) + length);
+        right.assign (buffer.getReadPointer (1), buffer.getReadPointer (1) + length);
+
+        // Normalised by ONE gain worked out across both sides, never per channel:
+        // scaling each to its own peak would move the image every time a file was
+        // imported, pulling whichever side happened to be quieter into the middle.
+        float peak = 0.0f;
+
+        for (int i = 0; i < length; ++i)
+            peak = std::max (peak, std::max (std::abs (mono[(std::size_t) i]),
+                                             std::abs (right[(std::size_t) i])));
+
+        if (peak > 1.0e-9f)
+        {
+            const float gain = 1.0f / peak;
+
+            for (int i = 0; i < length; ++i)
+            {
+                mono[(std::size_t) i] *= gain;
+                right[(std::size_t) i] *= gain;
+            }
+        }
+
+        return true;
+    }
+
     mono.assign ((std::size_t) length, 0.0f);
 
-    for (int channel = 0; channel < buffer.getNumChannels(); ++channel)
+    for (int channel = 0; channel < numChannels; ++channel)
     {
         const float* source = buffer.getReadPointer (channel);
         for (int i = 0; i < length; ++i)
             mono[(std::size_t) i] += source[i];
-    }
-
-    if (buffer.getNumChannels() > 1)
-    {
-        const float scale = 1.0f / (float) buffer.getNumChannels();
-        for (float& v : mono)
-            v *= scale;
     }
 
     normalise (mono);
@@ -372,12 +444,23 @@ bool UserWaveLibrary::readFileAsMono (const juce::File& file, std::vector<float>
 
 //==============================================================================
 void UserWaveLibrary::buildSlot (UserWaveSlot& slot, const std::vector<float>& mono,
-                                 double sampleRate, UserWave::Mode mode)
+                                 double sampleRate, UserWave::Mode mode,
+                                 const std::vector<float>& rightIn)
 {
+    // A right channel is kept only when there is a real one: the same length as
+    // the left and actually different from it. A file whose two sides are
+    // identical is a mono file that happened to be saved as stereo, and storing
+    // its second copy would double the slot for nothing.
+    const bool stereo = rightIn.size() == mono.size()
+                        && ! mono.empty()
+                        && rightIn != mono;
+
     slot.mode = mode;
     slot.fileSampleRate = sampleRate;
     slot.tables.clear();
+    slot.tablesRight.clear();
     slot.sample.clear();
+    slot.sampleRight.clear();
     slot.fileLength = 0;
     slot.playStart = 0;
     slot.playLength = 0;
@@ -435,6 +518,24 @@ void UserWaveLibrary::buildSlot (UserWaveSlot& slot, const std::vector<float>& m
         slot.tables.resize ((std::size_t) (WaveAnalysis::mipLevels * WaveAnalysis::tableSize));
         WaveAnalysis::renderMipmaps (harmonics, slot.tables.data());
 
+        // The right channel gets its own harmonics and its own tables, analysed
+        // against the SAME fundamental -- a period measured separately per side
+        // could differ by a sample, and two cycles of different lengths played
+        // together drift apart into a slow phasing that sounds like a fault.
+        if (stereo)
+        {
+            const auto rightHarmonics = WaveAnalysis::analyseHarmonics (rightIn.data(),
+                                                                        (int) rightIn.size(),
+                                                                        sampleRate, analysisHz);
+
+            if (! rightHarmonics.isEmpty())
+            {
+                slot.tablesRight.resize ((std::size_t) (WaveAnalysis::mipLevels
+                                                        * WaveAnalysis::tableSize));
+                WaveAnalysis::renderMipmaps (rightHarmonics, slot.tablesRight.data());
+            }
+        }
+
         // A cycle is one period by construction, so the note played is the note
         // heard. Nothing needs re-tuning and the phase increment is untouched.
         slot.retuned = true;
@@ -478,6 +579,16 @@ void UserWaveLibrary::buildSlot (UserWaveSlot& slot, const std::vector<float>& m
     slot.sample.assign ((std::size_t) region.bufferLength, 0.0f);
     std::copy (mono.begin(), mono.end(), slot.sample.begin() + region.fileOffset);
 
+    // The right channel laid out identically -- same buffer length, same offset.
+    // The guards, the silence and the trim belong to the SLOT, not to a channel,
+    // so a position worked out for one side is the position for the other and the
+    // read path needs no second set of numbers.
+    if (stereo)
+    {
+        slot.sampleRight.assign ((std::size_t) region.bufferLength, 0.0f);
+        std::copy (rightIn.begin(), rightIn.end(), slot.sampleRight.begin() + region.fileOffset);
+    }
+
     // Whether to re-tune at all. A drum hit has no fundamental to put on middle
     // C, and forcing one on it only makes the sample play back at a speed the
     // user did not ask for and cannot explain. Neither has a resample, for a
@@ -514,6 +625,7 @@ void UserWaveLibrary::updatePhaseScale (UserWaveSlot& slot)
 
 //==============================================================================
 bool UserWaveLibrary::storeSlot (const std::vector<float>& mono, double sampleRate,
+                                 const std::vector<float>& rightIn,
                                  const juce::String& name, const juce::String& sourceFile,
                                  bool allowRetune, UserWave::Group group, int slotIndex,
                                  UserWave::Mode mode, juce::String& errorMessage)
@@ -537,7 +649,7 @@ bool UserWaveLibrary::storeSlot (const std::vector<float>& mono, double sampleRa
     slot.trimStart = 0;
     slot.trimEnd = 0;
 
-    buildSlot (slot, mono, sampleRate, mode);
+    buildSlot (slot, mono, sampleRate, mode, rightIn);
 
     if (! slot.active)
     {
@@ -549,7 +661,7 @@ bool UserWaveLibrary::storeSlot (const std::vector<float>& mono, double sampleRa
     // The slot keeps the audio, not the user's disk: an imported file is never
     // copied anywhere, and this is what a preset, a saved song and a later change
     // of Mode are all built from. Encoded after buildSlot, which does not touch it.
-    slot.encodedAudio = encodeSlotAudio (mono, sampleRate);
+    slot.encodedAudio = encodeSlotAudio (mono, rightIn, sampleRate);
 
     if (slot.encodedAudio.getSize() == 0)
     {
@@ -573,16 +685,18 @@ bool UserWaveLibrary::importFile (const juce::File& file, UserWave::Group group,
     }
 
     std::vector<float> mono;
+    std::vector<float> right;
     double sampleRate = 0.0;
 
-    if (! readFileAsMono (file, mono, sampleRate, errorMessage))
+    if (! readFileAsMono (file, mono, right, sampleRate, errorMessage))
         return false;
 
-    return storeSlot (mono, sampleRate, file.getFileNameWithoutExtension(), file.getFileName(),
+    return storeSlot (mono, sampleRate, right, file.getFileNameWithoutExtension(), file.getFileName(),
                       true, group, slotIndex, mode, errorMessage);
 }
 
-bool UserWaveLibrary::importAudio (std::vector<float> mono, double sampleRate,
+bool UserWaveLibrary::importAudio (std::vector<float> mono, std::vector<float> right,
+                                   double sampleRate,
                                    const juce::String& name, UserWave::Group group,
                                    int slotIndex, UserWave::Mode mode,
                                    juce::String& errorMessage)
@@ -601,34 +715,68 @@ bool UserWaveLibrary::importAudio (std::vector<float> mono, double sampleRate,
 
     // The same cap a file gets. The caller's history is already this long at most,
     // so this only ever holds for a caller that has not read that far.
+    //
+    // BOTH sides, together. Capping the left alone left the two different lengths,
+    // and a right channel that is not exactly as long as the left is not treated
+    // as a channel at all -- so a long stereo resample quietly became mono.
     const auto cap = (std::size_t) (UserWave::maxSampleSeconds * sampleRate);
 
     if (mono.size() > cap)
         mono.resize (cap);
 
+    if (right.size() > cap)
+        right.resize (cap);
+
     // And the same normalisation, so a waveform taken from the synth sits at the
     // same level as one dropped in from disk. What that costs -- the level the
     // sound was captured at -- is given back by Resample + Init, which puts the
     // master volume where it has to be to undo this exactly.
-    normalise (mono);
+    //
+    // ONE gain, worked out across both sides. normalise() on the left alone
+    // pushed it to full scale and left the right at whatever level it was
+    // recorded at, which tilted every stereo resample to the left
+    // (Giuseppe, 2026-08-26).
+    if (right.size() == mono.size() && ! right.empty())
+    {
+        float peak = 0.0f;
+
+        for (std::size_t i = 0; i < mono.size(); ++i)
+            peak = std::max (peak, std::max (std::abs (mono[i]), std::abs (right[i])));
+
+        if (peak > 1.0e-9f)
+        {
+            const float gain = 1.0f / peak;
+
+            for (std::size_t i = 0; i < mono.size(); ++i)
+            {
+                mono[i] *= gain;
+                right[i] *= gain;
+            }
+        }
+    }
+    else
+    {
+        normalise (mono);
+    }
 
     // No re-tuning: this was recorded from middle C, and middle C plays a slot
     // back unchanged. See UserWaveSlot::allowRetune.
-    return storeSlot (mono, sampleRate, name, {}, false, group, slotIndex, mode, errorMessage);
+    return storeSlot (mono, sampleRate, right, name, {}, false, group, slotIndex, mode, errorMessage);
 }
 
 //==============================================================================
 bool UserWaveLibrary::loadSlotAudio (UserWaveSlot& slot, std::vector<float>& mono,
+                                     std::vector<float>& right,
                                      double& sampleRate, juce::String& errorMessage)
 {
-    if (decodeSlotAudio (slot.encodedAudio, mono, sampleRate))
+    if (decodeSlotAudio (slot.encodedAudio, mono, right, sampleRate))
         return true;
 
     // Only reachable for a slot imported before the audio travelled with it,
     // whose file in the Wavetables folder may since have been removed.
     auto legacy = wavetableFolder().getChildFile ("Samples").getChildFile (slot.sourceFile);
 
-    if (! readFileAsMono (legacy, mono, sampleRate, errorMessage))
+    if (! readFileAsMono (legacy, mono, right, sampleRate, errorMessage))
     {
         errorMessage = "The audio for \"" + slot.name + "\" is missing, so it cannot be rebuilt.";
         return false;
@@ -636,7 +784,7 @@ bool UserWaveLibrary::loadSlotAudio (UserWaveSlot& slot, std::vector<float>& mon
 
     // Take it into the slot while we have it, so this is the last time it is ever
     // looked for on disk.
-    slot.encodedAudio = encodeSlotAudio (mono, sampleRate);
+    slot.encodedAudio = encodeSlotAudio (mono, right, sampleRate);
     return true;
 }
 
@@ -664,12 +812,13 @@ bool UserWaveLibrary::setSlotMode (UserWave::Group group, int slotIndex, UserWav
     // to play, so switching means decoding the slot's own copy again. It is in the
     // slot, so this works with the imported file long gone.
     std::vector<float> mono;
+    std::vector<float> right;
     double sampleRate = 0.0;
 
-    if (! loadSlotAudio (slot, mono, sampleRate, errorMessage))
+    if (! loadSlotAudio (slot, mono, right, sampleRate, errorMessage))
         return false;
 
-    buildSlot (slot, mono, sampleRate, mode);
+    buildSlot (slot, mono, sampleRate, mode, right);
 
     if (! slot.active)
     {
@@ -733,9 +882,10 @@ bool UserWaveLibrary::setSlotTrim (UserWave::Group group, int slotIndex, int tri
     // that was dragged inwards back OUT again brings the sound back. Nothing here
     // is ever a cut.
     std::vector<float> mono;
+    std::vector<float> right;
     double sampleRate = 0.0;
 
-    if (! loadSlotAudio (slot, mono, sampleRate, errorMessage))
+    if (! loadSlotAudio (slot, mono, right, sampleRate, errorMessage))
         return false;
 
     const int keptStart = slot.trimStart;
@@ -803,9 +953,10 @@ bool UserWaveLibrary::beginTrimSession (UserWave::Group group, int slotIndex,
     }
 
     // The one decode of the gesture.
-    if (! loadSlotAudio (slot, trimAudio, trimAudioRate, errorMessage))
+    if (! loadSlotAudio (slot, trimAudio, trimAudioRight, trimAudioRate, errorMessage))
     {
         trimAudio.clear();
+        trimAudioRight.clear();
         trimAudioRate = 0.0;
         return false;
     }
@@ -839,7 +990,7 @@ bool UserWaveLibrary::updateTrimSession (int trimStart, int trimEnd,
     slot.trimStart = trimStart;
     slot.trimEnd = trimEnd;
 
-    buildSlot (slot, trimAudio, trimAudioRate, UserWave::Mode::FullSample);
+    buildSlot (slot, trimAudio, trimAudioRate, UserWave::Mode::FullSample, trimAudioRight);
 
     if (! slot.active)
     {
@@ -847,7 +998,7 @@ bool UserWaveLibrary::updateTrimSession (int trimStart, int trimEnd,
         // take the player's waveform with it mid-drag.
         slot.trimStart = keptStart;
         slot.trimEnd = keptEnd;
-        buildSlot (slot, trimAudio, trimAudioRate, UserWave::Mode::FullSample);
+        buildSlot (slot, trimAudio, trimAudioRate, UserWave::Mode::FullSample, trimAudioRight);
 
         errorMessage = "There is not enough of the sample left between those two points.";
         return false;
@@ -880,6 +1031,8 @@ bool UserWaveLibrary::endTrimSession (juce::String& errorMessage)
 
     trimAudio.clear();
     trimAudio.shrink_to_fit();
+    trimAudioRight.clear();
+    trimAudioRight.shrink_to_fit();
     trimAudioRate = 0.0;
 
     // The one write of the gesture. Done even when the last apply was refused:
@@ -1173,21 +1326,22 @@ void UserWaveLibrary::restoreSlotFromXml (const juce::XmlElement& element, UserW
     // Rebuild from the slot's own audio. Nothing on disk is consulted, so this
     // works on a machine that has never seen the file the slot came from.
     std::vector<float> mono;
+    std::vector<float> right;
     double sampleRate = 0.0;
 
-    if (! decodeSlotAudio (slot.encodedAudio, mono, sampleRate))
+    if (! decodeSlotAudio (slot.encodedAudio, mono, right, sampleRate))
     {
         // Written before the audio travelled in the slot: the only place left to
         // look is the copy that version kept in the Wavetables folder.
         auto legacy = wavetableFolder().getChildFile ("Samples").getChildFile (slot.sourceFile);
         juce::String ignored;
 
-        if (! readFileAsMono (legacy, mono, sampleRate, ignored))
+        if (! readFileAsMono (legacy, mono, right, sampleRate, ignored))
             return;
 
         // Take it into the slot, so re-saving this preset makes it self contained
         // and that folder is never needed again.
-        slot.encodedAudio = encodeSlotAudio (mono, sampleRate);
+        slot.encodedAudio = encodeSlotAudio (mono, right, sampleRate);
     }
 
     // buildSlot rewrites what it plays from and takes the mode as an argument, so

@@ -544,6 +544,10 @@ private:
         combo box and follows it, so no layout here has to make room. */
     std::vector<std::unique_ptr<ComboStepper>> comboSteppers;
 
+    /** Which boxes already carry one, so a box reached by two walks -- its own
+        page and the editor that contains it -- is not given two. */
+    std::vector<juce::ComboBox*> steppedCombos;
+
     std::unique_ptr<WaveformEditorPanel> waveformWindow;
 
     /** Open the Waveforms window, pointed at the dropdown that asked for it.

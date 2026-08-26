@@ -55,6 +55,7 @@ void ResampleCapture::prepare (double sampleRate, double maxSeconds)
     inTail = false;
 
     buffer.assign (wanted, 0.0f);
+    bufferRight.assign (wanted, 0.0f);
 }
 
 //==============================================================================
@@ -106,12 +107,16 @@ void ResampleCapture::cancel() noexcept
     state.store (State::idle, std::memory_order_release);
 }
 
-bool ResampleCapture::take (std::vector<float>& mono, double& sampleRate,
-                            bool& stoppedByLength)
+bool ResampleCapture::take (std::vector<float>& leftOut, std::vector<float>& rightOut,
+                            double& sampleRate, bool& stoppedByLength)
 {
     if (state.load (std::memory_order_acquire) != State::finished)
         return false;
 
+    // Where the sound ends is measured on the LEFT channel alone only because the
+    // tail detector that wrote it already used the sum -- see write(). Anything
+    // still sounding on either side kept the recording alive, so the last audible
+    // sample is the same instant for both.
     int length = Resample::lengthWithoutTrailingSilence (buffer.data(), used,
                                                          Resample::silenceThreshold);
 
@@ -124,10 +129,14 @@ bool ResampleCapture::take (std::vector<float>& mono, double& sampleRate,
         // where the sound really was rather than from where it was cut.
         length = (int) std::min ((std::size_t) used, (std::size_t) (length + fade));
 
+        // Both sides faded by the same amount over the same samples, or the image
+        // would swing across the last few milliseconds of every recording.
         Resample::fadeOutEnd (buffer.data(), length, fade);
+        Resample::fadeOutEnd (bufferRight.data(), length, fade);
     }
 
-    mono.assign (buffer.begin(), buffer.begin() + length);
+    leftOut.assign (buffer.begin(), buffer.begin() + length);
+    rightOut.assign (bufferRight.begin(), bufferRight.begin() + length);
     sampleRate = rate;
     stoppedByLength = filledUp;
 
@@ -198,8 +207,14 @@ void ResampleCapture::write (const float* left, const float* right, int numSampl
 
     for (int i = 0; i < count; ++i)
     {
+        buffer[(std::size_t) (used + i)] = left[i];
+        bufferRight[(std::size_t) (used + i)] = right[i];
+
+        // The mono sum still decides when the tail has gone quiet. Silence is a
+        // property of the sound, not of one side of it -- a ping-pong delay whose
+        // last repeat sits hard right is not silence, and testing the left alone
+        // would have cut it off.
         const float value = 0.5f * (left[i] + right[i]);
-        buffer[(std::size_t) (used + i)] = value;
 
         // Only once the note has been let go. Before that a slow attack, or the
         // closed step of a gate, would end the recording before it had begun.

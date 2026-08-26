@@ -93,6 +93,27 @@ namespace
 
         return sent;
     }
+
+    /** Like pump, but with a DIFFERENT signal on each side -- which is the whole
+        point of a stereo recording and the only way to prove the two are kept
+        apart rather than summed. */
+    int pumpStereo(ResampleCapture& capture, float left, float right, double seconds)
+    {
+        const int total = (int) (seconds * kRate);
+        int sent = 0;
+
+        for (int i = 0; i < total && capture.isRecording(); i += kBlock)
+        {
+            const int n = std::min(kBlock, total - i);
+            std::vector<float> l((std::size_t) n, left);
+            std::vector<float> r((std::size_t) n, right);
+
+            capture.write(l.data(), r.data(), n);
+            sent += n;
+        }
+
+        return sent;
+    }
 }
 
 int main()
@@ -119,9 +140,10 @@ int main()
         check(capture.isRecording(), "the started recording is not running");
 
         std::vector<float> taken;
+        std::vector<float> takenRight;
         double rate = 0.0;
         bool cut = false;
-        check(!capture.take(taken, rate, cut), "a running recording could be taken");
+        check(!capture.take(taken, takenRight, rate, cut), "a running recording could be taken");
     }
 
     //--------------------------------------------------------------------------
@@ -153,9 +175,10 @@ int main()
               "the recording ran on well past the silence it stopped for");
 
         std::vector<float> taken;
+        std::vector<float> takenRight;
         double rate = 0.0;
         bool cut = false;
-        check(capture.take(taken, rate, cut), "the finished recording could not be taken");
+        check(capture.take(taken, takenRight, rate, cut), "the finished recording could not be taken");
         check(rate == kRate, "the rate did not survive the recording");
 
         // Three seconds of sound went in -- two held, one of tail -- and the
@@ -175,7 +198,7 @@ int main()
         check(! taken.empty() && taken.back() == 0.0f,
               "the recording does not end at zero");
 
-        check(!capture.take(taken, rate, cut), "the same recording could be taken twice");
+        check(!capture.take(taken, takenRight, rate, cut), "the same recording could be taken twice");
         check(!capture.isBusy(), "the recorder stayed busy after being taken");
     }
 
@@ -243,9 +266,10 @@ int main()
         check(!capture.isRecording(), "the recording did not stop after the last repeat");
 
         std::vector<float> taken;
+        std::vector<float> takenRight;
         double rate = 0.0;
         bool cut = false;
-        check(capture.take(taken, rate, cut), "nothing came back from the delayed recording");
+        check(capture.take(taken, takenRight, rate, cut), "nothing came back from the delayed recording");
         check(!cut, "a recording that finished on its own claimed it was cut short");
 
         // Three echoes and the two gaps between them, with the last gap trimmed.
@@ -276,9 +300,10 @@ int main()
         check(!capture.isRecording(), "the recording did not stop once the tail was quiet");
 
         std::vector<float> taken;
+        std::vector<float> takenRight;
         double rate = 0.0;
         bool cut = false;
-        check(capture.take(taken, rate, cut), "nothing came back from the slow-attack recording");
+        check(capture.take(taken, takenRight, rate, cut), "nothing came back from the slow-attack recording");
         std::printf("  kept %d samples (the 2 s of attack silence and the 1 s of sound)\n",
                     (int) taken.size());
         check((int) taken.size() > (int) (2.5 * kRate),
@@ -302,9 +327,10 @@ int main()
         check(sent <= (int) (2.0 * kRate) + kBlock, "the recorder ran on past a full buffer");
 
         std::vector<float> taken;
+        std::vector<float> takenRight;
         double rate = 0.0;
         bool cut = false;
-        check(capture.take(taken, rate, cut), "the full buffer could not be taken");
+        check(capture.take(taken, takenRight, rate, cut), "the full buffer could not be taken");
         check((int) taken.size() <= (int) (2.0 * kRate), "more came back than the buffer holds");
         check(cut, "a tail cut off by the buffer did not say so");
     }
@@ -322,9 +348,10 @@ int main()
         pump(capture, quiet, 5.0);
 
         std::vector<float> taken;
+        std::vector<float> takenRight;
         double rate = 0.0;
         bool cut = false;
-        check(!capture.take(taken, rate, cut), "a silent recording claimed to hold sound");
+        check(!capture.take(taken, takenRight, rate, cut), "a silent recording claimed to hold sound");
         check(taken.empty(), "a silent recording handed back samples");
         std::printf("  handled\n");
     }
@@ -383,6 +410,62 @@ int main()
         check(flat.back() == 0.0f, "an over-long fade did not end at zero");
         check(flat.front() > 0.4f, "an over-long fade swallowed the start of the buffer");
         std::printf("  handled\n");
+    }
+
+    //--------------------------------------------------------------------------
+    std::printf("\nBoth channels are kept, and kept apart:\n");
+    {
+        // The recording used to be summed to mono here, which threw away the
+        // reverb and the chorus -- most of the reason to resample a pad at all.
+        // This writes two DIFFERENT channels and checks they come back different.
+        ResampleCapture capture;
+        capture.prepare(kRate, 15.0);
+        capture.arm();
+        capture.startsThisBlock();
+
+        // The same shape the test above uses: hold for the whole hold, then let
+        // go, then silence until the tail detector ends it. Releasing early does
+        // nothing -- the hold is counted in whole seconds -- and a recording that
+        // never releases never finishes and can never be taken.
+        pumpStereo(capture, 0.5f, -0.25f, Resample::holdSeconds);
+        check(capture.isRecording(), "the stereo recording stopped while the note was held");
+
+        release(capture);
+        pumpStereo(capture, 0.5f, -0.25f, 1.0);
+
+        const std::vector<float> quiet((std::size_t) 4800, 0.0f);
+        pump(capture, quiet, 5.0);
+        check(!capture.isRecording(), "the stereo recording did not stop when it went quiet");
+
+        std::vector<float> takenL, takenR;
+        double rate = 0.0;
+        bool cut = false;
+
+        if (capture.take(takenL, takenR, rate, cut))
+        {
+            check(takenL.size() == takenR.size(),
+                  "the two channels came back different lengths");
+            check(!takenL.empty(), "nothing was recorded");
+
+            if (!takenL.empty())
+            {
+                // Compared away from the very end, where the fade-out pulls both
+                // sides towards zero and would make any two channels look alike.
+                const std::size_t at = takenL.size() / 4;
+
+                check(takenL[at] > 0.4f, "the left channel is not what was written");
+                check(takenR[at] < -0.2f, "the right channel is not what was written");
+                check(std::abs(takenL[at] - takenR[at]) > 0.5f,
+                      "the two channels were summed together");
+
+                std::printf("  left %.3f, right %.3f -- kept apart\n",
+                            takenL[at], takenR[at]);
+            }
+        }
+        else
+        {
+            check(false, "the stereo recording could not be taken");
+        }
     }
 
     std::printf("\n%s (%d failure%s)\n", failures == 0 ? "ALL PASSED" : "FAILED",

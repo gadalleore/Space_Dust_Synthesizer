@@ -1127,7 +1127,8 @@ void WaveformEditorComponent::completeResample()
     // Analysing the recording and building the slot takes long enough on a long
     // tail to look like a hang, exactly as importing a file does.
     juce::MouseCursor::showWaitCursor();
-    const bool ok = library.importAudio (std::move (capture.mono), capture.sampleRate,
+    const bool ok = library.importAudio (std::move (capture.mono), std::move (capture.right),
+                                         capture.sampleRate,
                                          capture.name, group, slotIndex,
                                          UserWave::Mode::FullSample, error);
     juce::MouseCursor::hideWaitCursor();

@@ -240,10 +240,10 @@ public:
 
         stoppedByLength says the tail was still sounding when the recording ran
         out of room -- see ResampleCapture::take. */
-    bool takeResampleRecording(std::vector<float>& mono, double& sampleRate,
-                               bool& stoppedByLength)
+    bool takeResampleRecording(std::vector<float>& left, std::vector<float>& right,
+                               double& sampleRate, bool& stoppedByLength)
     {
-        return resampleCapture.take(mono, sampleRate, stoppedByLength);
+        return resampleCapture.take(left, right, sampleRate, stoppedByLength);
     }
 
     /** Give up on a recording that can never finish, because the host has stopped

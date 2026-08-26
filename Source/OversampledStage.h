@@ -34,7 +34,7 @@
         filter must see them) but their dot-product is skipped. Identical output,
         ~1/factor the multiply count.
 
-    Stereo only (2 channels). RT-safe: no allocation after setFactor().
+    Up to kMaxChannels independent signals. RT-safe: no allocation after setFactor().
 */
 class OversampledStage
 {
@@ -57,7 +57,7 @@ public:
 
     void reset() noexcept
     {
-        for (int c = 0; c < 2; ++c)
+        for (int c = 0; c < kMaxChannels; ++c)
         {
             std::fill (std::begin (xHist[c]), std::end (xHist[c]), 0.0f);
             std::fill (std::begin (downZ[c]), std::end (downZ[c]), 0.0f);
@@ -74,7 +74,11 @@ public:
         if (factor <= 1)
             return fn (x);
 
-        const int ch = (channel == 1) ? 1 : 0;
+        // Clamped, not folded. This read `(channel == 1) ? 1 : 0` while there were
+        // only two channels, which would quietly have put channels 2 and 3 onto
+        // channel 0 -- three signals sharing one filter's history, which is not a
+        // wrong number so much as three wrong numbers.
+        const int ch = juce::jlimit (0, kMaxChannels - 1, channel);
 
         // Push the pre-scaled base-rate input once. Pre-scaling by `factor` here (to
         // restore the held energy of the zero-stuffed samples) keeps each product
@@ -94,6 +98,58 @@ public:
                 out = dn;
         }
         return out;
+    }
+
+    /** Like process(), but for a generator that makes TWO signals at once.
+
+        `fn` is handed the upsampled input and a float& for its second output, and
+        returns the first. Both are filtered, each on its own channel.
+
+        One loop, not two calls to process(). The generator here advances a phase
+        accumulator, so running it a second time for the right channel would step
+        the oscillator twice per sample and play it an octave up. This is the whole
+        reason the stage grew from two channels to four. */
+    template <typename Fn>
+    void processStereo (int chLeft, int chRight, float x, Fn&& fn,
+                        float& outLeft, float& outRight) noexcept
+    {
+        if (factor <= 1)
+        {
+            outRight = 0.0f;
+            outLeft = fn (x, outRight);
+            return;
+        }
+
+        const int cl = juce::jlimit (0, kMaxChannels - 1, chLeft);
+        const int cr = juce::jlimit (0, kMaxChannels - 1, chRight);
+
+        // The input history is pushed for the LEFT channel only. There is no input
+        // signal here -- x is zero and the generator ignores it -- so the right
+        // channel needs no upsampling of its own, only its own decimator state.
+        int& xp = xPos[cl];
+        xp = (xp == 0) ? kBaseHist - 1 : xp - 1;
+        xHist[cl][xp] = x * static_cast<float> (factor);
+
+        outLeft = 0.0f;
+        outRight = 0.0f;
+
+        for (int k = 0; k < factor; ++k)
+        {
+            const float up = upsamplePhase (cl, k);
+
+            float right = 0.0f;
+            const float left = fn (up, right);
+
+            const bool keep = (k == factor - 1);
+            const float dnL = decimateStep (cl, left, keep);
+            const float dnR = decimateStep (cr, right, keep);
+
+            if (keep)
+            {
+                outLeft = dnL;
+                outRight = dnR;
+            }
+        }
     }
 
 private:
@@ -164,11 +220,21 @@ private:
         return acc;
     }
 
+public:
+    /** How many independent signals one stage can carry.
+
+        Four, not two: the two oscillators used one channel each, and each of them
+        now produces a LEFT and a RIGHT when it is playing a stereo slot. Every
+        channel costs two short history buffers and nothing else, so the room is
+        cheaper than a second stage and keeps one filter's state in one object. */
+    static constexpr int kMaxChannels = 4;
+
+private:
     int   factor  = 1;
     int   numTaps = 1;
     float h[kMaxTaps] {};
-    float xHist[2][kBaseHist] {};   // base-rate input history (pre-scaled by factor)
-    float downZ[2][kMaxTaps]  {};   // decimation FIR delay line (oversampled rate)
-    int   xPos[2]   { 0, 0 };
-    int   downPos[2] { 0, 0 };
+    float xHist[kMaxChannels][kBaseHist] {};   // base-rate input history (pre-scaled by factor)
+    float downZ[kMaxChannels][kMaxTaps]  {};   // decimation FIR delay line (oversampled rate)
+    int   xPos[kMaxChannels]   {};
+    int   downPos[kMaxChannels] {};
 };
