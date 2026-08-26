@@ -1,15 +1,15 @@
 // =====================================================================
 //  Phase shaper test
 //  ---------------------------------------------------------------------
-//  Exercises the REAL PhaseShaper -- Bend, Spectrum and Sync, the three
-//  things done to an oscillator's phase before a waveform is read.
+//  Exercises the REAL PhaseShaper -- Bend +, Bend -, Bend +/-, Spectrum
+//  and Sync, the five amounts that reshape an oscillator's phase before a
+//  waveform is read from it.
 //
-//  The properties checked here are the ones that make these controls
-//  usable rather than merely present: turning a knob to zero must give
-//  back exactly what there was before, a bend must never run backwards
-//  (a phase that goes back on itself plays the wave in reverse for part
-//  of the cycle), and the phase must stay inside 0..1 so it never reads
-//  outside the wave.
+//  All five are independent knobs and any of them may be turned up
+//  together, so the properties that matter are about COMBINING them: all
+//  zero must give back exactly the untouched phase, the two opposed bends
+//  must cancel when both are full, nothing may run backwards however they
+//  are stacked, and the phase must never leave the cycle.
 //
 //  Build & run:
 //      cmake --build build --config Release --target shaper-test
@@ -36,144 +36,169 @@ namespace
     }
 
     constexpr int steps = 2048;
+
+    using A = PhaseShaper::Amounts;
+
+    // Every knob at the same value, for the stacking checks.
+    A all(double v)
+    {
+        A a; a.bendPlus = v; a.bendMinus = v; a.bendPlusMinus = v; a.spectrum = v; a.sync = v;
+        return a;
+    }
 }
 
 int main()
 {
     std::printf("Phase shaper tests\n==================\n");
 
-    std::printf("\nEvery mode has a name:\n");
+    std::printf("\nEvery knob has a name:\n");
     {
-        const int n = (int)(sizeof(PhaseShaper::modeNames) / sizeof(PhaseShaper::modeNames[0]));
-        check(n == PhaseShaper::numModes, "the mode list and the name list disagree");
-        std::printf("  %d modes, %d names\n", (int)PhaseShaper::numModes, n);
+        const int n = (int)(sizeof(PhaseShaper::knobNames) / sizeof(PhaseShaper::knobNames[0]));
+        check(n == PhaseShaper::numKnobs, "the knob list and the name list disagree");
+        std::printf("  %d shaping knobs, %d names (Sync is separate)\n",
+                    PhaseShaper::numKnobs, n);
     }
 
-    std::printf("\nZero intensity and zero sync change nothing:\n");
+    std::printf("\nEverything at zero changes nothing:\n");
     {
-        // The most important property here. If turning Intensity down did not
-        // give back exactly the old phase, every existing preset would change
-        // the moment these controls appeared.
-        double worst = 0.0;
-
-        for (int m = 0; m < PhaseShaper::numModes; ++m)
-        {
-            for (int i = 0; i < steps; ++i)
-            {
-                const double p = (double)i / steps;
-                worst = std::fmax(worst, std::abs(PhaseShaper::shapedPhase(p, m, 0.0, 0.0) - p));
-            }
-        }
-
-        check(worst < 1e-12, "a mode moved the phase with intensity and sync at zero");
-        std::printf("  worst movement: %.2e\n", worst);
-    }
-
-    std::printf("\nStandard mode never bends, however hard it is pushed:\n");
-    {
+        // The most important property here. If an untouched oscillator did not
+        // give back exactly its old phase, every existing preset would change the
+        // moment these knobs appeared.
+        A a;
         double worst = 0.0;
 
         for (int i = 0; i < steps; ++i)
         {
             const double p = (double)i / steps;
-            worst = std::fmax(worst,
-                              std::abs(PhaseShaper::shapedPhase(p, PhaseShaper::Standard, 1.0, 0.0) - p));
+            worst = std::fmax(worst, std::abs(PhaseShaper::shapedPhase(p, a) - p));
         }
 
-        check(worst < 1e-12, "Standard bent the phase");
-        std::printf("  worst movement at full intensity: %.2e\n", worst);
+        check(worst < 1e-12, "an idle shaper moved the phase");
+        check(!PhaseShaper::isActive(a), "an idle shaper reported itself active");
+        std::printf("  worst movement: %.2e\n", worst);
     }
 
-    std::printf("\nThe phase never leaves 0..1:\n");
+    std::printf("\nThe two opposed bends cancel:\n");
     {
-        // A phase outside the cycle reads outside the wave. shapeValue wraps, so
-        // it would not crash -- it would quietly play the wrong part of the cycle.
-        double lo = 1e9, hi = -1e9;
+        // Bend + and Bend - are inverse curves. Turned up together they must undo
+        // each other -- which is only true because they are folded into one
+        // exponent. Applied one after the other they would not have cancelled
+        // exactly, and two knobs pointing opposite ways would have felt broken.
+        double worst = 0.0;
 
-        for (int m = 0; m < PhaseShaper::numModes; ++m)
-            for (int inten = 0; inten <= 10; ++inten)
-                for (int sy = 0; sy <= 10; ++sy)
-                    for (int i = 0; i < 256; ++i)
-                    {
-                        const double v = PhaseShaper::shapedPhase((double)i / 256, m,
-                                                                  inten / 10.0, sy / 10.0);
-                        lo = std::fmin(lo, v);
-                        hi = std::fmax(hi, v);
-                    }
-
-        check(lo >= -1e-9 && hi <= 1.0 + 1e-9, "the shaped phase left the cycle");
-        std::printf("  range across every mode and setting: %.6f .. %.6f\n", lo, hi);
-    }
-
-    std::printf("\nA bend never runs backwards:\n");
-    {
-        // A bend must be monotonic across the cycle. If it dipped, the wave would
-        // play backwards for part of every turn -- which is not a timbre, it is a
-        // stutter, and it would sound like a fault rather than an effect.
-        int nonMonotonic = 0;
-
-        for (int m = 0; m < PhaseShaper::numModes; ++m)
+        for (int amount = 1; amount <= 10; ++amount)
         {
-            for (int inten = 1; inten <= 10; ++inten)
+            A a;
+            a.bendPlus = amount / 10.0;
+            a.bendMinus = amount / 10.0;
+
+            for (int i = 0; i < steps; ++i)
             {
-                double previous = -1.0;
-
-                for (int i = 0; i < steps; ++i)
-                {
-                    const double v = PhaseShaper::shapedPhase((double)i / steps, m,
-                                                              inten / 10.0, 0.0);
-                    if (v < previous - 1e-9)
-                        ++nonMonotonic;
-
-                    previous = v;
-                }
+                const double p = (double)i / steps;
+                worst = std::fmax(worst, std::abs(PhaseShaper::shapedPhase(p, a) - p));
             }
         }
 
-        check(nonMonotonic == 0, "a bend curve runs backwards somewhere");
-        std::printf("  backward steps found: %d\n", nonMonotonic);
-    }
-
-    std::printf("\nThe bends still start at zero and end at one:\n");
-    {
-        // A curve that did not span the whole cycle would clip part of the wave
-        // off permanently rather than redistributing it.
-        for (int m = 1; m <= PhaseShaper::BendPlusMinus; ++m)
-        {
-            const double atZero = PhaseShaper::shapedPhase(0.0, m, 1.0, 0.0);
-            const double atEnd = PhaseShaper::shapedPhase(0.999999, m, 1.0, 0.0);
-
-            check(std::abs(atZero) < 1e-9,
-                  std::string(PhaseShaper::modeNames[m]) + " does not start the cycle at zero");
-            check(atEnd > 0.99,
-                  std::string(PhaseShaper::modeNames[m]) + " does not reach the end of the cycle");
-        }
-        std::printf("  all three bends span the whole cycle\n");
+        check(worst < 1e-9, "Bend + and Bend - do not cancel when both are up");
+        std::printf("  worst residue across every matched pair: %.2e\n", worst);
     }
 
     std::printf("\nBend + and Bend - pull opposite ways:\n");
     {
-        // Halfway through the cycle, one must be earlier than untouched and the
-        // other later. If they did not differ, two menu entries would do one job.
-        const double plus = PhaseShaper::shapedPhase(0.5, PhaseShaper::BendPlus, 1.0, 0.0);
-        const double minus = PhaseShaper::shapedPhase(0.5, PhaseShaper::BendMinus, 1.0, 0.0);
+        A plus;  plus.bendPlus = 1.0;
+        A minus; minus.bendMinus = 1.0;
 
-        check(plus < 0.5 - 0.05, "Bend + does not compress the front of the cycle");
-        check(minus > 0.5 + 0.05, "Bend - does not stretch the front of the cycle");
+        const double vPlus = PhaseShaper::shapedPhase(0.5, plus);
+        const double vMinus = PhaseShaper::shapedPhase(0.5, minus);
+
+        check(vPlus < 0.5 - 0.05, "Bend + does not compress the front of the cycle");
+        check(vMinus > 0.5 + 0.05, "Bend - does not stretch the front of the cycle");
         std::printf("  at the half-way point: Bend + %.4f, untouched 0.5000, Bend - %.4f\n",
-                    plus, minus);
+                    vPlus, vMinus);
+    }
+
+    std::printf("\nNothing runs backwards, however the knobs are stacked:\n");
+    {
+        // A phase curve that dipped would play the wave in reverse for part of
+        // every turn -- a stutter, not a timbre. This is the check that the four
+        // knobs are safe to combine at all.
+        int nonMonotonic = 0;
+
+        for (int bp = 0; bp <= 4; ++bp)
+        for (int bm = 0; bm <= 4; ++bm)
+        for (int bpm = 0; bpm <= 4; ++bpm)
+        {
+            A a;
+            a.bendPlus = bp / 4.0;
+            a.bendMinus = bm / 4.0;
+            a.bendPlusMinus = bpm / 4.0;
+
+            double previous = -1.0;
+
+            for (int i = 0; i < 512; ++i)
+            {
+                const double v = PhaseShaper::shapedPhase((double)i / 512, a);
+                if (v < previous - 1e-9) ++nonMonotonic;
+                previous = v;
+            }
+        }
+
+        check(nonMonotonic == 0, "a stacked bend runs backwards somewhere");
+        std::printf("  backward steps across 125 knob combinations: %d\n", nonMonotonic);
+    }
+
+    std::printf("\nThe phase never leaves the cycle:\n");
+    {
+        double lo = 1e9, hi = -1e9;
+
+        for (int v = 0; v <= 10; ++v)
+        {
+            const A a = all(v / 10.0);
+
+            for (int i = 0; i < 512; ++i)
+            {
+                const double x = PhaseShaper::shapedPhase((double)i / 512, a);
+                lo = std::fmin(lo, x);
+                hi = std::fmax(hi, x);
+            }
+        }
+
+        check(lo >= -1e-9 && hi <= 1.0 + 1e-9, "the shaped phase left the cycle");
+        std::printf("  range with every knob swept together: %.6f .. %.6f\n", lo, hi);
+    }
+
+    std::printf("\nEach bend still spans the whole cycle:\n");
+    {
+        // A curve that did not reach both ends would clip part of the wave off
+        // permanently instead of redistributing it.
+        struct Named { const char* name; A a; };
+
+        A p; p.bendPlus = 1.0;
+        A m; m.bendMinus = 1.0;
+        A s; s.bendPlusMinus = 1.0;
+
+        for (const auto& n : { Named{"Bend +", p}, Named{"Bend -", m}, Named{"Bend +/-", s} })
+        {
+            check(std::abs(PhaseShaper::shapedPhase(0.0, n.a)) < 1e-9,
+                  std::string(n.name) + " does not start the cycle at zero");
+            check(PhaseShaper::shapedPhase(0.999999, n.a) > 0.99,
+                  std::string(n.name) + " does not reach the end of the cycle");
+        }
+
+        std::printf("  all three bends span 0..1\n");
     }
 
     std::printf("\nBend +/- is symmetric about the middle:\n");
     {
+        A a; a.bendPlusMinus = 0.7;
         double worst = 0.0;
 
         for (int i = 1; i < steps; ++i)
         {
             const double p = (double)i / steps;
-            const double a = PhaseShaper::shapedPhase(p, PhaseShaper::BendPlusMinus, 0.7, 0.0);
-            const double b = PhaseShaper::shapedPhase(1.0 - p, PhaseShaper::BendPlusMinus, 0.7, 0.0);
-            worst = std::fmax(worst, std::abs(a - (1.0 - b)));
+            const double x = PhaseShaper::shapedPhase(p, a);
+            const double y = PhaseShaper::shapedPhase(1.0 - p, a);
+            worst = std::fmax(worst, std::abs(x - (1.0 - y)));
         }
 
         check(worst < 1e-9, "Bend +/- is lopsided");
@@ -182,51 +207,64 @@ int main()
 
     std::printf("\nSync repeats the cycle and always restarts at zero:\n");
     {
-        // Full sync must fit maxSyncRatio cycles into one note, and each must
-        // begin at zero -- that snap back to zero IS the hard-sync tear.
+        A a; a.sync = 1.0;
         int wraps = 0;
-        double previous = PhaseShaper::shapedPhase(0.0, PhaseShaper::Standard, 0.0, 1.0);
+        double previous = PhaseShaper::shapedPhase(0.0, a);
 
         for (int i = 1; i < steps; ++i)
         {
-            const double v = PhaseShaper::shapedPhase((double)i / steps,
-                                                      PhaseShaper::Standard, 0.0, 1.0);
+            const double v = PhaseShaper::shapedPhase((double)i / steps, a);
             if (v < previous) ++wraps;
             previous = v;
         }
 
         check(wraps == (int)PhaseShaper::maxSyncRatio - 1,
               "full sync did not fit the expected number of cycles into the note");
-
-        const double atStart = PhaseShaper::shapedPhase(0.0, PhaseShaper::Standard, 0.0, 1.0);
-        check(std::abs(atStart) < 1e-9, "a synced cycle does not start at zero");
-
+        check(std::abs(PhaseShaper::shapedPhase(0.0, a)) < 1e-9,
+              "a synced cycle does not start at zero");
         std::printf("  wraps across one note at full sync: %d\n", wraps);
+    }
+
+    std::printf("\nSync and a bend work together:\n");
+    {
+        // The bend must shape EACH repeat, not the run of them -- so a synced and
+        // bent phase must still return to zero the same number of times.
+        A a; a.sync = 1.0; a.bendPlus = 0.8;
+        int wraps = 0;
+        double previous = PhaseShaper::shapedPhase(0.0, a);
+
+        for (int i = 1; i < steps; ++i)
+        {
+            const double v = PhaseShaper::shapedPhase((double)i / steps, a);
+            if (v < previous) ++wraps;
+            previous = v;
+        }
+
+        check(wraps == (int)PhaseShaper::maxSyncRatio - 1,
+              "bending a synced phase changed how many times it repeats");
+        std::printf("  wraps with Bend + at 0.8 and full sync: %d\n", wraps);
     }
 
     std::printf("\nSpectrum fades a shape to a sine and leaves the phase alone:\n");
     {
+        A a; a.spectrum = 1.0;
         double worstPhase = 0.0;
 
         for (int i = 0; i < steps; ++i)
         {
             const double p = (double)i / steps;
-            worstPhase = std::fmax(worstPhase,
-                                   std::abs(PhaseShaper::shapedPhase(p, PhaseShaper::Spectrum, 1.0, 0.0) - p));
+            worstPhase = std::fmax(worstPhase, std::abs(PhaseShaper::shapedPhase(p, a) - p));
         }
 
         check(worstPhase < 1e-12, "Spectrum moved the phase, which it must not");
 
-        // At full intensity a saw must have become a sine.
         double worstValue = 0.0;
 
         for (int i = 0; i < steps; ++i)
         {
             const double p = (double)i / steps;
-            const double got = PhaseShaper::shapedValue(OscShape::Saw, p,
-                                                        PhaseShaper::Spectrum, 1.0, 0.0);
-            const double sine = std::sin(OscShape::twoPi * p);
-            worstValue = std::fmax(worstValue, std::abs(got - sine));
+            const double got = PhaseShaper::shapedValue(OscShape::Saw, p, a);
+            worstValue = std::fmax(worstValue, std::abs(got - std::sin(OscShape::twoPi * p)));
         }
 
         check(worstValue < 1e-6, "Spectrum at full does not leave a sine");
@@ -236,29 +274,38 @@ int main()
 
     std::printf("\nisActive only says yes when something would change:\n");
     {
-        check(!PhaseShaper::isActive(PhaseShaper::Standard, 0.0, 0.0), "idle settings reported active");
-        check(!PhaseShaper::isActive(PhaseShaper::BendPlus, 0.0, 0.0), "zero intensity reported active");
-        check(!PhaseShaper::isActive(PhaseShaper::Standard, 1.0, 0.0), "Standard reported active");
-        check(PhaseShaper::isActive(PhaseShaper::BendPlus, 0.5, 0.0), "a real bend reported idle");
-        check(PhaseShaper::isActive(PhaseShaper::Standard, 0.0, 0.5), "sync reported idle");
+        A idle;
+        check(!PhaseShaper::isActive(idle), "idle knobs reported active");
+
+        A one;
+        one.bendPlusMinus = 0.01;
+        check(PhaseShaper::isActive(one), "a raised knob reported idle");
+
+        A justSync;
+        justSync.sync = 0.5;
+        check(PhaseShaper::isActive(justSync), "sync alone reported idle");
+
         std::printf("  the cheap path is taken exactly when nothing would change\n");
     }
 
-    std::printf("\nShaped values stay inside the rails:\n");
+    std::printf("\nShaped values stay inside the rails, every shape and every knob:\n");
     {
         double worstPeak = 0.0;
 
         for (int s = 0; s < OscShape::numShapes; ++s)
-            for (int m = 0; m < PhaseShaper::numModes; ++m)
-                for (int i = 0; i < 128; ++i)
-                {
-                    const float v = PhaseShaper::shapedValue(s, (double)i / 128, m, 0.75, 0.4);
-                    check(std::isfinite(v), "a shaped value is not a number");
-                    worstPeak = std::fmax(worstPeak, std::abs((double)v));
-                }
+        {
+            const A a = all(0.75);
+
+            for (int i = 0; i < 128; ++i)
+            {
+                const float v = PhaseShaper::shapedValue(s, (double)i / 128, a);
+                check(std::isfinite(v), "a shaped value is not a number");
+                worstPeak = std::fmax(worstPeak, std::abs((double)v));
+            }
+        }
 
         check(worstPeak <= 1.1, "a shaped value overshoots the rails");
-        std::printf("  loudest shaped peak: %.4f\n", worstPeak);
+        std::printf("  loudest shaped peak with every knob at 0.75: %.4f\n", worstPeak);
     }
 
     std::printf("\n%s\n", failures == 0 ? "All phase shaper tests passed."

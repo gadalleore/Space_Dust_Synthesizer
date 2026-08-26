@@ -794,11 +794,11 @@ void SynthVoice::refreshUserWaveSelection() noexcept
 
 float SynthVoice::generateWaveform(double angle, int waveform, const UserWaveSlot* userSlot,
                                    double freqHz, OneShotState* oneShot,
-                                   int waveMode, float intensity, float sync)
+                                   const PhaseShaper::Amounts& shapingAmounts)
 {
-    // Whether Bend, Spectrum or Sync would change anything. A patch that uses
-    // none of them takes exactly the path it took before they existed.
-    const bool shaping = PhaseShaper::isActive(waveMode, (double) intensity, (double) sync);
+    // Whether any of Bend, Spectrum or Sync would change anything. A patch that
+    // uses none of them takes exactly the path it took before they existed.
+    const bool shaping = PhaseShaper::isActive(shapingAmounts);
 
     // An imported waveform replaces the shape entirely. The angle still means the
     // same thing, so everything that drives the angle -- tuning, glide, LFO pitch
@@ -844,20 +844,20 @@ float SynthVoice::generateWaveform(double angle, int waveform, const UserWaveSlo
         // The bend is given to both. It only ever moves a position within one
         // turn, and it never runs backwards, so a sample bent is a sample played
         // at an uneven speed -- which is a sound, not a fault.
-        const bool wholeSample = userSlot->mode == UserWave::Mode::FullSample;
-        const double syncForSlot = wholeSample ? 0.0 : (double) sync;
+        PhaseShaper::Amounts forSlot = shapingAmounts;
 
-        const double shapedPhase = PhaseShaper::shapedPhase (phase, waveMode,
-                                                             (double) intensity, syncForSlot);
+        if (userSlot->mode == UserWave::Mode::FullSample)
+            forSlot.sync = 0.0;
 
+        const double shapedPhase = PhaseShaper::shapedPhase (phase, forSlot);
         const float sampled = userSlot->read (shapedPhase, freqHz, sampleRate);
 
-        if (waveMode != PhaseShaper::Spectrum || intensity <= 0.0f)
+        if (forSlot.spectrum <= 0.0)
             return sampled;
 
         // Spectrum on an imported waveform means the same as it does on a built-in
         // one: fade towards the fundamental, which is a sine at the same phase.
-        const double amount = intensity > 1.0f ? 1.0 : (double) intensity;
+        const double amount = forSlot.spectrum > 1.0 ? 1.0 : forSlot.spectrum;
         const float sine = (float) std::sin (OscShape::twoPi * shapedPhase);
 
         return (float) (sampled * (1.0 - amount) + sine * amount);
@@ -874,8 +874,7 @@ float SynthVoice::generateWaveform(double angle, int waveform, const UserWaveSlo
     if (! shaping)
         return OscShape::shapeValueFromAngle(waveform, angle);
 
-    return PhaseShaper::shapedValue(waveform, angle / OscShape::twoPi, waveMode,
-                                    (double) intensity, (double) sync);
+    return PhaseShaper::shapedValue(waveform, angle / OscShape::twoPi, shapingAmounts);
 }
 
 //==============================================================================
@@ -1482,8 +1481,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         if (!oscOSActive)
         {
             // Base rate. Phases are advanced at the bottom of the loop, as always.
-            osc1Sample = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq, &osc1OneShot, osc1WaveMode, osc1Intensity, osc1Sync);
-            osc2Sample = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq, &osc2OneShot, osc2WaveMode, osc2Intensity, osc2Sync);
+            osc1Sample = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq, &osc1OneShot, osc1Shaping);
+            osc2Sample = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq, &osc2OneShot, osc2Shaping);
             subOscSample = subOscOn ? generateWaveform(subOscAngle, subOscWaveform, subOscUserSlot, subOscFreq, &subOscOneShot) * subOscLevel : 0.0f;
         }
         else
@@ -1510,14 +1509,14 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             // upsampler still runs on zeros, which costs a little and changes nothing.
             osc1Sample = oscOsc12OS.process(0, 0.0f, [&] (float) -> float
             {
-                const float v = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq, &osc1OneShot, osc1WaveMode, osc1Intensity, osc1Sync);
+                const float v = generateWaveform(osc1Angle, osc1Waveform, osc1UserSlot, osc1Freq, &osc1OneShot, osc1Shaping);
                 osc1Angle += d1; wrap(osc1Angle);
                 return v;
             });
 
             osc2Sample = oscOsc12OS.process(1, 0.0f, [&] (float) -> float
             {
-                const float v = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq, &osc2OneShot, osc2WaveMode, osc2Intensity, osc2Sync);
+                const float v = generateWaveform(osc2Angle, osc2Waveform, osc2UserSlot, osc2Freq, &osc2OneShot, osc2Shaping);
                 osc2Angle += d2; wrap(osc2Angle);
                 return v;
             });

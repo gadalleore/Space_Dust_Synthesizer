@@ -1135,15 +1135,23 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
         analogDrift = 0.0f;
     
     // Bend, Spectrum and Sync. Read once here rather than per voice: they are the
-    // same three numbers for every voice, and safeGetParam is not free.
-    const int osc1WaveMode = juce::jlimit(0, PhaseShaper::numModes - 1,
-                                          static_cast<int>(safeGetParam(apvts, "osc1WaveMode")));
-    const int osc2WaveMode = juce::jlimit(0, PhaseShaper::numModes - 1,
-                                          static_cast<int>(safeGetParam(apvts, "osc2WaveMode")));
-    const float osc1Intensity = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc1Intensity"));
-    const float osc2Intensity = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc2Intensity"));
-    const float osc1SyncAmount = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc1Sync"));
-    const float osc2SyncAmount = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc2Sync"));
+    // same ten numbers for every voice, and safeGetParam is not free.
+    const auto readShaping = [this](const char* bp, const char* bm, const char* bpm,
+                                    const char* sp, const char* sy)
+    {
+        PhaseShaper::Amounts a;
+        a.bendPlus      = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, bp));
+        a.bendMinus     = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, bm));
+        a.bendPlusMinus = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, bpm));
+        a.spectrum      = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, sp));
+        a.sync          = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, sy));
+        return a;
+    };
+
+    const auto osc1Shaping = readShaping("osc1BendPlus", "osc1BendMinus",
+                                         "osc1BendPlusMinus", "osc1Spectrum", "osc1Sync");
+    const auto osc2Shaping = readShaping("osc2BendPlus", "osc2BendMinus",
+                                         "osc2BendPlusMinus", "osc2Spectrum", "osc2Sync");
 
     // Update all voices with current parameter values
     for (int i = 0; i < synth.getNumVoices(); ++i)
@@ -1153,8 +1161,8 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setUserWaveBank(audioUserWaveBank);
             voice->setOsc1Waveform(osc1Wave);
             voice->setOsc2Waveform(osc2Wave);
-            voice->setOsc1WaveShaping(osc1WaveMode, osc1Intensity, osc1SyncAmount);
-            voice->setOsc2WaveShaping(osc2WaveMode, osc2Intensity, osc2SyncAmount);
+            voice->setOsc1WaveShaping(osc1Shaping);
+            voice->setOsc2WaveShaping(osc2Shaping);
             voice->setOsc1CoarseTune(osc1CoarseTune);
             voice->setOsc1Detune(osc1Detune);
             voice->setOsc2CoarseTune(osc2CoarseTune);
@@ -3428,47 +3436,32 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     // The sub oscillator deliberately has none of them. Its job is to sit under
     // the others and be felt rather than heard, and bending it would put
     // harmonics exactly where they are least wanted.
+    // Five knobs each, not a mode and an amount. Any of them may be turned up
+    // together and they compose -- see PhaseShaper.h. All default to zero, so a
+    // patch that never touches them sounds exactly as it always did.
     {
-        juce::StringArray waveModeChoices;
+        struct ShapingParam { const char* id; const char* name; };
 
-        for (int i = 0; i < PhaseShaper::numModes; ++i)
-            waveModeChoices.add(safeString(PhaseShaper::modeNames[i]));
+        const ShapingParam shapingParams[] =
+        {
+            { "osc1BendPlus",      "Osc 1 Bend +" },
+            { "osc1BendMinus",     "Osc 1 Bend -" },
+            { "osc1BendPlusMinus", "Osc 1 Bend +/-" },
+            { "osc1Spectrum",      "Osc 1 Spectrum" },
+            { "osc1Sync",          "Osc 1 Sync" },
+            { "osc2BendPlus",      "Osc 2 Bend +" },
+            { "osc2BendMinus",     "Osc 2 Bend -" },
+            { "osc2BendPlusMinus", "Osc 2 Bend +/-" },
+            { "osc2Spectrum",      "Osc 2 Spectrum" },
+            { "osc2Sync",          "Osc 2 Sync" },
+        };
 
-        addParameterWithLogging(params,
-            std::make_unique<juce::AudioParameterChoice>(
-                juce::ParameterID{"osc1WaveMode", 1}, "Osc 1 Wave Mode",
-                waveModeChoices, PhaseShaper::Standard),
-            safeString("osc1WaveMode"));
-
-        addParameterWithLogging(params,
-            std::make_unique<juce::AudioParameterFloat>(
-                juce::ParameterID{"osc1Intensity", 1}, "Osc 1 Intensity",
-                juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f),
-            safeString("osc1Intensity"));
-
-        addParameterWithLogging(params,
-            std::make_unique<juce::AudioParameterFloat>(
-                juce::ParameterID{"osc1Sync", 1}, "Osc 1 Sync",
-                juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f),
-            safeString("osc1Sync"));
-
-        addParameterWithLogging(params,
-            std::make_unique<juce::AudioParameterChoice>(
-                juce::ParameterID{"osc2WaveMode", 1}, "Osc 2 Wave Mode",
-                waveModeChoices, PhaseShaper::Standard),
-            safeString("osc2WaveMode"));
-
-        addParameterWithLogging(params,
-            std::make_unique<juce::AudioParameterFloat>(
-                juce::ParameterID{"osc2Intensity", 1}, "Osc 2 Intensity",
-                juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f),
-            safeString("osc2Intensity"));
-
-        addParameterWithLogging(params,
-            std::make_unique<juce::AudioParameterFloat>(
-                juce::ParameterID{"osc2Sync", 1}, "Osc 2 Sync",
-                juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f),
-            safeString("osc2Sync"));
+        for (const auto& sp : shapingParams)
+            addParameterWithLogging(params,
+                std::make_unique<juce::AudioParameterFloat>(
+                    juce::ParameterID{sp.id, 1}, sp.name,
+                    juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f),
+                safeString(sp.id));
     }
 
     //==============================================================================

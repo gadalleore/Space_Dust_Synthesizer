@@ -639,20 +639,6 @@ MainPageComponent::MainPageComponent(SpaceDustAudioProcessorEditor& editor)
     addAndMakeVisible(parentEditor.osc1WaveformEditButton);
     addAndMakeVisible(parentEditor.osc2WaveformEditButton);
     addAndMakeVisible(parentEditor.noiseWaveformEditButton);
-    // Wave Mode, Intensity and Sync -- the shaping row under each oscillator.
-    addAndMakeVisible(parentEditor.osc1WaveModeCombo);
-    addAndMakeVisible(parentEditor.osc1WaveModeLabel);
-    addAndMakeVisible(parentEditor.osc1IntensitySlider);
-    addAndMakeVisible(parentEditor.osc1IntensityLabel);
-    addAndMakeVisible(parentEditor.osc1SyncSlider);
-    addAndMakeVisible(parentEditor.osc1SyncLabel);
-    addAndMakeVisible(parentEditor.osc2WaveModeCombo);
-    addAndMakeVisible(parentEditor.osc2WaveModeLabel);
-    addAndMakeVisible(parentEditor.osc2IntensitySlider);
-    addAndMakeVisible(parentEditor.osc2IntensityLabel);
-    addAndMakeVisible(parentEditor.osc2SyncSlider);
-    addAndMakeVisible(parentEditor.osc2SyncLabel);
-
     addAndMakeVisible(parentEditor.osc1CoarseTuneSlider);
     addAndMakeVisible(parentEditor.osc1CoarseTuneLabel);
     addAndMakeVisible(parentEditor.osc1DetuneSlider);
@@ -848,7 +834,7 @@ void MainPageComponent::resized()
     // Intensity, Sync) that now sit under each oscillator. Each shaping row is a
     // label, a combo-or-knob and a value box -- about 84 px -- and the two of them
     // pushed the Noise section past the bottom of the box at the old 70.
-    const int oscHeightExtra = 210;
+    const int oscHeightExtra = 70;  // Ensure Noise section labels (Level, Low/High Shelf) fit inside box
     int oscHeight = static_cast<int>((static_cast<int>(availableHeight * 0.50) + oscHeightExtra) * 0.9408f);  // ~6% smaller total (4% + 2%) to give Filter more room
     int filterHeight = availableHeight - oscHeight - topBottomGap; // Filter gets remaining
     
@@ -983,46 +969,9 @@ void MainPageComponent::resized()
     // Bottom of row: knob + value text box (no title label below)
     int osc1Bottom = osc1KnobRowY + knobDiameter + oscLabelSpacing;
 
-    //==========================================================================
-    // -- The shaping row: Wave Mode, Intensity, Sync --
-    // A second, shorter row under each oscillator. Its knobs are smaller than the
-    // tuning knobs above on purpose: these three shape the waveform, they are not
-    // part of the Coarse/Detune/Level rhythm, and a smaller size says so without
-    // needing a divider. Laid out by a lambda because the two oscillators want the
-    // identical row and writing it twice is how the two drift apart.
-    const int shapeKnobSize = 40;
-    const int shapeRowGap = 6;
-
-    const auto layOutShapingRow = [&] (int topY, juce::ComboBox& modeCombo,
-                                       juce::Label& modeLabel,
-                                       juce::Slider& intensitySlider, juce::Label& intensityLabel,
-                                       juce::Slider& syncSlider, juce::Label& syncLabel)
-    {
-        modeLabel.setBounds(oscContent.getX(), topY, comboWidth, labelHeight);
-
-        const int controlY = topY + labelHeight + labelGap;
-        modeCombo.setBounds(oscContent.getX(), controlY, comboWidth, comboHeight);
-
-        int x = oscContent.getX() + comboWidth + horizontalSpacing;
-
-        intensityLabel.setBounds(x, topY, shapeKnobSize, labelHeight);
-        intensitySlider.setBounds(x, controlY, shapeKnobSize, shapeKnobSize + oscillatorTextBoxHeight);
-
-        x += knobDiameter + horizontalSpacing;
-        syncLabel.setBounds(x, topY, shapeKnobSize, labelHeight);
-        syncSlider.setBounds(x, controlY, shapeKnobSize, shapeKnobSize + oscillatorTextBoxHeight);
-
-        return controlY + shapeKnobSize + oscillatorTextBoxHeight;
-    };
-
-    const int osc1ShapeBottom = layOutShapingRow(
-        osc1Bottom + shapeRowGap,
-        parentEditor.osc1WaveModeCombo, parentEditor.osc1WaveModeLabel,
-        parentEditor.osc1IntensitySlider, parentEditor.osc1IntensityLabel,
-        parentEditor.osc1SyncSlider, parentEditor.osc1SyncLabel);
 
     // Osc2 - Same layout, below Osc1 with proper spacing to prevent overlaps
-    int osc2Y = osc1ShapeBottom + oscRowSpacing;
+    int osc2Y = osc1Bottom + oscRowSpacing;
     parentEditor.osc2WaveformLabel.setBounds(oscContent.getX(), osc2Y, comboWidth, labelHeight);
     osc2Y += labelHeight + labelGap;
     parentEditor.osc2WaveformCombo.setBounds(oscContent.getX(), osc2Y, comboWidth, comboHeight);
@@ -1054,16 +1003,10 @@ void MainPageComponent::resized()
     
     int osc2Bottom = osc2KnobRowY + knobDiameter + oscLabelSpacing;
 
-    const int osc2ShapeBottom = layOutShapingRow(
-        osc2Bottom + shapeRowGap,
-        parentEditor.osc2WaveModeCombo, parentEditor.osc2WaveModeLabel,
-        parentEditor.osc2IntensitySlider, parentEditor.osc2IntensityLabel,
-        parentEditor.osc2SyncSlider, parentEditor.osc2SyncLabel);
-
     // Noise - Below Osc2 with proper padding
     // Match the Osc1->Osc2 row gap (oscRowSpacing) so the Waveform2->Noise distance is identical
     const int noisePadding = oscRowSpacing; // Padding between osc2 and noise section
-    int noiseY = osc2ShapeBottom + noisePadding;
+    int noiseY = osc2Bottom + noisePadding;
     parentEditor.noiseColorLabel.setBounds(oscContent.getX(), noiseY, comboWidth, labelHeight);
     noiseY += labelHeight + labelGap;
     parentEditor.noiseColorCombo.setBounds(oscContent.getX(), noiseY, comboWidth, comboHeight);
@@ -4193,205 +4136,64 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         osc2WaveformCombo.addItem(safeString(OscShape::names[i]), i + 1);
 
     //==========================================================================
-    // -- Wave Mode, Intensity and Sync, for both oscillators --
-    // Built in one loop because the two are the same three controls pointed at
-    // different parameters. Written out twice, the pair would drift.
+    // -- The five shaping knobs per oscillator --
+    // Bend +, Bend -, Bend +/-, Spectrum and Sync. Any of them may be turned up
+    // together; see PhaseShaper.h. Built here and lent to the Waveforms panel.
     {
-        struct ShapingTarget
+        const char* const shapingLabels[numShapingKnobs] =
+            { "Bend +", "Bend -", "Bend +/-", "Spectrum", "Sync" };
+
+        const char* const osc1Ids[numShapingKnobs] =
+            { "osc1BendPlus", "osc1BendMinus", "osc1BendPlusMinus", "osc1Spectrum", "osc1Sync" };
+        const char* const osc2Ids[numShapingKnobs] =
+            { "osc2BendPlus", "osc2BendMinus", "osc2BendPlusMinus", "osc2Spectrum", "osc2Sync" };
+
+        const char* const shapingTips[numShapingKnobs] =
         {
-            juce::ComboBox* modeCombo;
-            juce::Slider* intensitySlider;
-            juce::Slider* syncSlider;
-            juce::Label* modeLabel;
-            juce::Label* intensityLabel;
-            juce::Label* syncLabel;
-            std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment>* modeAttachment;
-            std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>* intensityAttachment;
-            std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>* syncAttachment;
-            const char* modeParam;
-            const char* intensityParam;
-            const char* syncParam;
+            "Leans the cycle forward, so the waveform grows a hard edge.",
+            "Leans the cycle back, so the waveform softens. Turned up with Bend + it cancels it.",
+            "Pulls both ends of the cycle away from its middle. Hollow.",
+            "Fades the waveform towards a plain sine -- the upper harmonics going.",
+            "Restarts the waveform several times per note: the hard sync tear."
         };
 
-        const ShapingTarget shapingTargets[] =
+        for (int osc = 0; osc < 2; ++osc)
         {
-            { &osc1WaveModeCombo, &osc1IntensitySlider, &osc1SyncSlider,
-              &osc1WaveModeLabel, &osc1IntensityLabel, &osc1SyncLabel,
-              &osc1WaveModeAttachment, &osc1IntensityAttachment, &osc1SyncAttachment,
-              "osc1WaveMode", "osc1Intensity", "osc1Sync" },
-            { &osc2WaveModeCombo, &osc2IntensitySlider, &osc2SyncSlider,
-              &osc2WaveModeLabel, &osc2IntensityLabel, &osc2SyncLabel,
-              &osc2WaveModeAttachment, &osc2IntensityAttachment, &osc2SyncAttachment,
-              "osc2WaveMode", "osc2Intensity", "osc2Sync" },
-        };
+            auto* sliders = osc == 0 ? osc1ShapingSliders : osc2ShapingSliders;
+            auto* labels = osc == 0 ? osc1ShapingLabels : osc2ShapingLabels;
+            auto* attachments = osc == 0 ? osc1ShapingAttachments : osc2ShapingAttachments;
+            auto* const* ids = osc == 0 ? osc1Ids : osc2Ids;
+            auto& controls = osc == 0 ? osc1ShapingControls : osc2ShapingControls;
 
-        for (const auto& t : shapingTargets)
-        {
-            for (int i = 0; i < PhaseShaper::numModes; ++i)
-                t.modeCombo->addItem(safeString(PhaseShaper::modeNames[i]), i + 1);
-
-            t.modeCombo->setSelectedId(PhaseShaper::Standard + 1);
-            t.modeCombo->setLookAndFeel(&customLookAndFeel);
-            t.modeCombo->setTooltip(safeString(
-                "How Intensity reshapes the waveform. Bend leans the cycle one way "
-                "or the other; Spectrum fades it towards a plain sine."));
-
-            *t.modeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-                audioProcessor.getValueTreeState(), t.modeParam, *t.modeCombo);
-
-            for (auto* slider : { t.intensitySlider, t.syncSlider })
+            for (int i = 0; i < numShapingKnobs; ++i)
             {
-                slider->setSliderStyle(juce::Slider::RotaryVerticalDrag);
-                slider->setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
-                slider->setNumDecimalPlacesToDisplay(2);
-                slider->setLookAndFeel(&customLookAndFeel);
-            }
+                auto& s = sliders[i];
+                s.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+                s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 46, 16);
+                s.setLookAndFeel(&customLookAndFeel);
+                s.setTooltip(safeString(shapingTips[i]));
 
-            t.intensitySlider->setTooltip(safeString(
-                "How far the Wave Mode bends the waveform. At zero the waveform is "
-                "untouched, whatever the mode says."));
-            t.syncSlider->setTooltip(safeString(
-                "Restarts the waveform several times per note -- the hard sync tear. "
-                "At zero the cycle runs once per note, as it always did."));
+                attachments[i] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+                    audioProcessor.getValueTreeState(), ids[i], s);
 
-            *t.intensityAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-                audioProcessor.getValueTreeState(), t.intensityParam, *t.intensitySlider);
-            *t.syncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-                audioProcessor.getValueTreeState(), t.syncParam, *t.syncSlider);
+                // AFTER the attachment. The attachment sets the slider's range
+                // from the parameter, and setting the range resets how many
+                // decimals it shows -- so doing this first left every knob
+                // reading 0.00000 instead of 0.00.
+                s.setNumDecimalPlacesToDisplay(2);
 
-            struct LabelSetup { juce::Label* label; const char* text; };
+                auto& l = labels[i];
+                l.setText(safeString(shapingLabels[i]), juce::dontSendNotification);
+                l.setJustificationType(juce::Justification::centred);
+                l.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+                l.setFont(customLookAndFeel.getBodyFont(11.0f, true));
 
-            for (const auto& l : { LabelSetup{ t.modeLabel, "Wave Mode" },
-                                   LabelSetup{ t.intensityLabel, "Intensity" },
-                                   LabelSetup{ t.syncLabel, "Sync" } })
-            {
-                l.label->setText(safeString(l.text), juce::dontSendNotification);
-                l.label->setJustificationType(juce::Justification::centred);
-                l.label->setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-                l.label->setFont(customLookAndFeel.getBodyFont(12.0f, true));
+                controls.knobs[i] = &s;
+                controls.labels[i] = &l;
             }
         }
     }
-    osc2WaveformCombo.setSelectedId(2);  // Default to Triangle
-    if (auto* osc2WaveformParam = audioProcessor.getValueTreeState().getParameter("osc2Waveform"))
-        osc2WaveformAttachment = std::make_unique<WaveformChoiceAttachment>(
-            *osc2WaveformParam, osc2WaveformCombo);
-    osc2WaveformLabel.setText(safeString("Waveform 2"), juce::dontSendNotification);
-    osc2WaveformLabel.setJustificationType(juce::Justification::centred);
-    osc2WaveformLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    osc2WaveformLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    
-    osc2CoarseTuneSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    osc2CoarseTuneSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
-    osc2CoarseTuneSlider.setTextValueSuffix(" st");
-    osc2CoarseTuneAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getValueTreeState(), "osc2CoarseTune", osc2CoarseTuneSlider);
-    osc2CoarseTuneLabel.setText(safeString("Coarse"), juce::dontSendNotification);
-    osc2CoarseTuneLabel.setJustificationType(juce::Justification::centred);
-    osc2CoarseTuneLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    osc2CoarseTuneLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    
-    osc2DetuneSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    osc2DetuneSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
-    osc2DetuneSlider.setTextValueSuffix(" ct");
-    osc2DetuneAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getValueTreeState(), "osc2Detune", osc2DetuneSlider);
-    osc2DetuneLabel.setText(safeString("Detune"), juce::dontSendNotification);
-    osc2DetuneLabel.setJustificationType(juce::Justification::centred);
-    osc2DetuneLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    osc2DetuneLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    
-    osc2LevelSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    osc2LevelSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
-    osc2LevelAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getValueTreeState(), "osc2Level", osc2LevelSlider);
-    osc2LevelLabel.setText(safeString("Level"), juce::dontSendNotification);
-    osc2LevelLabel.setJustificationType(juce::Justification::centred);
-    osc2LevelLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    osc2LevelLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    
-    osc2PanSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-    osc2PanSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
-    osc2PanAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getValueTreeState(), "osc2Pan", osc2PanSlider);
-    osc2PanLabel.setText(safeString("Pan"), juce::dontSendNotification);
-    osc2PanLabel.setJustificationType(juce::Justification::centred);
-    osc2PanLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    osc2PanLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    osc2PanLabel.setInterceptsMouseClicks(true, true);  // Clickable to reset pan to center
-    
-    // Noise
-    noiseColorCombo.addItem(safeString("White"), 1);
-    noiseColorCombo.addItem(safeString("Pink"), 2);
-    noiseColorCombo.setLookAndFeel(&customLookAndFeel);
-    // Attach to the "noiseType" parameter (White=0, Pink=1) so it can be automated
-    // and saved like any other control. Items must be added before the attachment.
-    if (auto* noiseTypeParam = audioProcessor.getValueTreeState().getParameter("noiseType"))
-        noiseColorAttachment = std::make_unique<WaveformChoiceAttachment>(
-            *noiseTypeParam, noiseColorCombo);
-    noiseColorLabel.setText(safeString("Noize Type"), juce::dontSendNotification);
-    noiseColorLabel.setJustificationType(juce::Justification::centred);
-    noiseColorLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
-    noiseColorLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
-    //==========================================================================
-    // -- The three buttons that open the Waveforms window --
-    // One beside each dropdown that can select an imported sample. They open the
-    // same window; the only difference is which slot it lands on, taken from what
-    // that dropdown is currently set to.
-    {
-        using Kind = WaveformEditorComponent::BuiltInKind;
-
-        struct EditButtonTarget
-        {
-            SpaceDustToggleStyleButton* button;
-            juce::ComboBox* combo;
-            int userBase;
-            Kind kind;
-            UserWave::Group group;
-            const char* tip;
-        };
-
-        // The sub oscillator's and the Transient's buttons are set up here too,
-        // even though their dropdowns are built further down and in other
-        // sections of the panel: what makes these five one thing is that they all
-        // open the same window, and that is easier to see when they are written
-        // out together. Each one opens it on its OWN eight slots -- the group
-        // column -- so a sample loaded for one of them changes that waveform and
-        // no other.
-        const EditButtonTarget targets[] =
-        {
-            { &osc1WaveformEditButton,   &osc1WaveformCombo,   UserWave::oscUserBase,       Kind::Shapes,
-              UserWave::Group::Osc1,      "Import a sample as an Oscillator 1 waveform" },
-            { &osc2WaveformEditButton,   &osc2WaveformCombo,   UserWave::oscUserBase,       Kind::Shapes,
-              UserWave::Group::Osc2,      "Import a sample as an Oscillator 2 waveform" },
-            { &noiseWaveformEditButton,  &noiseColorCombo,     UserWave::noiseUserBase,     Kind::Noise,
-              UserWave::Group::Noise,     "Import a sample as a Noize source" },
-            { &subOscWaveformEditButton, &subOscWaveformCombo, UserWave::oscUserBase,       Kind::Shapes,
-              UserWave::Group::Sub,       "Import a sample as the Sub Oscillator waveform" },
-            { &transientTypeEditButton,  &transientTypeCombo,  UserWave::transientUserBase, Kind::Drums,
-              UserWave::Group::Transient, "Import a sample to play as the Transient hit" },
-        };
-
-        for (const auto& target : targets)
-        {
-            // No colours set here. The button paints itself through the same
-            // routine that draws the toggles beside it, so its navy, its border
-            // and its bloom all come from that one place.
-            target.button->setButtonText(safeString("Edit"));
-            target.button->setTooltip(safeString(target.tip));
-
-            auto* combo = target.combo;
-            auto* button = target.button;
-            const int userBase = target.userBase;
-            const Kind kind = target.kind;
-            const auto group = target.group;
-            target.button->onClick = [this, button, combo, userBase, kind, group]
-            {
-                openWaveformWindow(button, combo, userBase, kind, group);
-            };
-        }
-    }
 
 
     noiseLevelSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
@@ -6390,16 +6192,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // idle CPU went 1.9% -> 10.2% until this line was put back.
     setOpaque(true);
 
-    // 857 became 920 when each oscillator gained a shaping row -- Wave Mode,
-    // Intensity and Sync. The whole UI is authored at this height and scaled to
-    // whatever the window is, so this is a change of proportion, not of pixels.
-    //
-    // 63 more and not a pixel further, deliberately. The shaping rows want about
-    // 160 and most of that comes out of oscHeightExtra, which moves room from the
-    // Filter box into the Oscillators box rather than making the plugin bigger.
-    // At 1000 the standalone opened 1052 tall, which fills a 1080-high screen
-    // top to bottom and leaves nowhere to put a DAW.
-    designHeight_ = 920 + (standaloneKeyboard != nullptr ? standaloneKeyboardHeight : 0);
+    designHeight_ = 857 + (standaloneKeyboard != nullptr ? standaloneKeyboardHeight : 0);
 
     //==============================================================================
     // -- Make the editor resizable NOW (synchronously, in the ctor) --
@@ -6875,8 +6668,18 @@ void SpaceDustAudioProcessorEditor::openWaveformWindow(juce::Component* anchorBu
     // sound by itself.
     const int slot = combo->getSelectedId() - 1 - userBase;
 
+    // Only the two oscillators have shaping. The sub oscillator is left clean on
+    // purpose, and the noise source and the Transient have no cycle to bend.
+    const WaveformEditorComponent::ShapingControls* shaping = nullptr;
+
+    if (group == UserWave::Group::Osc1)
+        shaping = &osc1ShapingControls;
+    else if (group == UserWave::Group::Osc2)
+        shaping = &osc2ShapingControls;
+
     waveformWindow->showFor(anchorButton, combo, userBase, kind, group,
-                            (slot >= 0 && slot < UserWave::numSlots) ? slot : -1);
+                            (slot >= 0 && slot < UserWave::numSlots) ? slot : -1,
+                            shaping);
 }
 
 //==============================================================================

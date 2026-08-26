@@ -58,6 +58,28 @@ public:
         Drums     // the ten 808 and 909 hits
     };
 
+    /** The shaping knobs for the oscillator whose list is on screen.
+
+        Bend +, Bend -, Bend +/- , Spectrum and Sync. They act on the OSCILLATOR,
+        not on the slot, so turning one changes every waveform that oscillator
+        plays and not just the one selected -- which is why they sit in a strip of
+        their own at the foot of the panel rather than among the controls that
+        edit a slot.
+
+        Owned by the editor, like targetCombo, because they are attached to its
+        parameters and this window knows nothing about a processor. Borrowed here
+        and given back when the panel is pointed at another list.
+
+        Null for a list that has no shaping: the sub oscillator, the noise source
+        and the Transient. The strip then takes no room at all. */
+    struct ShapingControls
+    {
+        static constexpr int numKnobs = 5;
+
+        juce::Slider* knobs[numKnobs] = {};
+        juce::Label* labels[numKnobs] = {};
+    };
+
     WaveformEditorComponent (UserWaveLibrary& library, SpaceDustLookAndFeel& lookAndFeel);
     ~WaveformEditorComponent() override;
 
@@ -100,7 +122,7 @@ public:
         entries are so they can be drawn, and group says whose eight import slots
         are being shown -- every import made here goes into that list alone. */
     void setTarget (juce::ComboBox* targetCombo, int userBase, BuiltInKind kind,
-                    UserWave::Group group);
+                    UserWave::Group group, const ShapingControls* shaping = nullptr);
 
     /** Show and select the given import slot. */
     void selectSlot (int slotIndex);
@@ -210,7 +232,7 @@ public:
         built-in shapes and the Transient has ten, and a window sized for ten
         would stand two thirds empty every time it was opened on an oscillator.
         The space under the last row is not wasted -- it is the drop zone. */
-    static int preferredHeight (int userBase);
+    static int preferredHeight (int userBase, bool withShaping = false);
 
 private:
     //==========================================================================
@@ -306,6 +328,26 @@ private:
 
     /** How far the list is scrolled, in pixels. */
     int listScroll = 0;
+
+    //==========================================================================
+    // -- The shaping strip --
+
+    /** How tall the strip of shaping knobs is: a label, a knob and its value
+        box. Zero when the list on screen has no shaping. */
+    static constexpr int shapingKnobSize = 40;
+    static constexpr int shapingValueHeight = 16;
+    static constexpr int shapingLabelHeight = 14;
+    static constexpr int shapingStripPad = 6;
+    static constexpr int shapingStripHeight = shapingLabelHeight + 2 + shapingKnobSize
+                                            + shapingValueHeight + shapingStripPad;
+
+    /** Take the borrowed knobs as children, or give the last set back. Called
+        from setTarget, which is the only thing that changes which list is shown. */
+    void adoptShapingControls (const ShapingControls* shaping);
+
+    /** The knobs on screen, or null when this list has none. Borrowed, never
+        owned -- see ShapingControls. */
+    const ShapingControls* shapingControls = nullptr;
 
     /** Where a dropped file goes when it does not land on an import row: the slot
         being shown, or the first empty one. Never a built-in. */
@@ -652,7 +694,8 @@ public:
         against the button that was pressed. */
     void showFor (juce::Component* anchorButton, juce::ComboBox* targetCombo,
                   int userBase, WaveformEditorComponent::BuiltInKind kind,
-                  UserWave::Group group, int slotIndex);
+                  UserWave::Group group, int slotIndex,
+                  const WaveformEditorComponent::ShapingControls* shaping = nullptr);
 
     /** Put the panel away: stop the playhead, and end any drag still open. */
     void hidePanel();

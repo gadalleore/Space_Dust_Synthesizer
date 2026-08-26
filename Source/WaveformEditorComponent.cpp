@@ -144,10 +144,11 @@ int WaveformEditorComponent::preferredWidth()
     return margin + listWidth + margin + detailWidth + margin;
 }
 
-int WaveformEditorComponent::preferredHeight (int userBase)
+int WaveformEditorComponent::preferredHeight (int userBase, bool withShaping)
 {
     const int wanted = margin + groupTitleInset + maxRowsFor (userBase) * rowHeight
-                     + groupPadding + margin + statusHeight + margin;
+                     + groupPadding + margin + statusHeight + margin
+                     + (withShaping ? shapingStripHeight : 0);
 
     // Capped, and the list scrolls past the cap.
     //
@@ -173,6 +174,41 @@ int WaveformEditorComponent::listViewHeight() const
 int WaveformEditorComponent::maxListScroll() const
 {
     return juce::jmax (0, listContentHeight() - listViewHeight());
+}
+
+void WaveformEditorComponent::adoptShapingControls (const ShapingControls* shaping)
+{
+    if (shaping == shapingControls)
+        return;
+
+    // Give the last set back first. They belong to the editor and are shared
+    // between the two oscillators' panels, so leaving them parented here would
+    // take them off the screen the next time the other oscillator was opened.
+    if (shapingControls != nullptr)
+    {
+        for (int i = 0; i < ShapingControls::numKnobs; ++i)
+        {
+            if (shapingControls->knobs[i] != nullptr)
+                removeChildComponent (shapingControls->knobs[i]);
+
+            if (shapingControls->labels[i] != nullptr)
+                removeChildComponent (shapingControls->labels[i]);
+        }
+    }
+
+    shapingControls = shaping;
+
+    if (shapingControls == nullptr)
+        return;
+
+    for (int i = 0; i < ShapingControls::numKnobs; ++i)
+    {
+        if (shapingControls->labels[i] != nullptr)
+            addAndMakeVisible (shapingControls->labels[i]);
+
+        if (shapingControls->knobs[i] != nullptr)
+            addAndMakeVisible (shapingControls->knobs[i]);
+    }
 }
 
 void WaveformEditorComponent::setListScroll (int newScroll)
@@ -209,7 +245,7 @@ WaveformEditorComponent::WaveformEditorComponent (UserWaveLibrary& libraryToUse,
                                                   SpaceDustLookAndFeel& lookAndFeelToUse)
     : library (libraryToUse), lookAndFeel (lookAndFeelToUse)
 {
-    setSize (preferredWidth(), preferredHeight (userBase));
+    setSize (preferredWidth(), preferredHeight (userBase, shapingControls != nullptr));
 
     // One call and every button, editor and group in here is drawn by the same
     // code that draws the main panel -- same fonts, same cyan, same rounded
@@ -399,12 +435,17 @@ WaveformEditorComponent::~WaveformEditorComponent()
 
 //==============================================================================
 void WaveformEditorComponent::setTarget (juce::ComboBox* combo, int base, BuiltInKind kind,
-                                         UserWave::Group groupToShow)
+                                         UserWave::Group groupToShow,
+                                         const ShapingControls* shaping)
 {
     targetCombo = combo;
     userBase = base;
     builtInKind = kind;
     group = groupToShow;
+
+    // Before the size is worked out below: whether there is a shaping strip is
+    // part of how tall the panel needs to be.
+    adoptShapingControls (shaping);
 
     // Named, because the five lists are separate and what is on screen is one of
     // them. Without this the window looks the same whichever button opened it,
@@ -417,7 +458,7 @@ void WaveformEditorComponent::setTarget (juce::ComboBox* combo, int base, BuiltI
 
     // A list with more built-ins needs more room for them. The window follows
     // this; see WaveformEditorWindow::showFor.
-    setSize (preferredWidth(), preferredHeight (userBase));
+    setSize (preferredWidth(), preferredHeight (userBase, shapingControls != nullptr));
 
     refresh();
 }
@@ -1337,8 +1378,14 @@ juce::String WaveformEditorComponent::timeLabel (const UserWaveSlot& entry, doub
 //==============================================================================
 juce::Rectangle<int> WaveformEditorComponent::listBounds() const
 {
+    // The shaping strip lives between the boxes and the status line, so both
+    // boxes give up its height. Asked here, in the one place their height is
+    // worked out, so the list, the detail panel, the picture and the rows all
+    // follow from it.
+    const int strip = shapingControls != nullptr ? shapingStripHeight : 0;
+
     return { margin, margin, listWidth,
-             getHeight() - margin - statusHeight - 2 * margin };
+             getHeight() - margin - statusHeight - 2 * margin - strip };
 }
 
 juce::Rectangle<int> WaveformEditorComponent::detailBounds() const
@@ -1665,6 +1712,44 @@ void WaveformEditorComponent::resized()
     auto detail = detailBounds().reduced (groupPadding, 0);
     detail.removeFromTop (groupTitleInset);
     detail.removeFromBottom (groupPadding);
+
+    // The shaping strip, across the foot of the whole panel and under BOTH boxes.
+    // It is taken from the bottom before anything else, so the picture and the
+    // slot controls above it lay out into whatever is left.
+    //
+    // Full width and not inside the detail box, because these five do not act on
+    // the slot on screen: they act on the oscillator, and every waveform it plays
+    // goes through them. Sitting them among the Load and Clear buttons would say
+    // the opposite.
+    if (shapingControls != nullptr)
+    {
+        // listBounds() has already given up this height, so the strip goes in the
+        // gap that leaves rather than being taken out of the detail box again.
+        auto strip = getLocalBounds().withTrimmedBottom (statusHeight + margin)
+                                     .removeFromBottom (shapingStripHeight)
+                                     .reduced (margin, 0);
+
+        const int cell = strip.getWidth() / ShapingControls::numKnobs;
+
+        for (int i = 0; i < ShapingControls::numKnobs; ++i)
+        {
+            auto column = strip.removeFromLeft (cell);
+
+            if (shapingControls->labels[i] != nullptr)
+                shapingControls->labels[i]->setBounds (column.removeFromTop (shapingLabelHeight));
+            else
+                column.removeFromTop (shapingLabelHeight);
+
+            column.removeFromTop (2);
+
+            if (shapingControls->knobs[i] != nullptr)
+            {
+                const int x = column.getX() + (column.getWidth() - shapingKnobSize) / 2;
+                shapingControls->knobs[i]->setBounds (x, column.getY(), shapingKnobSize,
+                                                      shapingKnobSize + shapingValueHeight);
+            }
+        }
+    }
 
     // Two rows of controls. One row could not hold the name box at a width worth
     // typing into once the four buttons had taken what they need.
@@ -2525,12 +2610,13 @@ void WaveformEditorPanel::allowFileDropsFromLowerPrivilege()
 void WaveformEditorPanel::showFor (juce::Component* anchorButton,
                                    juce::ComboBox* targetCombo, int userBase,
                                    WaveformEditorComponent::BuiltInKind kind,
-                                   UserWave::Group group, int slotIndex)
+                                   UserWave::Group group, int slotIndex,
+                                   const WaveformEditorComponent::ShapingControls* shaping)
 {
     if (content == nullptr)
         return;
 
-    content->setTarget (targetCombo, userBase, kind, group);
+    content->setTarget (targetCombo, userBase, kind, group, shaping);
 
     // Only jump to a slot that has something in it. Opening the panel must never
     // change the sound by itself.
@@ -2541,7 +2627,7 @@ void WaveformEditorPanel::showFor (juce::Component* anchorButton,
     // the panel is sized from the list rather than left at whatever the previous
     // one needed.
     const int width = WaveformEditorComponent::preferredWidth() + frameInset * 2;
-    const int height = WaveformEditorComponent::preferredHeight (userBase)
+    const int height = WaveformEditorComponent::preferredHeight (userBase, shaping != nullptr)
                      + titleHeight + frameInset;
 
     setSize (width, height);

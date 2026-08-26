@@ -606,7 +606,7 @@ private:
     // resizable with a locked aspect ratio, so dragging its corner grows/shrinks
     // everything together without moving any item relative to another.
     static constexpr int kDesignWidth = 1120;
-    int designHeight_ = 920;          // set in the ctor timer (+ keyboard strip in standalone)
+    int designHeight_ = 857;          // set in the ctor timer (+ keyboard strip in standalone)
     juce::Component mainView;         // scalable container parenting the entire UI
     bool cheezeGuyTabAdded = false;
 
@@ -678,28 +678,28 @@ private:
     // Oscillator tuning controls (simple, intuitive system)
     juce::Slider osc1CoarseTuneSlider;
     //==========================================================================
-    // -- Wave Mode, Intensity and Sync --
-    // Three per oscillator. They reshape whatever waveform is selected by moving
-    // where in the cycle it is read -- see PhaseShaper.h -- so they work on an
-    // imported single cycle as readily as on a built-in shape.
-    juce::ComboBox osc1WaveModeCombo;
-    juce::ComboBox osc2WaveModeCombo;
-    juce::Slider osc1IntensitySlider;
-    juce::Slider osc2IntensitySlider;
-    juce::Slider osc1SyncSlider;
-    juce::Slider osc2SyncSlider;
-    juce::Label osc1WaveModeLabel;
-    juce::Label osc2WaveModeLabel;
-    juce::Label osc1IntensityLabel;
-    juce::Label osc2IntensityLabel;
-    juce::Label osc1SyncLabel;
-    juce::Label osc2SyncLabel;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> osc1WaveModeAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> osc2WaveModeAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> osc1IntensityAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> osc2IntensityAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> osc1SyncAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> osc2SyncAttachment;
+    // -- Bend, Spectrum and Sync --
+    //
+    // Five knobs per oscillator, shown in the Waveforms panel rather than on the
+    // main page: they shape whatever waveform that oscillator plays, so they
+    // belong beside the list where a waveform is chosen.
+    //
+    // Owned here, not by the panel, because they are attached to parameters and
+    // the panel knows nothing about a processor. The panel borrows the right five
+    // when it is opened -- see WaveformEditorComponent::ShapingControls.
+    static constexpr int numShapingKnobs = 5;
+
+    juce::Slider osc1ShapingSliders[numShapingKnobs];
+    juce::Slider osc2ShapingSliders[numShapingKnobs];
+    juce::Label osc1ShapingLabels[numShapingKnobs];
+    juce::Label osc2ShapingLabels[numShapingKnobs];
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
+        osc1ShapingAttachments[numShapingKnobs];
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
+        osc2ShapingAttachments[numShapingKnobs];
+
+    WaveformEditorComponent::ShapingControls osc1ShapingControls;
+    WaveformEditorComponent::ShapingControls osc2ShapingControls;
 
     juce::Slider osc1DetuneSlider;
     juce::Slider osc2CoarseTuneSlider;

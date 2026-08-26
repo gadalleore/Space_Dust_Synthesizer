@@ -163,19 +163,8 @@ public:
         Set together because they are read together: the voice asks once per
         block whether any of the three would change anything, and takes the old
         plain path when none of them would. */
-    void setOsc1WaveShaping(int mode, float intensity, float sync) noexcept
-    {
-        osc1WaveMode = mode;
-        osc1Intensity = intensity;
-        osc1Sync = sync;
-    }
-
-    void setOsc2WaveShaping(int mode, float intensity, float sync) noexcept
-    {
-        osc2WaveMode = mode;
-        osc2Intensity = intensity;
-        osc2Sync = sync;
-    }
+    void setOsc1WaveShaping(const PhaseShaper::Amounts& a) noexcept { osc1Shaping = a; }
+    void setOsc2WaveShaping(const PhaseShaper::Amounts& a) noexcept { osc2Shaping = a; }
 
     /** Hand over the imported waveforms for this block.
 
@@ -320,15 +309,11 @@ private:
     int osc1Waveform = Saw;
     int osc2Waveform = Saw;
 
-    // -- Wave Mode, Intensity and Sync --
-    // What is done to the PHASE before the waveform is read. Defaults do nothing,
+    // -- Bend, Spectrum and Sync --
+    // What is done to the PHASE before the waveform is read. All zero by default,
     // so a patch that never touches them behaves exactly as it always did.
-    int osc1WaveMode = PhaseShaper::Standard;
-    int osc2WaveMode = PhaseShaper::Standard;
-    float osc1Intensity = 0.0f;
-    float osc2Intensity = 0.0f;
-    float osc1Sync = 0.0f;
-    float osc2Sync = 0.0f;
+    PhaseShaper::Amounts osc1Shaping;
+    PhaseShaper::Amounts osc2Shaping;
     
     // -- Oscillator Pitch Tuning --
     // Each oscillator has independent coarse tuning (±24 semitones) and fine detuning (±50 cents)
@@ -737,8 +722,7 @@ private:
         call this exactly as they always did. */
     float generateWaveform(double angle, int waveform, const UserWaveSlot* userSlot,
                            double freqHz, OneShotState* oneShot = nullptr,
-                           int waveMode = PhaseShaper::Standard,
-                           float intensity = 0.0f, float sync = 0.0f);
+                           const PhaseShaper::Amounts& shaping = {});
 
     /**
         Work out which imported waveform each source is set to, and what that does
