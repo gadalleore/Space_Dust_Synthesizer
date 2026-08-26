@@ -29,10 +29,9 @@ class ComboStepper : public juce::Component,
                      private juce::ComponentListener
 {
 public:
-    /** How wide the strip of arrows is. The LookAndFeel indents combo text by
-        this, so the two must agree -- which is why it is named here and read
-        there rather than being written twice. */
-    static constexpr int stripWidth = 14;
+    /** How wide the strip of arrows is, and how far it sits from the box. */
+    static constexpr int stripWidth = 12;
+    static constexpr int gapToBox = 2;
 
     ComboStepper() { setInterceptsMouseClicks (true, false); }
 
@@ -144,14 +143,23 @@ private:
         g.fillPath (arrow);
     }
 
-    /** Sit over the combo's left edge, in the parent's coordinates. */
+    /** Sit just OUTSIDE the combo's left edge, in the parent's coordinates.
+
+        Outside rather than over it: arrows inside the box read as part of the
+        menu and crowd the name, which on a list of twenty-one shapes is the one
+        thing that has to stay readable.
+
+        If there is no room to the left -- a combo hard against its parent's edge
+        -- the strip sits at the parent's edge instead of being pushed off it. */
     void followBox()
     {
         if (box == nullptr)
             return;
 
         const auto b = box->getBounds();
-        setBounds (b.getX() + 2, b.getY() + 2, stripWidth, juce::jmax (8, b.getHeight() - 4));
+        const int x = juce::jmax (0, b.getX() - stripWidth - gapToBox);
+
+        setBounds (x, b.getY() + 2, stripWidth, juce::jmax (8, b.getHeight() - 4));
         toFront (false);
     }
 

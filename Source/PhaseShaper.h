@@ -135,18 +135,27 @@ namespace PhaseShaper
         if (exponent != 1.0)
             p = std::pow (p, exponent);
 
-        // -- The S --------------------------------------------------------------
-        // Each half bent towards the middle and mirrored, so both ends of the
-        // cycle stretch and the middle squeezes. A different curve from the two
-        // above, which is why it goes on top of them instead of into them.
+        // -- Bend -/+ : one half each way ---------------------------------------
+        // The first half of the cycle gets the Bend - curve and the second half
+        // gets Bend +. The two meet at the middle, which stays put, so the cycle
+        // is pulled late through its first half and early through its second --
+        // a pinch at the centre that neither bend alone can make.
+        //
+        // It was written the other way round at first: both halves bent AWAY from
+        // the middle. That is a perfectly good S, but near phase zero it does
+        // exactly what Bend + does, and the start of a cycle is where a waveform's
+        // character is -- so it sounded like a third copy of Bend + and earned its
+        // place in the row not at all (Giuseppe, 2026-08-26).
         const double s = detail::clamp01 (a.bendPlusMinus);
 
         if (s > 0.0)
         {
             const double e = 1.0 + s * (maxBendExponent - 1.0);
 
-            p = p < 0.5 ? 0.5 * std::pow (p * 2.0, e)
-                        : 1.0 - 0.5 * std::pow ((1.0 - p) * 2.0, e);
+            // Continuous at the join: the first half reaches 0.5 as p reaches 0.5,
+            // and the second half starts there.
+            p = p < 0.5 ? 0.5 * std::pow (p * 2.0, 1.0 / e)
+                        : 0.5 + 0.5 * std::pow ((p - 0.5) * 2.0, e);
         }
 
         return p;

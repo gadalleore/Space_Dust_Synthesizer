@@ -163,8 +163,10 @@ public:
         Set together because they are read together: the voice asks once per
         block whether any of the three would change anything, and takes the old
         plain path when none of them would. */
-    void setOsc1WaveShaping(const PhaseShaper::Amounts& a) noexcept { osc1Shaping = a; }
-    void setOsc2WaveShaping(const PhaseShaper::Amounts& a) noexcept { osc2Shaping = a; }
+    /** Set where the shaping is HEADING. What the oscillator reads slides towards
+        it a sample at a time -- see advanceShapingSmoothing. */
+    void setOsc1WaveShaping(const PhaseShaper::Amounts& a) noexcept { osc1ShapingTarget = a; }
+    void setOsc2WaveShaping(const PhaseShaper::Amounts& a) noexcept { osc2ShapingTarget = a; }
 
     /** Hand over the imported waveforms for this block.
 
@@ -309,11 +311,53 @@ private:
     int osc1Waveform = Saw;
     int osc2Waveform = Saw;
 
+    //==========================================================================
     // -- Bend, Spectrum and Sync --
+    //
     // What is done to the PHASE before the waveform is read. All zero by default,
     // so a patch that never touches them behaves exactly as it always did.
+    //
+    // TWO copies, and the reason is Sync. Sync works by multiplying the phase and
+    // wrapping it, so the READ POSITION depends on the sync amount. A parameter
+    // read once per block and applied whole would move that position by a step
+    // every block boundary -- and a step in read position is a click, which is
+    // what turning the Sync knob under a held note used to sound like
+    // (Giuseppe, 2026-08-26).
+    //
+    // So the knobs set a target and the oscillator reads a value that slides
+    // towards it a sample at a time. The bends need it for the same reason; only
+    // Spectrum, which crossfades a value rather than moving a position, would
+    // have been safe without it, and it costs nothing to treat all five alike.
+    PhaseShaper::Amounts osc1ShapingTarget;
+    PhaseShaper::Amounts osc2ShapingTarget;
     PhaseShaper::Amounts osc1Shaping;
     PhaseShaper::Amounts osc2Shaping;
+
+    /** How much of the remaining distance the smoothed values close each sample.
+        Set from the sample rate in prepareToPlay for a fixed time in
+        milliseconds, so the glide sounds the same at any rate. */
+    double shapingSmoothingCoeff = 1.0;
+
+    /** How long the shaping takes to arrive, in milliseconds.
+
+        Short enough that the knob feels attached to the sound, long enough that
+        the biggest possible jump -- Sync from nothing to eight cycles a note --
+        is spread over hundreds of samples instead of landing in one. */
+    static constexpr double shapingSmoothingMs = 12.0;
+
+    /** Slide the read values one sample closer to the knobs. */
+    void advanceShapingSmoothing() noexcept;
+
+    /** Put the read values ON the knobs at once, with no glide.
+
+        For a note that is only now starting: it has no sound yet to click, and
+        gliding into the shaping from wherever the last note left it would make
+        the first few milliseconds of every note depend on the one before. */
+    void snapShapingToTarget() noexcept
+    {
+        osc1Shaping = osc1ShapingTarget;
+        osc2Shaping = osc2ShapingTarget;
+    }
     
     // -- Oscillator Pitch Tuning --
     // Each oscillator has independent coarse tuning (±24 semitones) and fine detuning (±50 cents)

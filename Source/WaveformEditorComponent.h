@@ -309,10 +309,17 @@ private:
     // it. The offset is applied in rowBounds() alone, which is what keeps
     // hit-testing and drawing in step.
 
-    /** As tall as the panel is ever allowed to be, in design pixels. The plugin
-        is 857 design pixels tall, so this leaves room for the frame around the
-        panel and a margin at top and bottom. */
-    static constexpr int maxPanelHeight = 760;
+    /** As tall as the panel is ever allowed to be, in design pixels.
+
+        The plugin's controls occupy 857 design pixels and the standalone adds a
+        keyboard strip below that. The panel is placed against the Edit button and
+        then clamped inside its parent -- and its parent includes the keyboard --
+        so a panel tall enough could have its foot pushed down among the keys.
+
+        The shaping knobs live in that foot. 690 leaves the whole panel, frame and
+        all, inside the controls above the keyboard however low the button that
+        opened it sits. */
+    static constexpr int maxPanelHeight = 690;
 
     /** How tall the rows are all together, and how much of that can be seen. */
     int listContentHeight() const;
@@ -329,6 +336,12 @@ private:
 
     /** How far the list is scrolled, in pixels. */
     int listScroll = 0;
+
+    /** How tall the dashed drop box under the last row is.
+
+        Counted as part of the list's content, so the scroll reaches past the last
+        row far enough to show it. */
+    static constexpr int dropGhostHeight = 68;
 
     //==========================================================================
     // -- Making room for a dropped file --
@@ -746,6 +759,13 @@ public:
 
     void setResampleHost (WaveformEditorComponent::ResampleHost* host);
 
+    /** How far down the parent the panel may reach, in the parent's coordinates.
+
+        The standalone's parent runs on below the controls to hold the keyboard.
+        Told rather than worked out, because the panel does not know a keyboard
+        exists and should not have to. Zero means "the whole parent". */
+    void setKeepAboveBottom (int y) { keepAboveBottom = y; }
+
     /** Redraw after the library changed under it. */
     void refreshContent();
 
@@ -792,6 +812,9 @@ private:
 
     OutsideClickWatcher outsideClicks { *this };
     bool watchingOutsideClicks = false;
+
+    /** See setKeepAboveBottom. */
+    int keepAboveBottom = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (WaveformEditorPanel)
 };

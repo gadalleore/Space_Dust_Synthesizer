@@ -188,21 +188,51 @@ int main()
         std::printf("  all three bends span 0..1\n");
     }
 
-    std::printf("\nBend +/- is symmetric about the middle:\n");
+    std::printf("\nBend +/- keeps the middle of the cycle where it is:\n");
     {
-        A a; a.bendPlusMinus = 0.7;
-        double worst = 0.0;
+        // The two halves bend opposite ways and meet at the centre, so the centre
+        // must not move -- and the curve must not tear there either.
+        A a; a.bendPlusMinus = 0.8;
 
-        for (int i = 1; i < steps; ++i)
+        check(std::abs(PhaseShaper::shapedPhase(0.5, a) - 0.5) < 1e-9,
+              "Bend +/- moved the middle of the cycle");
+
+        const double justBefore = PhaseShaper::shapedPhase(0.5 - 1e-6, a);
+        const double justAfter = PhaseShaper::shapedPhase(0.5 + 1e-6, a);
+
+        check(std::abs(justAfter - justBefore) < 1e-3,
+              "Bend +/- tears where its two halves meet");
+
+        std::printf("  middle stays at %.6f, join step %.2e\n",
+                    PhaseShaper::shapedPhase(0.5, a), std::abs(justAfter - justBefore));
+    }
+
+    std::printf("\nBend +/- is its own curve, not a copy of Bend +:\n");
+    {
+        // It was a copy once. Both halves bent away from the middle, which near
+        // phase zero is exactly what Bend + does -- and the start of a cycle is
+        // where a waveform's character lives, so the two sounded alike and one of
+        // the four knobs was wasted.
+        //
+        // The first half is the test: under Bend + it runs EARLY (phases pulled
+        // towards zero) and under Bend +/- it must run LATE.
+        A plus; plus.bendPlus = 0.8;
+        A both; both.bendPlusMinus = 0.8;
+
+        double worstGap = 0.0;
+
+        for (int i = 1; i < steps / 2; ++i)
         {
             const double p = (double)i / steps;
-            const double x = PhaseShaper::shapedPhase(p, a);
-            const double y = PhaseShaper::shapedPhase(1.0 - p, a);
-            worst = std::fmax(worst, std::abs(x - (1.0 - y)));
+            const double a1 = PhaseShaper::shapedPhase(p, plus);
+            const double a2 = PhaseShaper::shapedPhase(p, both);
+
+            check(a2 > a1, "Bend +/- bends the first half the same way Bend + does");
+            worstGap = std::fmax(worstGap, a2 - a1);
         }
 
-        check(worst < 1e-9, "Bend +/- is lopsided");
-        std::printf("  worst asymmetry: %.2e\n", worst);
+        check(worstGap > 0.1, "Bend +/- is too close to Bend + to tell apart");
+        std::printf("  widest difference across the first half: %.4f\n", worstGap);
     }
 
     std::printf("\nSync repeats the cycle and always restarts at zero:\n");

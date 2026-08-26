@@ -120,6 +120,12 @@ namespace
 
 void SynthVoice::noteStarted()
 {
+    // The shaping starts where the knobs are, with no glide into it. A note that
+    // has not sounded yet has nothing to click, and easing in from wherever the
+    // last note left this voice would make the first few milliseconds of every
+    // note depend on the note before it.
+    snapShapingToTarget();
+
     // -- Read MPE note state --
     // currentlyPlayingNote is set by MPESynthesiser::startVoice() before this call.
     //   initialNote                       : MIDI note number 0..127
@@ -790,6 +796,23 @@ void SynthVoice::refreshUserWaveSelection() noexcept
     if (osc2UserSlot != nullptr) osc2PhaseScale = osc2UserSlot->phaseIncrementScale;
     if (subOscUserSlot != nullptr) subOscPhaseScale = subOscUserSlot->phaseIncrementScale;
     if (noiseUserSlot != nullptr) noisePhaseScale = noiseUserSlot->phaseIncrementScale;
+}
+
+void SynthVoice::advanceShapingSmoothing() noexcept
+{
+    const double c = shapingSmoothingCoeff;
+
+    const auto ease = [c] (PhaseShaper::Amounts& now, const PhaseShaper::Amounts& target)
+    {
+        now.bendPlus      += (target.bendPlus      - now.bendPlus)      * c;
+        now.bendMinus     += (target.bendMinus     - now.bendMinus)     * c;
+        now.bendPlusMinus += (target.bendPlusMinus - now.bendPlusMinus) * c;
+        now.spectrum      += (target.spectrum      - now.spectrum)      * c;
+        now.sync          += (target.sync          - now.sync)          * c;
+    };
+
+    ease(osc1Shaping, osc1ShapingTarget);
+    ease(osc2Shaping, osc2ShapingTarget);
 }
 
 float SynthVoice::generateWaveform(double angle, int waveform, const UserWaveSlot* userSlot,
@@ -1475,6 +1498,13 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             noiseWaveAngleDelta = (baseFreq / sampleRate) * 2.0 * juce::MathConstants<double>::pi * noisePhaseScale;
         }
         
+        // Bend, Spectrum and Sync one sample closer to where the knobs are.
+        //
+        // Once per output sample and not per oversampled sub-step: the glide is
+        // measured in milliseconds and the sub-steps of one sample are the same
+        // instant as far as it is concerned.
+        advanceShapingSmoothing();
+
         // Step 1-2: Generate oscillator waveforms
         float osc1Sample, osc2Sample, subOscSample;
 
@@ -2180,6 +2210,12 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
     
     // Store sample rate for voice calculations
     this->sampleRate = sampleRate;
+
+    // How fast the shaping knobs glide, in samples, for a fixed time in
+    // milliseconds -- so Sync sweeps the same at 44.1 kHz as it does at 192.
+    shapingSmoothingCoeff = sampleRate > 0.0
+        ? 1.0 - std::exp(-1.0 / (shapingSmoothingMs * 0.001 * sampleRate))
+        : 1.0;
     
     // Re-seed Random with sample rate for additional uniqueness (already seeded in constructor with voice address)
     // This ensures each voice has different noise patterns even after sample rate changes

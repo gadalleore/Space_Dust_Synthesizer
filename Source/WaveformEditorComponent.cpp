@@ -171,7 +171,14 @@ int WaveformEditorComponent::preferredHeight (int userBase, bool withShaping)
 
 int WaveformEditorComponent::listContentHeight() const
 {
-    return numVisibleRows() * rowHeight;
+    // The rows AND the drop box under them.
+    //
+    // Counting only the rows was why the drop box never appeared: the scroll
+    // stopped with the last row flush against the bottom of the list, so the box
+    // had nought pixels to live in, failed its own minimum height and returned
+    // without drawing. It has to be part of what scrolls, because it is part of
+    // what the list holds (Giuseppe, 2026-08-26).
+    return numVisibleRows() * rowHeight + dropGhostHeight;
 }
 
 int WaveformEditorComponent::listViewHeight() const
@@ -230,6 +237,18 @@ void WaveformEditorComponent::adoptShapingControls (const ShapingControls* shapi
             knob->onValueChange = [this] { repaint(); };
         }
     }
+
+    // Lay out NOW, and not by waiting for a size change.
+    //
+    // setTarget resizes the panel straight after this, and for a long while that
+    // was what positioned the strip. It stopped being true the moment the panel
+    // height was capped: with the cap reached, the height with a strip and the
+    // height without it are the same number, setSize does nothing, JUCE has no
+    // reason to call resized(), and the knobs sat at 0 0 0 0 -- present, visible,
+    // parented, and one pixel wide in the corner.
+    //
+    // Which children a component has is reason enough to lay it out again.
+    resized();
 }
 
 PhaseShaper::Amounts WaveformEditorComponent::currentShaping() const
@@ -2308,9 +2327,12 @@ void WaveformEditorComponent::paintList (juce::Graphics& g)
         // and a flat grey otherwise, which read as two different kinds of line.
         // Tight: eighteen of these can be on screen together, and the wide spread
         // that suits the single big picture below adds up to a glare here.
+        // 1.9 rather than 1.2. At a thumbnail's size a hairline reads as grey
+        // rather than as a shape, and the shape is the whole reason the row has a
+        // picture on it -- twenty-one of them are told apart by outline alone.
         paintRowWaveform (g, content.removeFromLeft (38), row,
                           isSelected ? traceColour() : traceColour().withAlpha (0.45f),
-                          1.2f, 2, Bloom::Tight);
+                          1.9f, 2, Bloom::Tight);
 
         content.removeFromLeft (10);
 
@@ -2323,6 +2345,71 @@ void WaveformEditorComponent::paintList (juce::Graphics& g)
         g.setColour (isSelected ? valueCyan : dimText);
         g.setFont (lookAndFeel.getBodyFont (10.5f, false));
         g.drawText (rowDetail (row), content, juce::Justification::topLeft, true);
+    }
+
+    //==========================================================================
+    // The line between what came with the plugin and what the player brought,
+    // and under it the invitation to bring more.
+    //
+    // Two sections, because they are two different kinds of thing. Above are
+    // shapes that are always there and cannot be changed. Below are the eight
+    // slots, which are the player's -- and an empty one is not a gap in a list,
+    // it is somewhere a file can go. Saying so where the empty slots would have
+    // been is the whole point: it puts the offer exactly where the thing it
+    // offers will appear.
+    {
+        auto list = listBounds().reduced (groupPadding, 0);
+
+        auto clip = list;
+        clip.removeFromTop (groupTitleInset);
+        clip.removeFromBottom (groupPadding);
+
+        juce::Graphics::ScopedSaveState saved (g);
+        g.reduceClipRegion (clip);
+
+        // Where the built-ins end. userBase is their count, so it is also the
+        // display position of the first slot -- built-ins are never hidden.
+        const int dividerY = list.getY() + groupTitleInset + userBase * rowHeight
+                           - listScroll
+                           + (dragGap > 0.0f && dragInsertPosition >= 0
+                              && dragInsertPosition <= userBase
+                                  ? juce::roundToInt (dragGap * (float) rowHeight) : 0);
+
+        g.setColour (toggleBorder.withAlpha (0.6f));
+        g.fillRect (list.getX(), dividerY, list.getWidth(), 1);
+
+        // The drop box, under the last row the list actually shows -- which is
+        // where the empty slots would have been.
+        //
+        // A fixed height, and one the scroll knows about, rather than "whatever
+        // is left at the bottom": what was left at the bottom was nothing.
+        const int ghostTop = list.getY() + groupTitleInset
+                           + numVisibleRows() * rowHeight - listScroll
+                           + (dragGap > 0.0f ? juce::roundToInt (dragGap * (float) rowHeight) : 0);
+
+        auto ghost = juce::Rectangle<int> (list.getX(), ghostTop,
+                                           list.getWidth(), dropGhostHeight).reduced (2, 6);
+
+        if (! clip.getIntersection (ghost).isEmpty())
+        {
+            const bool lit = dragActive;
+
+            juce::Path dashed;
+            dashed.addRoundedRectangle (ghost.toFloat().reduced (1.0f), 5.0f);
+
+            const float dashes[] = { 5.0f, 5.0f };
+            juce::Path strokedDashes;
+            juce::PathStrokeType (lit ? 2.0f : 1.0f)
+                .createDashedStroke (strokedDashes, dashed, dashes, 2);
+
+            g.setColour (lit ? knobArcCyan : toggleBorder.withAlpha (0.75f));
+            g.fillPath (strokedDashes);
+
+            g.setColour (lit ? knobArcCyan : dimText.withAlpha (0.8f));
+            g.setFont (lookAndFeel.getBodyFont (11.0f, false));
+            g.drawFittedText ("Drag samples here to tune and play them",
+                              ghost.reduced (8, 4), juce::Justification::centred, 3);
+        }
     }
 
     //==========================================================================
@@ -2474,23 +2561,14 @@ void WaveformEditorComponent::paintDetail (juce::Graphics& g)
 
     if (entry == nullptr)
     {
-        detail = "Built in, always available";
-
-        switch (builtInKind)
-        {
-            case BuiltInKind::Noise:
-                note = "One of the two noise colours. Nothing to import or change here.";
-                break;
-
-            case BuiltInKind::Drums:
-                note = "One of the ten synthesised drums. Nothing to import or change here.";
-                break;
-
-            case BuiltInKind::Shapes:
-            default:
-                note = "One of the four basic shapes. Always in tune, at every pitch.";
-                break;
-        }
+        // A built-in says nothing about itself. It has its shape drawn above, its
+        // name beside it and no file behind it, and none of that needed a caption
+        // telling the player it is built in.
+        //
+        // The line under it went too. It read "One of the four basic shapes",
+        // which stopped being true the day there were twenty-one of them -- and a
+        // caption that has to be counted and kept in step is a caption that will
+        // one day be wrong again.
     }
     else
     {
@@ -2775,8 +2853,16 @@ void WaveformEditorPanel::showFor (juce::Component* anchorButton,
             topLeft = { anchor.getX(), anchor.getBottom() + 4 };
         }
 
+        // Clamped to the CONTROLS, not to the parent. In the standalone the parent
+        // runs on below them to hold the keyboard, and a panel clamped to that
+        // could have its foot -- which is where the shaping knobs are -- pushed
+        // down among the keys.
+        const int usableHeight = keepAboveBottom > 0
+                               ? juce::jmin (parent->getHeight(), keepAboveBottom)
+                               : parent->getHeight();
+
         const int maxX = juce::jmax (0, parent->getWidth() - width);
-        const int maxY = juce::jmax (0, parent->getHeight() - height);
+        const int maxY = juce::jmax (0, usableHeight - height);
 
         setTopLeftPosition (juce::jlimit (0, maxX, topLeft.x),
                             juce::jlimit (0, maxY, topLeft.y));

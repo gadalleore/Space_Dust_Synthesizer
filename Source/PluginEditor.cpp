@@ -6826,6 +6826,12 @@ void SpaceDustAudioProcessorEditor::openWaveformWindow(juce::Component* anchorBu
         waveformWindow->setResampleHost(this);
     }
 
+    // Keep the panel clear of the standalone's keyboard strip. mainView is taller
+    // than the controls by exactly that strip, and a panel clamped to mainView
+    // could otherwise have its foot -- the shaping knobs -- pushed among the keys.
+    waveformWindow->setKeepAboveBottom(designHeight_
+                                       - (standaloneKeyboard != nullptr ? standaloneKeyboardHeight : 0));
+
     // The panel drives this dropdown directly, so its list and this menu are the
     // same list and cannot drift apart. -1 means "do not move the selection": the
     // dropdown is on a built-in shape, and opening a panel must never change the
