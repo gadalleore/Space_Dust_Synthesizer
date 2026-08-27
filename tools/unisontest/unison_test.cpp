@@ -34,21 +34,54 @@ namespace
         }
     }
 
-    /** How loud the sum of a set of copies is, treating them as incoherent --
-        which detuned copies are. Power adds, so amplitudes add in quadrature. */
-    double summedPower(const Unison::Copy* c, int n, float compensation)
-    {
-        double left = 0.0, right = 0.0;
+    /** How loud a set of copies actually is, by RUNNING them.
 
-        for (int i = 0; i < n; ++i)
+        This used to add the gains in quadrature instead -- a model that assumes
+        the copies never line up. Detuned ones do not, so the model looked right
+        and the test passed; but at the quiet end of Detune the copies stay locked
+        together, and the model cannot see that. It could not see the arrangement
+        that made Voices up with Detune down silent, either, because it never
+        looked at a waveform. So this generates one. */
+    struct Measured { double rmsLeft, rmsRight; };
+
+    Measured measure(int voices, double detune, double width, int seconds = 2)
+    {
+        constexpr double twoPi = 6.283185307179586476925286766559;
+
+        Unison::Copy copies[Unison::maxVoices];
+        const float comp = Unison::layout(voices, detune, width, copies);
+
+        const double sampleRate = 48000.0;
+        const double delta = twoPi * 220.0 / sampleRate;
+        const int total = (int) (sampleRate * seconds);
+
+        // Every copy starts where the plain oscillator would -- the same as the
+        // voice does. See SynthVoice::seedUnisonPhases.
+        double angle[Unison::maxVoices] = {};
+
+        double sumL = 0.0, sumR = 0.0;
+
+        for (int n = 0; n < total; ++n)
         {
-            const double l = c[i].gainLeft * compensation;
-            const double r = c[i].gainRight * compensation;
-            left += l * l;
-            right += r * r;
+            double left = 0.0, right = 0.0;
+
+            for (int i = 0; i < voices; ++i)
+            {
+                const double v = std::sin(angle[i]);
+                left  += v * copies[i].gainLeft;
+                right += v * copies[i].gainRight;
+
+                angle[i] += delta * copies[i].ratio;
+                if (angle[i] >= twoPi) angle[i] -= twoPi;
+            }
+
+            left *= comp;
+            right *= comp;
+            sumL += left * left;
+            sumR += right * right;
         }
 
-        return left + right;
+        return { std::sqrt(sumL / total), std::sqrt(sumR / total) };
     }
 }
 
@@ -69,6 +102,8 @@ int main()
         check(std::abs(copies[0].gainLeft - copies[0].gainRight) < 1e-9,
               "one voice was pushed off centre");
         check(std::abs(comp - 1.0f) < 1e-9, "one voice was scaled");
+        check(std::abs(copies[0].gainLeft - 1.0f) < 1e-6,
+              "one voice does not come out at unity -- the pan law is eating level");
 
         std::printf("  ratio %.6f, gains %.4f/%.4f, compensation %.4f\n",
                     copies[0].ratio, copies[0].gainLeft, copies[0].gainRight, comp);
@@ -157,30 +192,86 @@ int main()
         std::printf("  %.1f cents to %.1f cents\n", bottomCents, topCents);
     }
 
-    std::printf("\nTurning Voices up does not change how loud it is:\n");
-    {
-        // Detuned copies drift in and out of phase, so they sum incoherently and
-        // the total sits near the square root of the count. Without the
-        // compensation every turn of Voices would have to be answered with the
-        // level knob, which is what makes such a control unusable.
-        const float comp1 = Unison::layout(1, 0.5, 0.5, copies);
-        const double power1 = summedPower(copies, 1, comp1);
 
-        double worstRatio = 1.0;
+    std::printf("\nTurning Voices up does not change how loud it is, at ANY Detune:\n");
+    {
+        // The level is measured from a running oscillator, across the whole of
+        // Detune -- not from the incoherent-power model, which is only right at
+        // the top of that range and hid this for a whole release.
+        double worstDb = 0.0;
+        double worstAt = 0.0;
+        int worstVoices = 0;
+
+        for (int d = 0; d <= 10; ++d)
+        {
+            const double detune = d / 10.0;
+            const double one = measure(1, detune, 0.5).rmsLeft;
+
+            for (int v = 2; v <= Unison::maxVoices; ++v)
+            {
+                const double got = measure(v, detune, 0.5).rmsLeft;
+                const double diff = 20.0 * std::log10((got + 1e-12) / (one + 1e-12));
+
+                if (std::abs(diff) > std::abs(worstDb))
+                {
+                    worstDb = diff;
+                    worstAt = detune;
+                    worstVoices = v;
+                }
+            }
+        }
+
+        check(std::abs(worstDb) < 3.0,
+              "the level moves as Voices is turned up");
+        std::printf("  worst level change across 1..%d voices and all of Detune: "
+                    "%+.2f dB (%d voices, detune %.1f)\n",
+                    (int) Unison::maxVoices, worstDb, worstVoices, worstAt);
+    }
+
+    std::printf("\nVoices up with Detune at zero is not silent:\n");
+    {
+        // The arrangement this replaces spread the copies evenly around the turn,
+        // which is exactly the arrangement that sums to zero. Seven copies at
+        // Detune 0 measured 157 dB down -- inaudible. One voice is the right
+        // answer here: identical copies ARE one oscillator.
+        const double one = measure(1, 0.0, 0.0).rmsLeft;
+        double worstDb = 0.0;
 
         for (int v = 2; v <= Unison::maxVoices; ++v)
         {
-            const float comp = Unison::layout(v, 0.5, 0.5, copies);
-            const double power = summedPower(copies, v, comp);
-            const double ratio = power / power1;
+            const double got = measure(v, 0.0, 0.0).rmsLeft;
+            const double diff = 20.0 * std::log10((got + 1e-12) / (one + 1e-12));
 
-            worstRatio = std::fmax(worstRatio, std::fmax(ratio, 1.0 / ratio));
+            if (std::abs(diff) > std::abs(worstDb))
+                worstDb = diff;
         }
 
-        check(worstRatio < 1.15,
-              "the level moves as Voices is turned up");
-        std::printf("  worst power difference across 1..%d voices: %.1f%%\n",
-                    (int) Unison::maxVoices, (worstRatio - 1.0) * 100.0);
+        check(std::abs(worstDb) < 1.0,
+              "Voices at zero Detune does not leave the level alone");
+        std::printf("  worst level change at Detune 0: %+.2f dB\n", worstDb);
+    }
+
+    std::printf("\nThe two sides stay level with each other:\n");
+    {
+        // The copies are panned symmetrically, so nothing should favour a side.
+        double worstDb = 0.0;
+        double worstAt = 0.0;
+
+        for (int d = 0; d <= 10; ++d)
+        {
+            const double detune = d / 10.0;
+
+            for (int v = 2; v <= Unison::maxVoices; ++v)
+            {
+                const Measured m = measure(v, detune, 1.0);
+                const double diff = 20.0 * std::log10((m.rmsLeft + 1e-12) / (m.rmsRight + 1e-12));
+
+                if (std::abs(diff) > std::abs(worstDb)) { worstDb = diff; worstAt = detune; }
+            }
+        }
+
+        check(std::abs(worstDb) < 1.0, "one side is louder than the other");
+        std::printf("  worst imbalance at full Width: %+.2f dB (detune %.1f)\n", worstDb, worstAt);
     }
 
     std::printf("\nEvery pan is equal power, so no copy is louder for its position:\n");
@@ -195,9 +286,13 @@ int main()
 
                 for (int i = 0; i < v; ++i)
                 {
+                    // Two, not one: the gains are normalised so a CENTRED copy is
+                    // unity a side rather than 0.707, which is what makes turning
+                    // unison on cost nothing. Equal power is the property being
+                    // checked, and it holds at whatever the constant is.
                     const double power = copies[i].gainLeft * copies[i].gainLeft
                                        + copies[i].gainRight * copies[i].gainRight;
-                    worst = std::fmax(worst, std::abs(power - 1.0));
+                    worst = std::fmax(worst, std::abs(power - 2.0));
                 }
             }
         }
@@ -222,7 +317,9 @@ int main()
         for (int i = 0; i < 3; ++i)
         {
             check(std::isfinite(copies[i].ratio), "an out-of-range detune gave a bad ratio");
-            check(copies[i].gainLeft >= 0.0f && copies[i].gainLeft <= 1.0f,
+            // The ceiling is sqrt(2), not 1: a hard-panned copy carries the level
+            // its silent side gives up, which is what keeps the pan equal power.
+            check(copies[i].gainLeft >= 0.0f && copies[i].gainLeft <= 1.4142136f,
                   "an out-of-range width gave a bad gain");
         }
 

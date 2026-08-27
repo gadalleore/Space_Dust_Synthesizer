@@ -29,12 +29,16 @@
 
     LEVEL
 
-    Seven copies of a waveform at the same level are not seven times as loud, and
-    they are not the same loudness either. They are detuned, so they drift in and
-    out of phase and sum incoherently, which puts them somewhere near the square
-    root of the count. Dividing by that keeps turning Voices up from changing how
-    loud the patch is -- which is what makes the control usable, because otherwise
-    every turn of it has to be answered with the level knob.
+    How loud N copies are depends on how far apart they are, and it moves between
+    two extremes. Copies at the same pitch are the same waveform at the same phase,
+    so they add: N copies are N times one. Copies far enough apart drift in and out
+    of phase, sum incoherently, and land near the square root of N. Dividing by the
+    right one of those keeps turning Voices up from changing how loud the patch is,
+    which is what makes the control usable -- otherwise every turn of it has to be
+    answered with the level knob.
+
+    Assuming the incoherent case everywhere, as this first did, is wrong at the
+    quiet end of Detune, where the copies have not separated at all.
 */
 namespace Unison
 {
@@ -109,12 +113,43 @@ namespace Unison
             const double pan = spread * width;                 // -1 .. +1
             const double angle = (pan + 1.0) * 0.25 * 3.14159265358979323846;
 
-            out[i].gainLeft = (float) std::cos (angle);
-            out[i].gainRight = (float) std::sin (angle);
+            // Scaled so a CENTRED copy comes out at 1.0 a side, not at 0.707.
+            //
+            // The plain oscillator has no pan law applied to it at all. Leaving
+            // the textbook 0.707 in meant that merely switching unison on -- even
+            // at Width 0, where every copy is centred and nothing has moved --
+            // cost 3.01 dB against the oscillator it replaced. That is a constant
+            // offset, it is inaudible as anything but "unison is quieter", and
+            // the unit test could not see it because its own reference went
+            // through the same 0.707 (Giuseppe, 2026-08-26).
+            //
+            // Equal power still holds: this scales both sides by the same number,
+            // so every copy has the same total power wherever it sits.
+            constexpr double centreNormalise = 1.4142135623730951;  // sqrt(2)
+
+            out[i].gainLeft = (float) (centreNormalise * std::cos (angle));
+            out[i].gainRight = (float) (centreNormalise * std::sin (angle));
         }
 
-        // Detuned copies sum incoherently, so the total sits near the square root
-        // of the count rather than the count itself.
-        return (float) (1.0 / std::sqrt ((double) voices));
+        // How much of the copies' sum is coherent -- and so what the sum has to
+        // be divided by to leave the level where it was.
+        //
+        // At zero detune every copy is the same waveform at the same phase. They
+        // add up: N copies are N times one, and the divisor is N. Open the detune
+        // and they drift apart, sum incoherently, and land near the square root of
+        // N instead -- so the divisor is the square root.
+        //
+        // Which of the two it is depends on how far apart the copies are. A cent
+        // or two and they stay locked together for seconds, which is longer than
+        // most notes last; ten cents and they have separated well inside one note.
+        // So the exponent runs from 1 down to 1/2 as the spread opens, and the
+        // level holds still across the whole of Detune rather than only at the top
+        // of it (Giuseppe, 2026-08-26: "as I introduce unison the synth gets
+        // quieter, which is the opposite of what I would expect").
+        const double spreadCents = maxDetuneCents * detune;
+        const double coherence = std::exp (-spreadCents * 0.5);
+        const double exponent = 0.5 + 0.5 * coherence;
+
+        return (float) (1.0 / std::pow ((double) voices, exponent));
     }
 }

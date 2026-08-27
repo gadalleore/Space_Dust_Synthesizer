@@ -845,32 +845,39 @@ void SynthVoice::updateUnison (UnisonState& state, int voices, float detune, flo
     // A change in the COUNT needs the new copies given phases; a change in detune
     // or width does not, and re-seeding on every block would restart the copies
     // sixty times a second and kill the beating that is the whole effect.
-    const bool countChanged = wanted != state.voices;
+    const int had = state.voices;
 
     state.voices = wanted;
     state.compensation = Unison::layout (wanted, (double) detune, (double) width, state.copies);
 
-    if (countChanged)
-        seedUnisonPhases (state, state.angle[0]);
+    // Only the copies that were not there before get a phase. Re-seeding all of
+    // them would snap the running ones back together every time Voices moved,
+    // which restarts the beating mid-note and is heard as a jump.
+    for (int i = had; i < wanted; ++i)
+        state.angle[i] = state.angle[0];
 }
 
 void SynthVoice::seedUnisonPhases (UnisonState& state, double startAngle) noexcept
 {
     constexpr double twoPi = 2.0 * juce::MathConstants<double>::pi;
 
+    double a = startAngle;
+    while (a >= twoPi) a -= twoPi;
+    while (a < 0.0)    a += twoPi;
+
+    // Every copy starts where the plain oscillator would, and the detune is what
+    // pulls them apart from there.
+    //
+    // This used to spread them evenly around the turn, to stop the note starting
+    // with all the copies stacked. That spread is exactly the arrangement that
+    // cancels: N copies evenly spaced around one cycle sum to zero, so Voices up
+    // with Detune down was SILENT, and it stayed more than 10 dB down until the
+    // detune had pulled them clear (measured, tools/unisonaudit). Starting them
+    // together cancels nothing at any setting, and it is the only arrangement
+    // that puts an identical set of phases on both sides of the pan, so the
+    // stereo balance holds as well.
     for (int i = 0; i < state.voices; ++i)
-    {
-        // Spread evenly around the turn. Copies that all start together sum
-        // coherently for the first instant, so the note begins with one loud
-        // copy and thins out as the detune pulls them apart -- an attack that
-        // changes shape as Voices is turned up.
-        double a = startAngle + twoPi * ((double) i / (double) state.voices);
-
-        while (a >= twoPi) a -= twoPi;
-        while (a < 0.0)    a += twoPi;
-
         state.angle[i] = a;
-    }
 }
 
 float SynthVoice::renderUnison (UnisonState& state, int waveform, const UserWaveSlot* slot,

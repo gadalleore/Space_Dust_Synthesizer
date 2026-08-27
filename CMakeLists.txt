@@ -656,6 +656,37 @@ if(ENABLE_ASAN OR ENABLE_TSAN)
 endif()
 
 #==============================================================================
+# Unison level and balance audit (plain Release, no sanitizer). Drives the whole
+# processor -- oversampler, filter, pan gains -- and reports per-channel RMS for
+# a sweep of Voices, Detune and Width. UnisonSpread.h has its own unit test; this
+# is the end-to-end check that nothing between the copies and the output is
+# tilting the balance or losing level.
+# Build:  cmake -B build -DENABLE_UNISON_AUDIT=ON ; cmake --build build --target SpaceDustUnisonAudit
+#==============================================================================
+option(ENABLE_UNISON_AUDIT "Build the offline unison level/balance audit" OFF)
+if(ENABLE_UNISON_AUDIT)
+    juce_add_console_app(SpaceDustUnisonAudit PRODUCT_NAME "SpaceDustUnisonAudit")
+    target_sources(SpaceDustUnisonAudit PRIVATE tools/unisonaudit/unison_audit_main.cpp)
+    target_include_directories(SpaceDustUnisonAudit PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Source")
+    target_link_libraries(SpaceDustUnisonAudit PRIVATE
+        SpaceDust
+        SpaceDustBinaryData
+        juce::juce_audio_basics
+        juce::juce_audio_devices
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        juce::juce_gui_extra)
+    message(STATUS "SpaceDustUnisonAudit ENABLED.")
+endif()
+
+#==============================================================================
 # Transient Pre/Post filter routing test (plain Release, no sanitizer). A tiny
 # console app that drives the processor offline to confirm the "Post Effect"
 # toggle changes whether the Main filter colours the transient.
