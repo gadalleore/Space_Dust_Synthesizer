@@ -107,6 +107,7 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
 
     /** Scroll the list. Twenty-one built-in shapes plus eight import slots is
         more rows than the panel can show at once, so the list scrolls past its
@@ -336,7 +337,17 @@ private:
         The shaping knobs live in that foot. 690 leaves the whole panel, frame and
         all, inside the controls above the keyboard however low the button that
         opened it sits. */
-    static constexpr int maxPanelHeight = 690;
+    static constexpr int maxPanelHeight = 520;
+
+    /** The Unison box: under the Wave Shaping strip, beside the list, above the
+        picture.
+
+        It used to sit next to the Wave Shaping box in one strip across the top,
+        which gave four knobs a quarter of the width and cut "Random Phase" off
+        mid-word. Stacked instead: shaping gets the full width it needs for five,
+        and unison gets the whole of the right-hand column for four
+        (Giuseppe, 2026-08-27). */
+    juce::Rectangle<int> unisonBounds() const;
 
     /** How tall the rows are all together, and how much of that can be seen. */
     int listContentHeight() const;
@@ -370,6 +381,29 @@ private:
         than a click -- opening the panel on a slot, or stepping off one that was
         cleared -- because a selected row nobody can see reads as no selection. */
     void scrollRowIntoView (int row);
+
+    //==========================================================================
+    // -- Hovering near an edge scrolls the list --
+    //
+    // The panel is short enough now that an oscillator's twenty-nine rows are
+    // mostly off screen, so reaching the imported slots at the bottom was a wheel
+    // gesture and nothing else. Resting the pointer near the top or bottom edge
+    // of the rows now scrolls them past, and stops on its own at either end.
+
+    /** How deep the band at each edge of the rows is. */
+    static constexpr int hoverScrollBand = 26;
+
+    /** How far one tick moves the list, and how often a tick comes. Six pixels
+        every thirty milliseconds is 200 a second -- about six rows -- which
+        crosses a full list in a few seconds without being hard to stop on a row. */
+    static constexpr int hoverScrollStep = 6;
+    static constexpr int hoverScrollIntervalMs = 30;
+
+    /** -1 up, +1 down, 0 not scrolling. */
+    int hoverScrollDirection = 0;
+
+    /** Look at where the pointer is and start, steer or stop the hover scroll. */
+    void updateHoverScroll (juce::Point<int> position);
 
     /** How far the list is scrolled, in pixels. */
     int listScroll = 0;
@@ -835,8 +869,17 @@ public:
     void resized() override;
 
     /** A press that reached the panel is a press INSIDE it. Swallowed so the
-        outside-click watcher cannot read it as a press somewhere else. */
+        outside-click watcher cannot read it as a press somewhere else.
+
+        A press on the title bar also begins a drag -- see mouseDrag. */
     void mouseDown (const juce::MouseEvent& event) override;
+
+    /** Move the panel, if the press that started this was on the title bar. */
+    void mouseDrag (const juce::MouseEvent& event) override;
+    void mouseUp (const juce::MouseEvent& event) override;
+
+    /** The open-hand cursor over the title bar, so the drag is discoverable. */
+    void mouseMove (const juce::MouseEvent& event) override;
 
     bool keyPressed (const juce::KeyPress& key) override;
 
@@ -893,9 +936,33 @@ private:
         WaveformEditorPanel& owner;
     };
 
+    /** The strip that can be grabbed to move the panel: the title row, less the
+        close button at its right-hand end. */
+    juce::Rectangle<int> titleBarArea() const;
+
+    /** Pull the panel back inside the parent, and above the keyboard.
+
+        Called after every move, and on every open. showFor used to work this out
+        for itself; it is here because a drag needs exactly the same answer and
+        two copies of it would drift apart. */
+    void clampInsideParent();
+
     /** How much room the frame takes around the component, in design pixels. */
     static constexpr int frameInset = 8;
     static constexpr int titleHeight = 24;
+
+    juce::ComponentDragger dragger;
+
+    /** Whether the press that is currently down began on the title bar. */
+    bool draggingPanel = false;
+
+    /** Whether the player has moved the panel at all.
+
+        Once they have, it STAYS where they put it: opening it again from any of
+        the five Edit buttons leaves it there rather than snapping it back under
+        the button, which is what a window that can be moved should do. Until
+        then it is placed against whatever opened it, as it always was. */
+    bool hasBeenMoved = false;
 
     UserWaveLibrary& library;
     SpaceDustLookAndFeel& lookAndFeel;

@@ -819,24 +819,30 @@ int main()
         SpaceDustLookAndFeel lookAndFeel;
         const juce::Font font = lookAndFeel.getBodyFont (12.0f, true);
 
-        // The same arithmetic WaveformEditorComponent::resized does, so the two
+        // The same arithmetic WaveformEditorComponent lays out with, so the two
         // cannot disagree about how much room there is.
+        //
+        // The two boxes are STACKED now, not side by side: Wave Shaping runs the
+        // full width across the top and Unison has the right-hand column to
+        // itself. That is what gave "Random Phase" the room it needs.
         const int margin = 10;
         const int groupPadding = 10;
         const int shapingKnobs = 5;
         const int unisonKnobs = 4;
         const int labelOverhang = 12;
+        const int listWidth = 200;
+        const int detailWidth = 440;
+        const int thumbWidth = 38;
+        const int thumbGap = 10;
 
-        const int stripWidth = WaveformEditorComponent::preferredWidth() - 2 * margin;
-        const int totalKnobs = shapingKnobs + unisonKnobs;
-        const int unisonBox = (stripWidth - groupPadding) * unisonKnobs / totalKnobs;
-        const int shapingBox = stripWidth - groupPadding - unisonBox;
+        const int shapingBox = WaveformEditorComponent::preferredWidth() - 2 * margin;
+        const int unisonBox = detailWidth;
 
-        const int unisonCell = (unisonBox - 2 * groupPadding) / unisonKnobs;
         const int shapingCell = (shapingBox - 2 * groupPadding) / shapingKnobs;
+        const int unisonCell = (unisonBox - 2 * groupPadding) / unisonKnobs;
 
-        std::printf("  strip %d px   shaping box %d (cell %d)   unison box %d (cell %d)\n",
-                    stripWidth, shapingBox, shapingCell, unisonBox, unisonCell);
+        std::printf("  shaping box %d (cell %d)   unison box %d (cell %d)\n",
+                    shapingBox, shapingCell, unisonBox, unisonCell);
         std::printf("  a label may use its cell plus %d px either side.\n\n", labelOverhang);
 
         struct LabelCheck { const char* text; int cell; };
@@ -877,8 +883,32 @@ int main()
         const int gap = unisonCell - widthText / 2 - phaseText / 2;
 
         std::printf("\n  gap between the \"Width\" and \"Random Phase\" glyphs: %d px\n", gap);
-        std::printf("  %s\n", (clipped == 0 && gap > 0) ? "every label fits and none collide"
-                                                        : "SOMETHING DOES NOT FIT");
+
+        // And the list, which got narrower to pay for that column. A row is a
+        // thumbnail, a gap, and then the name -- so this is what is left for the
+        // name, and the longest built-in name has to live in it.
+        std::printf("\n  --- the list, at %d px wide ---\n", listWidth);
+        {
+            const int rowWidth = listWidth - 2 * groupPadding;
+            const int nameRoom = rowWidth - 2 * 8 - thumbWidth - thumbGap;
+
+            std::printf("  a row name has %d px.\n", nameRoom);
+
+            for (const char* name : { "Odd Harmonics", "Round Square", "Ramp Down",
+                                      "Trapezoid", "Stack Saw", "Pulse 25%" })
+            {
+                const int wide = juce::roundToInt (juce::GlyphArrangement::getStringWidth (font, name));
+
+                if (wide > nameRoom)
+                    ++clipped;
+
+                std::printf("  %-14s %3d px   %s\n", name, wide,
+                            wide <= nameRoom ? "fits" : "CLIPPED");
+            }
+        }
+
+        std::printf("\n  %s\n", (clipped == 0 && gap > 0) ? "every label fits and none collide"
+                                                          : "SOMETHING DOES NOT FIT");
     }
 
     std::printf("\n================================================================\n");

@@ -36,8 +36,12 @@ namespace
     const juce::Colour errorRed       { 0xffff8080 };
 
     constexpr int margin = 10;
-    constexpr int listWidth = 240;
-    constexpr int detailWidth = 400;
+    // The list is the narrower of the two now. A row carries a 38 px thumbnail
+    // and a name, and the names are short -- "Odd Harmonics" is the longest
+    // built-in -- so 240 was more than they ever used. What it costs the list the
+    // right-hand column gains, and that column is what holds the Unison box.
+    constexpr int listWidth = 200;
+    constexpr int detailWidth = 440;
     constexpr int rowHeight = 32;
     constexpr int groupTitleInset = 26;
     constexpr int groupPadding = 10;
@@ -68,6 +72,7 @@ namespace
     constexpr int playheadTimerId = 1;
     constexpr int trimTimerId = 2;
     constexpr int dragTimerId = 3;
+    constexpr int hoverScrollTimerId = 4;
 
     /** How often the gap under a dragged file is eased, and how much of the way
         it closes the distance each time. Sixty a second, a fifth of the way, so
@@ -163,6 +168,10 @@ int WaveformEditorComponent::preferredHeight (int userBase, bool withShaping)
                      + dropGhostHeight
                      + groupPadding + margin + statusHeight + margin
                      + (withShaping ? shapingStripHeight : 0);
+
+    // The right-hand column carries the Unison box above the picture, so a panel
+    // shorter than that box plus a picture worth looking at is no use to anyone.
+    // Only the LIST wants the height above; this is the floor under it.
 
     // Capped, and the list scrolls past the cap.
     //
@@ -1089,6 +1098,24 @@ void WaveformEditorComponent::timerCallback (int timerID)
         return;
     }
 
+    if (timerID == hoverScrollTimerId)
+    {
+        const int before = listScroll;
+
+        setListScroll (listScroll + hoverScrollDirection * hoverScrollStep);
+
+        // Stopped moving, so it has reached an end. Stop the timer rather than
+        // keep asking -- the pointer is still over the band, and starting again is
+        // what moving it away and back is for.
+        if (listScroll == before)
+        {
+            hoverScrollDirection = 0;
+            stopTimer (hoverScrollTimerId);
+        }
+
+        return;
+    }
+
     if (timerID == dragTimerId)
     {
         // Ease the gap towards open while a file is over the list and towards
@@ -1518,6 +1545,44 @@ void WaveformEditorComponent::mouseMove (const juce::MouseEvent& event)
     setMouseCursor (handleAt (event.getPosition()) != TrimHandle::None
                         ? juce::MouseCursor::LeftRightResizeCursor
                         : juce::MouseCursor::NormalCursor);
+
+    updateHoverScroll (event.getPosition());
+}
+
+void WaveformEditorComponent::mouseExit (const juce::MouseEvent&)
+{
+    // A pointer that has left cannot be near an edge, and a scroll that kept
+    // running after it had gone would carry the list somewhere nobody asked for.
+    hoverScrollDirection = 0;
+    stopTimer (hoverScrollTimerId);
+}
+
+void WaveformEditorComponent::updateHoverScroll (juce::Point<int> position)
+{
+    const auto rows = rowsViewArea();
+
+    int wanted = 0;
+
+    // Nothing to do on a list that fits. Starting a timer that can only ever
+    // clamp back to where it was would repaint the panel sixty times a second for
+    // as long as the pointer rested there.
+    if (maxListScroll() > 0 && rows.contains (position))
+    {
+        if (position.getY() < rows.getY() + hoverScrollBand)
+            wanted = -1;
+        else if (position.getY() > rows.getBottom() - hoverScrollBand)
+            wanted = 1;
+    }
+
+    if (wanted == hoverScrollDirection)
+        return;
+
+    hoverScrollDirection = wanted;
+
+    if (wanted == 0)
+        stopTimer (hoverScrollTimerId);
+    else
+        startTimer (hoverScrollTimerId, hoverScrollIntervalMs);
 }
 
 void WaveformEditorComponent::mouseDoubleClick (const juce::MouseEvent& event)
@@ -1626,16 +1691,33 @@ juce::Rectangle<int> WaveformEditorComponent::listBounds() const
     // Above rather than below because these knobs act on the oscillator as a
     // whole. Reading down the panel then goes: what the oscillator does to every
     // waveform, then which waveform, then the one on screen.
-    const int strip = shapingControls != nullptr ? shapingStripHeight : 0;
+    // Only the Wave Shaping box is above the list. The Unison box used to be up
+    // here beside it and is now in the right-hand column, so the list runs the
+    // full height under the strip and the picture is what gives way instead.
+    const int strip = hasShapingKnobs() ? shapingStripHeight : 0;
 
     return { margin, 2 * margin + strip, listWidth,
              getHeight() - 3 * margin - statusHeight - strip };
 }
 
+juce::Rectangle<int> WaveformEditorComponent::unisonBounds() const
+{
+    auto list = listBounds();
+
+    return { list.getRight() + margin, list.getY(), detailWidth, shapingStripHeight };
+}
+
 juce::Rectangle<int> WaveformEditorComponent::detailBounds() const
 {
     auto list = listBounds();
-    return { list.getRight() + margin, list.getY(), detailWidth, list.getHeight() };
+
+    // Lowered to clear the Unison box, where there is one. The Transient has
+    // neither box, so its picture starts level with the top of its list exactly
+    // as it always did.
+    const int above = shapingControls != nullptr ? shapingStripHeight + margin : 0;
+
+    return { list.getRight() + margin, list.getY() + above, detailWidth,
+             list.getHeight() - above };
 }
 
 //==============================================================================
@@ -2002,10 +2084,20 @@ void WaveformEditorComponent::resized()
     // the slot on screen: they act on the oscillator, and every waveform it plays
     // goes through them. Sitting them among the Load and Clear buttons would say
     // the opposite.
-    // The Unison box appears wherever there is a strip at all. The Wave Shaping
-    // box appears only where there are shaping knobs to put in it -- the noise
-    // source has unison and nothing to bend, and an empty box with a title on it
-    // would be worse than no box.
+    // Two boxes, stacked rather than side by side.
+    //
+    // Wave Shaping runs the full width across the top: it acts on the oscillator
+    // as a whole, so reading down the panel goes "what this oscillator does to
+    // every waveform", then "which waveform", then "the one on screen".
+    //
+    // Unison sits under it, in the right-hand column above the picture. Sharing
+    // one strip gave its four knobs a quarter of the width, which cut "Random
+    // Phase" off mid-word; a column to itself gives them more room than the five
+    // shaping knobs get (Giuseppe, 2026-08-27).
+    //
+    // The Wave Shaping box appears only where there are shaping knobs to put in
+    // it -- the noise source has unison and nothing to bend, and an empty box
+    // with a title on it would be worse than no box.
     const bool withShaping = hasShapingKnobs();
 
     shapingGroup.setVisible (withShaping);
@@ -2013,36 +2105,13 @@ void WaveformEditorComponent::resized()
 
     if (shapingControls != nullptr)
     {
-        // listBounds() has already given up this height, so the strip goes in the
-        // gap that leaves rather than being taken out of the detail box again.
-        auto strip = getLocalBounds().withTrimmedTop (margin)
-                                     .removeFromTop (shapingStripHeight)
-                                     .reduced (margin, 0);
+        // listBounds() has already given up the strip's height, so it goes in the
+        // gap that leaves rather than being taken out of a box again.
+        auto shapingArea = getLocalBounds().withTrimmedTop (margin)
+                                           .removeFromTop (shapingStripHeight)
+                                           .reduced (margin, 0);
 
-        // Split by knob count, so a knob is the same size in both boxes. Five and
-        // three, plus the padding each box spends on its own border.
-        const int totalKnobs = shapingKnobCount + unisonKnobCount;
-        const int unisonWidth = (strip.getWidth() - groupPadding)
-                              * unisonKnobCount / totalKnobs;
-
-        juce::Rectangle<int> shapingArea;
-        juce::Rectangle<int> unisonArea;
-
-        if (withShaping)
-        {
-            shapingArea = strip.removeFromLeft (strip.getWidth() - groupPadding - unisonWidth);
-            strip.removeFromLeft (groupPadding);
-            unisonArea = strip;
-        }
-        else
-        {
-            // Alone, and CENTRED at the width it would have had beside a Wave
-            // Shaping box -- not stretched across the panel. Stretching it would
-            // make the noise source's Voices knob bigger than Oscillator 1's, and
-            // they are the same control.
-            unisonArea = strip.withWidth (unisonWidth)
-                              .withX (strip.getCentreX() - unisonWidth / 2);
-        }
+        auto unisonArea = unisonBounds();
 
         shapingGroup.setBounds (shapingArea);
         unisonGroup.setBounds (unisonArea);
@@ -3002,11 +3071,73 @@ void WaveformEditorPanel::resized()
                                 .withTrimmedBottom (frameInset));
 }
 
-void WaveformEditorPanel::mouseDown (const juce::MouseEvent&)
+juce::Rectangle<int> WaveformEditorPanel::titleBarArea() const
 {
-    // Deliberately empty. A press that reached the panel is a press inside it,
-    // and swallowing it here is what stops OutsideClickWatcher reading it as a
-    // press somewhere else.
+    // The close button sits at the right-hand end of the title row and is a
+    // button, not a handle -- see resized(), which gives it the same width.
+    return getLocalBounds().removeFromTop (titleHeight)
+                           .withTrimmedRight (titleHeight + frameInset);
+}
+
+void WaveformEditorPanel::clampInsideParent()
+{
+    auto* parent = getParentComponent();
+
+    if (parent == nullptr)
+        return;
+
+    // Clamped to the CONTROLS, not to the parent. In the standalone the parent
+    // runs on below them to hold the keyboard, and a panel clamped to that could
+    // be dragged down among the keys.
+    const int usableHeight = keepAboveBottom > 0
+                           ? juce::jmin (parent->getHeight(), keepAboveBottom)
+                           : parent->getHeight();
+
+    const int maxX = juce::jmax (0, parent->getWidth() - getWidth());
+    const int maxY = juce::jmax (0, usableHeight - getHeight());
+
+    setTopLeftPosition (juce::jlimit (0, maxX, getX()),
+                        juce::jlimit (0, maxY, getY()));
+}
+
+void WaveformEditorPanel::mouseDown (const juce::MouseEvent& event)
+{
+    // Otherwise deliberately empty. A press that reached the panel is a press
+    // inside it, and swallowing it here is what stops OutsideClickWatcher reading
+    // it as a press somewhere else.
+    if (titleBarArea().contains (event.getPosition()))
+    {
+        draggingPanel = true;
+        dragger.startDraggingComponent (this, event);
+    }
+}
+
+void WaveformEditorPanel::mouseDrag (const juce::MouseEvent& event)
+{
+    if (! draggingPanel)
+        return;
+
+    dragger.dragComponent (this, event, nullptr);
+
+    // Clamped AFTER the move rather than by handing dragComponent a constrainer.
+    // A ComponentBoundsConstrainer works in the component's own parent
+    // coordinates and knows nothing about the keyboard strip below the controls;
+    // this is the same rule the panel is opened under, applied by the same code.
+    clampInsideParent();
+
+    hasBeenMoved = true;
+}
+
+void WaveformEditorPanel::mouseUp (const juce::MouseEvent&)
+{
+    draggingPanel = false;
+}
+
+void WaveformEditorPanel::mouseMove (const juce::MouseEvent& event)
+{
+    setMouseCursor (titleBarArea().contains (event.getPosition())
+                        ? juce::MouseCursor::DraggingHandCursor
+                        : juce::MouseCursor::NormalCursor);
 }
 
 bool WaveformEditorPanel::keyPressed (const juce::KeyPress& key)
@@ -3078,33 +3209,23 @@ void WaveformEditorPanel::showFor (juce::Component* anchorButton,
 
     setSize (width, height);
 
-    // Placed against the button that opened it, then pushed back inside. The
-    // clamp is not optional: the Sub Oscillator button sits low and right in the
-    // layout, and a panel hung off it would run off two edges at once.
+    // Placed against the button that opened it -- unless the player has moved it,
+    // in which case it stays where they put it. A window that can be dragged and
+    // then jumps back the next time it is opened is a window that cannot be
+    // dragged (Giuseppe, 2026-08-27).
     if (auto* parent = getParentComponent())
     {
-        juce::Point<int> topLeft (0, 0);
-
-        if (anchorButton != nullptr)
+        if (! hasBeenMoved && anchorButton != nullptr)
         {
             const auto anchor = parent->getLocalArea (anchorButton,
                                                       anchorButton->getLocalBounds());
-            topLeft = { anchor.getX(), anchor.getBottom() + 4 };
+            setTopLeftPosition (anchor.getX(), anchor.getBottom() + 4);
         }
 
-        // Clamped to the CONTROLS, not to the parent. In the standalone the parent
-        // runs on below them to hold the keyboard, and a panel clamped to that
-        // could have its foot -- which is where the shaping knobs are -- pushed
-        // down among the keys.
-        const int usableHeight = keepAboveBottom > 0
-                               ? juce::jmin (parent->getHeight(), keepAboveBottom)
-                               : parent->getHeight();
-
-        const int maxX = juce::jmax (0, parent->getWidth() - width);
-        const int maxY = juce::jmax (0, usableHeight - height);
-
-        setTopLeftPosition (juce::jlimit (0, maxX, topLeft.x),
-                            juce::jlimit (0, maxY, topLeft.y));
+        // Always, moved or not. The five sources give the panel five different
+        // heights, so a position that fitted the Transient's list can hang off the
+        // bottom once an oscillator's twenty-nine rows are in it.
+        clampInsideParent();
     }
 
     setVisible (true);
