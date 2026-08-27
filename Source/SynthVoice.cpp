@@ -475,15 +475,6 @@ void SynthVoice::noteStarted()
     restartWholeSample (subOscUserSlot, subOscAngle);
     restartWholeSample (noiseUserSlot, noiseWaveAngle);
 
-    // The unison copies start spread around the turn rather than stacked. Seven
-    // copies all starting at the same phase sum coherently for the first instant,
-    // so the note would begin with one copy's worth of level and thin out as the
-    // detune pulled them apart -- an attack whose shape changed with Voices.
-    seedUnisonPhases (osc1Unison, osc1Angle);
-    seedUnisonPhases (osc2Unison, osc2Angle);
-    seedUnisonPhases (subUnison, subOscAngle);
-    seedUnisonPhases (noiseUnison, noiseWaveAngle);
-
     if (shouldHardResetForPoly)
     {
         // Truly new poly voice: safe to do full reset
@@ -629,6 +620,21 @@ void SynthVoice::noteStarted()
         isActive = true;
         lastStartPath_ = inMonoMode ? "mono" : "legato";
     }
+
+    // AFTER the three branches above, and that position is the whole point.
+    //
+    // Each copy is seeded from its oscillator's angle and, with Phase up, from
+    // the voice's random generator. The hard-reset branch sets those angles to
+    // zero and re-seeds that generator -- so seeding the copies before it, which
+    // is where this used to sit, scattered them around an angle the note was
+    // about to abandon, and drew their random offsets from the generator state
+    // the note was about to replace. The draw was then the SAME on every fresh voice: five different
+    // notes came back at identical levels to two decimals, which is not what a
+    // random phase is for (measured, tools/unisonaudit).
+    seedUnisonPhases (osc1Unison, osc1Angle);
+    seedUnisonPhases (osc2Unison, osc2Angle);
+    seedUnisonPhases (subUnison, subOscAngle);
+    seedUnisonPhases (noiseUnison, noiseWaveAngle);
 
     dbgSamplesSinceStart_ = 0;
 #if SPACEDUST_CLICK_DEBUG
@@ -873,7 +879,23 @@ void SynthVoice::refreshUserWaveSelection() noexcept
     if (noiseUserSlot != nullptr) noisePhaseScale = noiseUserSlot->phaseIncrementScale;
 }
 
-void SynthVoice::updateUnison (UnisonState& state, int voices, float detune, float width) noexcept
+double SynthVoice::scatteredPhase (double base, float scatter) noexcept
+{
+    constexpr double twoPi = 2.0 * juce::MathConstants<double>::pi;
+
+    if (scatter <= 0.0f)
+        return base;
+
+    double a = base + (double) scatter * random.nextDouble() * twoPi;
+
+    while (a >= twoPi) a -= twoPi;
+    while (a < 0.0)    a += twoPi;
+
+    return a;
+}
+
+void SynthVoice::updateUnison (UnisonState& state, int voices, float detune, float width,
+                               float phase) noexcept
 {
     const int wanted = juce::jlimit (1, Unison::maxVoices, voices);
 
@@ -883,13 +905,15 @@ void SynthVoice::updateUnison (UnisonState& state, int voices, float detune, flo
     const int had = state.voices;
 
     state.voices = wanted;
-    state.compensation = Unison::layout (wanted, (double) detune, (double) width, state.copies);
+    state.phaseScatter = juce::jlimit (0.0f, 1.0f, phase);
+    state.compensation = Unison::layout (wanted, (double) detune, (double) width, state.copies,
+                                         (double) state.phaseScatter);
 
     // Only the copies that were not there before get a phase. Re-seeding all of
     // them would snap the running ones back together every time Voices moved,
     // which restarts the beating mid-note and is heard as a jump.
     for (int i = had; i < wanted; ++i)
-        state.angle[i] = state.angle[0];
+        state.angle[i] = scatteredPhase (state.angle[0], state.phaseScatter);
 }
 
 void SynthVoice::seedUnisonPhases (UnisonState& state, double startAngle) noexcept
@@ -900,19 +924,77 @@ void SynthVoice::seedUnisonPhases (UnisonState& state, double startAngle) noexce
     while (a >= twoPi) a -= twoPi;
     while (a < 0.0)    a += twoPi;
 
-    // Every copy starts where the plain oscillator would, and the detune is what
-    // pulls them apart from there.
+    // Copy 0 stays exactly where the plain oscillator would be, whatever Phase
+    // says. The played note stays anchored to its own phase, and Voices 1 is
+    // untouched by this knob rather than being a special case to remember.
+    state.angle[0] = a;
+
+    const int n = state.voices;
+
+    if (n <= 1)
+        return;
+
+    if (state.phaseScatter <= 0.0f)
+    {
+        // Phase at zero: every copy on top of copy 0. What the unison did before
+        // this knob existed, and what every preset already written gets.
+        for (int i = 1; i < n; ++i)
+            state.angle[i] = a;
+
+        return;
+    }
+
+    // What the copies OUGHT to sum to at the first instant.
     //
-    // This used to spread them evenly around the turn, to stop the note starting
-    // with all the copies stacked. That spread is exactly the arrangement that
-    // cancels: N copies evenly spaced around one cycle sum to zero, so Voices up
-    // with Detune down was SILENT, and it stayed more than 10 dB down until the
-    // detune had pulled them clear (measured, tools/unisonaudit). Starting them
-    // together cancels nothing at any setting, and it is the only arrangement
-    // that puts an identical set of phases on both sides of the pan, so the
-    // stereo balance holds as well.
-    for (int i = 0; i < state.voices; ++i)
-        state.angle[i] = a;
+    // N when they are stacked, sqrt(N) when they are scattered -- and the knob
+    // asks for somewhere between the two, so the target runs between the two with
+    // it. This is the same journey the compensation in Unison::layout makes, read
+    // the same way, which is what keeps the attack and the steady state agreeing
+    // at every setting rather than only at the ends.
+    const double target = std::pow ((double) n, 1.0 - 0.5 * (double) state.phaseScatter);
+
+    double best[Unison::maxVoices] {};
+    double bestError = -1.0;
+
+    for (int attempt = 0; attempt < phaseDrawAttempts; ++attempt)
+    {
+        double candidate[Unison::maxVoices] {};
+
+        // The resultant of the whole set, as phasors. Its length IS what the
+        // copies sum to while they are still together, so it can be checked
+        // before a sample is generated.
+        candidate[0] = a;
+        double re = std::cos (a);
+        double im = std::sin (a);
+
+        for (int i = 1; i < n; ++i)
+        {
+            candidate[i] = scatteredPhase (a, state.phaseScatter);
+            re += std::cos (candidate[i]);
+            im += std::sin (candidate[i]);
+        }
+
+        const double error = std::abs (std::sqrt (re * re + im * im) - target);
+
+        if (bestError < 0.0 || error < bestError)
+        {
+            bestError = error;
+
+            for (int i = 0; i < n; ++i)
+                best[i] = candidate[i];
+        }
+    }
+
+    // Note what this is NOT: an even spread around the turn. That is what stood
+    // here first, to stop the note starting with the copies stacked, and it is
+    // exactly the arrangement that cancels -- N copies evenly spaced around one
+    // cycle sum to zero, so Voices up with Detune down was SILENT and stayed more
+    // than 10 dB down until the detune had pulled them clear (measured,
+    // tools/unisonaudit). Every candidate above is drawn at random, so that
+    // arrangement is never reached for; picking between them only declines the
+    // unluckiest draws, it does not steer towards any fixed set.
+    for (int i = 0; i < n; ++i)
+        state.angle[i] = best[i];
 }
 
 float SynthVoice::renderUnison (UnisonState& state, int waveform, const UserWaveSlot* slot,

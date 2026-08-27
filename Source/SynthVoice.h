@@ -179,19 +179,19 @@ public:
     void setSubOscWaveShaping(const PhaseShaper::Amounts& a) noexcept { subOscShapingTarget = a; }
 
     /** Unison for one oscillator: how many copies, how far apart, how wide. */
-    void setOsc1Unison(int voices, float detune, float width) noexcept
+    void setOsc1Unison(int voices, float detune, float width, float phase) noexcept
     {
-        updateUnison(osc1Unison, voices, detune, width);
+        updateUnison(osc1Unison, voices, detune, width, phase);
     }
 
-    void setOsc2Unison(int voices, float detune, float width) noexcept
+    void setOsc2Unison(int voices, float detune, float width, float phase) noexcept
     {
-        updateUnison(osc2Unison, voices, detune, width);
+        updateUnison(osc2Unison, voices, detune, width, phase);
     }
 
-    void setSubOscUnison(int voices, float detune, float width) noexcept
+    void setSubOscUnison(int voices, float detune, float width, float phase) noexcept
     {
-        updateUnison(subUnison, voices, detune, width);
+        updateUnison(subUnison, voices, detune, width, phase);
     }
 
     /** Unison for the noise source.
@@ -207,9 +207,9 @@ public:
         worked out here and not left to Unison::layout: independent noise streams
         never line up, whatever the detune says, so they sum to sqrt(N) and the
         compensation is 1/sqrt(N) flat. */
-    void setNoiseUnison(int voices, float detune, float width) noexcept
+    void setNoiseUnison(int voices, float detune, float width, float phase) noexcept
     {
-        updateUnison(noiseUnison, voices, detune, width);
+        updateUnison(noiseUnison, voices, detune, width, phase);
         noiseIncoherentComp = 1.0f / std::sqrt ((float) juce::jmax (1, noiseUnison.voices));
     }
 
@@ -409,6 +409,12 @@ private:
         int voices = 1;
         float compensation = 1.0f;
 
+        /** How far apart the copies START in the cycle, 0..1. Kept with the
+            copies rather than passed in at note-on, because updateUnison has to
+            seed a copy that has only just appeared and note-on is not running
+            then. */
+        float phaseScatter = 0.0f;
+
         /** Whether this is doing anything at all. One copy at the note's own
             pitch, dead centre, is the plain oscillator -- and the render path
             takes its old route when this is false, so an untouched patch pays
@@ -462,7 +468,41 @@ private:
                           std::uint32_t& counter) noexcept;
 
     /** Set the copies up for this block, from the three parameters. */
-    void updateUnison (UnisonState& state, int voices, float detune, float width) noexcept;
+    void updateUnison (UnisonState& state, int voices, float detune, float width,
+                       float phase) noexcept;
+
+    /** `base` moved a random distance round the cycle, scaled by `scatter`.
+
+        Random rather than evenly spaced, and that is not a shortcut. Copies
+        spread EVENLY around one cycle sum to exactly zero -- the roots of unity
+        -- which is what made Voices up with Detune down silent once before
+        (measured at -157 dB, tools/unisonaudit). A random set has no such
+        arrangement to fall into. */
+    double scatteredPhase (double base, float scatter) noexcept;
+
+    /** How many sets of phases to draw before picking one.
+
+        A set of random phases has a RANDOM resultant. Seven of them land near
+        sqrt(7) on average, which is the level the compensation is built for, but
+        a single draw can land well either side: measured over eight notes, the
+        attack ranged from 6 dB below the steady state to 6 dB above it. The low
+        draws are harmless and the high ones are the very thing this knob exists
+        to remove, so roughly one note in eight still arrived with the burst on it
+        (tools/unisonaudit, 2026-08-27).
+
+        Drawing a few and keeping the closest costs a few dozen sines at note-on
+        and takes most of that spread out. It stays genuinely random -- no fixed
+        arrangement, and in particular never the evenly spaced one that sums to
+        zero -- it just declines to use the unluckiest draws.
+
+        Sixteen and not eight, which was the first guess. Eight left the hardest
+        case still moving: at Detune EXACTLY zero the copies share a frequency, so
+        whatever phases they are given they keep for the whole note and there is
+        no drift to wash a poor draw out. Five notes came back spread over 5 dB,
+        one of them 4.24 dB down. At sixteen the same five sit inside 0.8 dB. The
+        cost of the other eight draws is about a hundred sines, once, at note-on
+        (tools/unisonaudit, 2026-08-27). */
+    static constexpr int phaseDrawAttempts = 16;
 
     /** Read and advance every copy, and return the summed pair.
 
@@ -477,12 +517,19 @@ private:
                         const PhaseShaper::Amounts& shaping,
                         bool slotIsStereo, float& rightOut) noexcept;
 
-    /** Give every copy its own starting phase, spread around the turn.
+    /** Give every copy its starting phase.
 
-        Spread rather than randomised: a random phase per note makes the attack of
-        the same note different every time, which on a short percussive patch is
-        heard as an inconsistent transient. */
-    static void seedUnisonPhases (UnisonState& state, double startAngle) noexcept;
+        At Phase 0 they all start together, on the note's own phase. That is the
+        safe default and it is what every preset written before the knob existed
+        gets -- but it is also what makes the first instant of a note N times
+        louder than it settles, which is heard as a downward sweep on the attack.
+
+        Turning Phase up moves the copies away from that shared start, and the
+        cost is the one the old comment here warned about: a random phase per note
+        makes the attack of the same note slightly different every time. On a
+        short percussive patch that reads as an inconsistent transient, which is
+        why this is a knob and not a fixed behaviour. */
+    void seedUnisonPhases (UnisonState& state, double startAngle) noexcept;
 
     PhaseShaper::Amounts osc1ShapingTarget;
     PhaseShaper::Amounts osc2ShapingTarget;

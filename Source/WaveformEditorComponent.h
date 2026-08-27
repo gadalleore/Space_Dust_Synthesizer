@@ -87,7 +87,7 @@ public:
             makes SEVERAL of the oscillator, where Bend and Spectrum change the
             one. Kept in the same struct because they are borrowed and given back
             together, on the same gesture, for the same oscillator. */
-        static constexpr int numUnisonKnobs = 3;
+        static constexpr int numUnisonKnobs = 4;
 
         juce::Slider* unisonKnobs[numUnisonKnobs] = {};
         juce::Label* unisonLabels[numUnisonKnobs] = {};
@@ -435,6 +435,15 @@ private:
     static constexpr int shapingValueHeight = 16;
     static constexpr int shapingLabelHeight = 14;
     static constexpr int shapingStripPad = 6;
+
+    /** How far a strip label may spill either side of its own knob column.
+
+        Measured against the widest label there is: "Random Phase" is 79 px in the
+        panel's own Arial Bold 12, and a unison column is 66. Twelve a side takes
+        the label box to 90, which fits it with room to spare, and still leaves a
+        clear gap to the neighbouring label because both are centred and the
+        neighbours are short (measured, tools/unisonaudit). */
+    static constexpr int labelOverhang = 12;
 
     /** Room for the group box's own title above the knobs. */
     static constexpr int shapingTitleInset = 22;

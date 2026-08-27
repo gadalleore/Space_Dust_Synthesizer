@@ -301,6 +301,75 @@ int main()
         std::printf("  worst deviation from unity power: %.2e\n", worst);
     }
 
+    std::printf("\nPhase changes the compensation and nothing else:\n");
+    {
+        // Phase is how far apart the copies START in the cycle. Choosing those
+        // phases needs a random source and belongs to the voice, so nothing here
+        // does it -- but the LEVEL depends on it, so layout() has to be told.
+        //
+        // Stacked copies add: N of them are N times one, so the divisor is N.
+        // Scattered ones do not: they land near the square root of N, so the
+        // divisor is the square root. Detune reaches the same place, but only
+        // after the copies have had TIME to drift -- and at the instant a note
+        // starts they have not, which is the whole reason this knob exists.
+        double worstStacked = 0.0;
+        double worstScattered = 0.0;
+
+        for (int v = 2; v <= Unison::maxVoices; ++v)
+        {
+            // Detune at zero, so the only thing moving the compensation is Phase.
+            const double stacked = Unison::layout(v, 0.0, 0.0, copies, 0.0);
+            const double scattered = Unison::layout(v, 0.0, 0.0, copies, 1.0);
+
+            worstStacked = std::fmax(worstStacked, std::abs(stacked - 1.0 / (double) v));
+            worstScattered = std::fmax(worstScattered,
+                                       std::abs(scattered - 1.0 / std::sqrt((double) v)));
+        }
+
+        check(worstStacked < 1e-6, "phase 0 did not divide by the voice count");
+        check(worstScattered < 1e-6, "phase 1 did not divide by the square root");
+        std::printf("  phase 0 divides by N (worst %.2e), phase 1 by sqrt(N) (worst %.2e)\n",
+                    worstStacked, worstScattered);
+
+        // Between the two ends it has to MOVE, and always the same way. A knob
+        // that jumped at one end and did nothing over the rest of its travel
+        // would measure as correct at 0 and 1 and be useless in between.
+        bool rises = true;
+        double previous = -1.0;
+
+        for (int step = 0; step <= 10; ++step)
+        {
+            const double comp = Unison::layout(5, 0.0, 0.0, copies, step / 10.0);
+
+            if (comp < previous - 1e-9)
+                rises = false;
+
+            previous = comp;
+        }
+
+        check(rises, "the compensation does not rise all the way across Phase");
+
+        // And it must leave the copies themselves alone. Phase moves where they
+        // start, not how fast they run or where they sit -- if it touched either,
+        // turning it would detune or re-pan the patch.
+        Unison::Copy without[Unison::maxVoices];
+        Unison::Copy with[Unison::maxVoices];
+
+        Unison::layout(Unison::maxVoices, 0.5, 0.7, without, 0.0);
+        Unison::layout(Unison::maxVoices, 0.5, 0.7, with, 1.0);
+
+        bool same = true;
+
+        for (int i = 0; i < Unison::maxVoices; ++i)
+            if (without[i].ratio != with[i].ratio
+                || without[i].gainLeft != with[i].gainLeft
+                || without[i].gainRight != with[i].gainRight)
+                same = false;
+
+        check(same, "phase moved a copy's speed or its position");
+        std::printf("  rises across its travel, and moves no ratio or gain\n");
+    }
+
     std::printf("\nAsking for nonsense gives something sane:\n");
     {
         // A voice count out of range must clamp rather than read off the end of
@@ -316,6 +385,12 @@ int main()
         Unison::layout(3, -5.0, 12.0, copies);
         for (int i = 0; i < 3; ++i)
         {
+            // An out-of-range phase must clamp too, or the exponent runs past
+            // 1/2 and the compensation starts making the patch LOUDER.
+            const double wild = Unison::layout(3, 0.0, 0.0, copies, 9.0);
+            check(wild >= 1.0 / std::sqrt(3.0) - 1e-6 && wild <= 1.0 + 1e-6,
+                  "an out-of-range phase gave a bad compensation");
+
             check(std::isfinite(copies[i].ratio), "an out-of-range detune gave a bad ratio");
             // The ceiling is sqrt(2), not 1: a hard-panned copy carries the level
             // its silent side gives up, which is what keeps the pan equal power.

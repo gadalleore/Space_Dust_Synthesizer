@@ -720,7 +720,7 @@ private:
 
     /** Voices, Detune and Width per oscillator, lent to the Waveforms panel the
         same way the shaping knobs are. */
-    static constexpr int numUnisonKnobs = 3;
+    static constexpr int numUnisonKnobs = 4;
 
     juce::Slider osc1UnisonSliders[numUnisonKnobs];
     juce::Slider osc2UnisonSliders[numUnisonKnobs];

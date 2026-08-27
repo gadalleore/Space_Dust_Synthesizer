@@ -1175,6 +1175,13 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     const float noiseUnisonDetune = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "noiseUnisonDetune"));
     const float noiseUnisonWidth = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "noiseUnisonWidth"));
 
+    // How far apart the copies START in the cycle. Read here with the rest of the
+    // unison numbers because it is set with them, once per block, for every voice.
+    const float osc1UnisonPhase = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc1UnisonPhase"));
+    const float osc2UnisonPhase = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc2UnisonPhase"));
+    const float subOscUnisonPhase = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "subOscUnisonPhase"));
+    const float noiseUnisonPhase = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "noiseUnisonPhase"));
+
     // Update all voices with current parameter values
     for (int i = 0; i < synth.getNumVoices(); ++i)
     {
@@ -1185,11 +1192,13 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setOsc2Waveform(osc2Wave);
             voice->setOsc1WaveShaping(osc1Shaping);
             voice->setOsc2WaveShaping(osc2Shaping);
-            voice->setOsc1Unison(osc1UnisonVoices, osc1UnisonDetune, osc1UnisonWidth);
-            voice->setOsc2Unison(osc2UnisonVoices, osc2UnisonDetune, osc2UnisonWidth);
+            voice->setOsc1Unison(osc1UnisonVoices, osc1UnisonDetune, osc1UnisonWidth, osc1UnisonPhase);
+            voice->setOsc2Unison(osc2UnisonVoices, osc2UnisonDetune, osc2UnisonWidth, osc2UnisonPhase);
             voice->setSubOscWaveShaping(subOscShaping);
-            voice->setSubOscUnison(subOscUnisonVoices, subOscUnisonDetune, subOscUnisonWidth);
-            voice->setNoiseUnison(noiseUnisonVoices, noiseUnisonDetune, noiseUnisonWidth);
+            voice->setSubOscUnison(subOscUnisonVoices, subOscUnisonDetune, subOscUnisonWidth,
+                                   subOscUnisonPhase);
+            voice->setNoiseUnison(noiseUnisonVoices, noiseUnisonDetune, noiseUnisonWidth,
+                                  noiseUnisonPhase);
             voice->setOsc1CoarseTune(osc1CoarseTune);
             voice->setOsc1Detune(osc1Detune);
             voice->setOsc2CoarseTune(osc2CoarseTune);
@@ -5051,6 +5060,46 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
                     juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f,
                     juce::AudioParameterFloatAttributes().withStringFromValueFunction(twoDecimals)),
                 safeString(np.id));
+
+        //======================================================================
+        // -- Unison Random Phase, for all four sources --
+        //
+        // How far apart the copies START in the cycle.
+        //
+        // At zero every copy starts on the note's own phase, which is what the
+        // unison did before this and what every preset already written gets. It
+        // is also why a note begins louder than it settles: copies on the same
+        // phase are fully coherent for the first instant however far apart they
+        // are tuned, because Detune separates them over TIME and has had no time
+        // yet. The burst thinning out is heard as a downward sweep on the attack
+        // (Giuseppe, 2026-08-27).
+        //
+        // Turning it up scatters them, and Unison::layout is told, so the level
+        // holds -- see the coherence term there. The cost is that the attack of
+        // the same note differs slightly each time it is played, which on a short
+        // percussive patch reads as an inconsistent transient. That is the
+        // trade-off the knob exists to let anyone make.
+        //
+        // On built-in White and Pink it does nothing, for the same reason Detune
+        // does nothing there: they have no cycle to start in. An imported sample
+        // in the noise slot does, and this works on it.
+        //
+        // On the end of the list, like everything else added after the fact.
+        const SubParam phaseParams[] =
+        {
+            { "osc1UnisonPhase",   "Osc 1 Unison Random Phase" },
+            { "osc2UnisonPhase",   "Osc 2 Unison Random Phase" },
+            { "subOscUnisonPhase", "Sub Unison Random Phase" },
+            { "noiseUnisonPhase",  "Noize Unison Random Phase" },
+        };
+
+        for (const auto& pp : phaseParams)
+            addParameterWithLogging(params,
+                std::make_unique<juce::AudioParameterFloat>(
+                    juce::ParameterID{pp.id, 1}, pp.name,
+                    juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f,
+                    juce::AudioParameterFloatAttributes().withStringFromValueFunction(twoDecimals)),
+                safeString(pp.id));
     }
 
     //==============================================================================

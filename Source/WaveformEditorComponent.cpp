@@ -1994,7 +1994,7 @@ void WaveformEditorComponent::resized()
     detail.removeFromTop (groupTitleInset);
     detail.removeFromBottom (groupPadding);
 
-    // The shaping strip, across the foot of the whole panel and under BOTH boxes.
+    // The shaping strip, across the top of the whole panel and over BOTH boxes.
     // It is taken from the bottom before anything else, so the picture and the
     // slot controls above it lay out into whatever is left.
     //
@@ -2063,10 +2063,19 @@ void WaveformEditorComponent::resized()
             {
                 auto column = area.removeFromLeft (cell);
 
+                // The label is allowed to overhang its own column.
+                //
+                // A knob is 40 wide in a column of about 66, so there are a dozen
+                // spare pixels either side of it that no knob will ever use. The
+                // labels are centred and mostly short -- Voices, Detune, Width --
+                // so letting a long one spill into that gap costs nothing and is
+                // the difference between "Random Phase" reading and being cut off
+                // mid-word. The panel draws labels with drawText, which clips
+                // rather than shrinking to fit, so there is no second chance.
+                auto labelRow = column.removeFromTop (shapingLabelHeight);
+
                 if (labels[i] != nullptr)
-                    labels[i]->setBounds (column.removeFromTop (shapingLabelHeight));
-                else
-                    column.removeFromTop (shapingLabelHeight);
+                    labels[i]->setBounds (labelRow.expanded (labelOverhang, 0));
 
                 column.removeFromTop (2);
 

@@ -84,18 +84,25 @@ namespace Unison
     /**
         Work out every copy, and return the gain the sum should be scaled by.
 
-        `out` must have room for `voices` entries. `detune01` and `width01` are
-        both 0..1 and both do nothing at 0, so a patch that turns Voices up and
-        nothing else gets copies that are exactly on top of each other -- louder,
-        and nothing more, until Detune is turned.
+        `out` must have room for `voices` entries. `detune01`, `width01` and
+        `phase01` are all 0..1 and all do nothing at 0, so a patch that turns
+        Voices up and nothing else gets copies that are exactly on top of each
+        other -- louder, and nothing more, until one of the three is turned.
+
+        `phase01` is how far apart the copies START in the cycle. Nothing here
+        chooses those phases -- that needs a random source and belongs to the
+        voice, see SynthVoice::seedUnisonPhases -- but the LEVEL depends on it, so
+        this has to be told.
     */
-    inline float layout (int voices, double detune01, double width01, Copy* out) noexcept
+    inline float layout (int voices, double detune01, double width01, Copy* out,
+                         double phase01 = 0.0) noexcept
     {
         if (voices < 1) voices = 1;
         if (voices > maxVoices) voices = maxVoices;
 
         const double detune = detune01 < 0.0 ? 0.0 : (detune01 > 1.0 ? 1.0 : detune01);
         const double width = width01 < 0.0 ? 0.0 : (width01 > 1.0 ? 1.0 : width01);
+        const double phase = phase01 < 0.0 ? 0.0 : (phase01 > 1.0 ? 1.0 : phase01);
 
         for (int i = 0; i < voices; ++i)
         {
@@ -147,7 +154,24 @@ namespace Unison
         // of it (Giuseppe, 2026-08-26: "as I introduce unison the synth gets
         // quieter, which is the opposite of what I would expect").
         const double spreadCents = maxDetuneCents * detune;
-        const double coherence = std::exp (-spreadCents * 0.5);
+        const double detuneCoherence = std::exp (-spreadCents * 0.5);
+
+        // Phase scatter takes the coherence down on its own terms, and it has to.
+        //
+        // Detune separates the copies OVER TIME -- it cannot do anything at the
+        // instant a note starts, because at that instant they have not drifted
+        // yet. So copies seeded on the same phase are fully coherent for the first
+        // moment however far apart they are tuned, and the note begins N times
+        // louder than it settles: a burst that thins out, heard as a downward
+        // sweep on the attack (Giuseppe, 2026-08-27).
+        //
+        // Scattering where each copy starts is what removes that. But it also
+        // means the copies were never in phase -- so a compensation still
+        // dividing by N, as it does at zero detune, would be dividing a sum of
+        // sqrt(N) and the whole control would read as a volume drop. Both terms
+        // have to be here or the knob cannot be turned without reaching for the
+        // level knob afterwards.
+        const double coherence = detuneCoherence * (1.0 - phase);
         const double exponent = 0.5 + 0.5 * coherence;
 
         return (float) (1.0 / std::pow ((double) voices, exponent));

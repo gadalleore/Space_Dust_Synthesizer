@@ -15,6 +15,8 @@
 #include <cstdio>
 #include <cmath>
 #include "PluginProcessor.h"
+#include "SpaceDustLookAndFeel.h"
+#include "WaveformEditorComponent.h"
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter();
 
@@ -603,6 +605,239 @@ int main()
         setRaw("noiseUnisonWidth", 0.0f);
         setRaw("noiseLevel", 0.0f);
         setRaw("osc1Level", 0.8f);
+    }
+
+    // --- Unison Phase: the burst on the attack ---
+    //
+    // Detune separates the copies over TIME. At the instant a note starts it has
+    // had no time, so copies seeded on the same phase are fully coherent however
+    // far apart they are tuned: the note begins at N times one copy and falls to
+    // sqrt(N) as they drift. That fall is the downward sweep on the attack
+    // (Giuseppe, 2026-08-27).
+    //
+    // So the thing to measure is not a level, it is a RATIO: the first 30 ms
+    // against the steady state, in the same note. At Phase 0 it should be well
+    // above 0 dB. At Phase 1 it should be near it -- and the steady state itself
+    // must not have moved, or the knob is just a volume control.
+    std::printf("\n============= UNISON PHASE (whole processor) =============\n");
+    {
+        setChoice("osc1Waveform", 0);          // Sine: nothing but a fundamental
+        setRaw("osc1Level", 0.8f);
+        setRaw("osc2Level", 0.0f);
+        setRaw("noiseLevel", 0.0f);
+        setRaw("subOscOn", 0.0f);
+        setRaw("subOscLevel", 0.0f);
+        setRaw("osc1UnisonVoices", 7.0f);
+        setRaw("osc1UnisonWidth", 0.0f);
+        setRaw("filterCutoff", 20000.0f);
+        setRaw("filterResonance", 0.0f);
+        setRaw("velocityAmount", 0.0f);
+        // Flat and instant, so what is measured is the oscillators and not the
+        // shape of the envelope over them.
+        setRaw("envAttack", 0.0005f);
+        setRaw("envDecay", 0.0005f);
+        setRaw("envSustain", 1.0f);
+
+        struct Burst { double attack, steady; };
+
+        // seed varies the note pitch, which varies nothing about the arithmetic
+        // but does give the random phases a different draw to work with.
+        auto measureBurst = [&](float detune, float phase, int note) -> Burst
+        {
+            setRaw("osc1UnisonDetune", detune);
+            setRaw("osc1UnisonPhase", phase);
+
+            sp->setRateAndBufferSizeDetails(sampleRate, blockSize);
+            sp->prepareToPlay(sampleRate, blockSize);
+
+            juce::AudioBuffer<float> buf(2, blockSize);
+
+            // 30 ms is short enough that 15 cents of detune has barely begun to
+            // pull the copies apart -- they beat once every 520 ms at this pitch
+            // -- so it catches the coherent instant rather than averaging it away.
+            const long long attackSamples = (long long) (0.030 * sampleRate);
+            const long long steadyFrom    = (long long) (2.0 * sampleRate);
+            const long long steadyTo      = (long long) (12.0 * sampleRate);
+
+            double sumA = 0.0, sumS = 0.0;
+            long long nA = 0, nS = 0, n = 0;
+
+            const int numBlocks = (int) (steadyTo / blockSize) + 1;
+
+            for (int b = 0; b < numBlocks; ++b)
+            {
+                buf.clear();
+                juce::MidiBuffer midi;
+                if (b == 0) midi.addEvent(juce::MidiMessage::noteOn(1, note, (juce::uint8) 100), 0);
+
+                sp->processBlock(buf, midi);
+
+                auto* l = buf.getReadPointer(0);
+                for (int i = 0; i < blockSize; ++i, ++n)
+                {
+                    const double v = (double) l[i] * l[i];
+
+                    if (n < attackSamples)            { sumA += v; ++nA; }
+                    else if (n >= steadyFrom && n < steadyTo) { sumS += v; ++nS; }
+                }
+            }
+
+            return { std::sqrt(sumA / (nA > 0 ? nA : 1)),
+                     std::sqrt(sumS / (nS > 0 ? nS : 1)) };
+        };
+
+        std::printf("\n--- Sine, 7 voices, width 0 (one note each) ---\n");
+        std::printf("  detune phase : attack rms  steady rms   ATTACK vs STEADY\n");
+
+        for (float detune : { 0.10f, 0.30f, 0.60f })
+        {
+            for (float phase : { 0.00f, 0.25f, 0.50f, 1.00f })
+            {
+                Burst r = measureBurst(detune, phase, 57);
+                std::printf("   %.2f   %.2f  :  %.5f     %.5f      %+6.2f dB\n",
+                            detune, phase, r.attack, r.steady, db(r.attack, r.steady));
+            }
+        }
+
+        // Repeats, because one number is the wrong shape of answer here.
+        //
+        // At Phase 0 the burst is deterministic: every copy starts on the same
+        // phase, so every note begins the same way and one measurement says it
+        // all. At Phase 1 the copies are drawn at random, so the attack is a
+        // DISTRIBUTION -- around the steady state on average, but a particular
+        // note can land either side of it. That spread is not a fault to be
+        // measured away, it is what a random start phase IS, and the honest
+        // report of it is the range rather than a single figure.
+        std::printf("\n--- Same setting played eight times (detune 0.30) ---\n");
+
+        for (float phase : { 0.00f, 0.50f, 1.00f })
+        {
+            double lo = 1e9, hi = -1e9, sum = 0.0;
+
+            for (int k = 0; k < 8; ++k)
+            {
+                // A different note each time, so the draw has different work to
+                // do and consecutive runs cannot share a generator state.
+                Burst r = measureBurst(0.30f, phase, 50 + k);
+                const double ratio = db(r.attack, r.steady);
+                lo = juce::jmin(lo, ratio);
+                hi = juce::jmax(hi, ratio);
+                sum += ratio;
+            }
+
+            std::printf("  phase %.2f : attack vs steady  mean %+6.2f dB   range %+6.2f to %+6.2f dB\n",
+                        phase, sum / 8.0, lo, hi);
+        }
+
+        // The one that says whether this is a phase control or a volume control
+        // wearing its name. Scattering the copies decorrelates them, so a
+        // compensation that still divided by N -- as it does at zero detune --
+        // would take most of the level with it. The coherence term in
+        // Unison::layout is what stops that, and this is what checks it.
+        std::printf("\n--- Steady state across Phase (detune 0.30, re. phase 0) ---\n");
+        {
+            const double reference = measureBurst(0.30f, 0.00f, 57).steady;
+
+            for (float phase : { 0.00f, 0.25f, 0.50f, 0.75f, 1.00f })
+                std::printf("  phase %.2f : %+6.2f dB\n",
+                            phase, db(measureBurst(0.30f, phase, 57).steady, reference));
+        }
+
+        // Detune ZERO is the hard case, and the one the old even spread was
+        // silent at. The copies share a frequency, so whatever phases they are
+        // given they keep for the whole note -- there is no drift to wash a bad
+        // set out. It must not be quiet at any of these.
+        std::printf("\n--- Detune 0.00, phase 1.00, five notes (re. phase 0) ---\n");
+        for (int note : { 45, 50, 57, 62, 69 })
+        {
+            const double scattered = measureBurst(0.00f, 1.00f, note).steady;
+            const double stacked   = measureBurst(0.00f, 0.00f, note).steady;
+            std::printf("  note %d : steady %.5f   %+6.2f dB\n",
+                        note, scattered, db(scattered, stacked));
+        }
+
+        setRaw("osc1UnisonVoices", 1.0f);
+        setRaw("osc1UnisonDetune", 0.0f);
+        setRaw("osc1UnisonPhase", 0.0f);
+        setRaw("envAttack", 0.001f);
+        setRaw("envDecay", 0.001f);
+    }
+
+    // --- Do the strip labels actually fit? ---
+    //
+    // The Waveforms panel draws its labels with drawText, which CLIPS rather than
+    // shrinking to fit, and the look-and-feel forces its own Arial Bold 12 over
+    // whatever font the label was given -- so a label that is too wide is simply
+    // cut off mid-word with nothing to warn anyone. "Random Phase" is half again
+    // as long as any label that was there before it (Giuseppe, 2026-08-27).
+    //
+    // Measured here rather than eyeballed, because this runs with no screen: it
+    // asks the same font object the panel asks for the same strings.
+    std::printf("\n============= WAVEFORMS PANEL LABEL WIDTHS =============\n");
+    {
+        SpaceDustLookAndFeel lookAndFeel;
+        const juce::Font font = lookAndFeel.getBodyFont (12.0f, true);
+
+        // The same arithmetic WaveformEditorComponent::resized does, so the two
+        // cannot disagree about how much room there is.
+        const int margin = 10;
+        const int groupPadding = 10;
+        const int shapingKnobs = 5;
+        const int unisonKnobs = 4;
+        const int labelOverhang = 12;
+
+        const int stripWidth = WaveformEditorComponent::preferredWidth() - 2 * margin;
+        const int totalKnobs = shapingKnobs + unisonKnobs;
+        const int unisonBox = (stripWidth - groupPadding) * unisonKnobs / totalKnobs;
+        const int shapingBox = stripWidth - groupPadding - unisonBox;
+
+        const int unisonCell = (unisonBox - 2 * groupPadding) / unisonKnobs;
+        const int shapingCell = (shapingBox - 2 * groupPadding) / shapingKnobs;
+
+        std::printf("  strip %d px   shaping box %d (cell %d)   unison box %d (cell %d)\n",
+                    stripWidth, shapingBox, shapingCell, unisonBox, unisonCell);
+        std::printf("  a label may use its cell plus %d px either side.\n\n", labelOverhang);
+
+        struct LabelCheck { const char* text; int cell; };
+
+        const LabelCheck labels[] =
+        {
+            { "Bend +",       shapingCell },
+            { "Bend -",       shapingCell },
+            { "Bend +/-",     shapingCell },
+            { "Spectrum",     shapingCell },
+            { "Sync",         shapingCell },
+            { "Voices",       unisonCell },
+            { "Detune",       unisonCell },
+            { "Width",        unisonCell },
+            { "Random Phase", unisonCell },
+        };
+
+        int clipped = 0;
+
+        for (const auto& l : labels)
+        {
+            const int wide = juce::roundToInt (juce::GlyphArrangement::getStringWidth (font, l.text));
+            const int room = l.cell + 2 * labelOverhang;
+            const bool fits = wide <= room;
+
+            if (! fits)
+                ++clipped;
+
+            std::printf("  %-14s %3d px   room %3d px   %s\n",
+                        l.text, wide, room, fits ? "fits" : "CLIPPED");
+        }
+
+        // Neighbouring labels are both centred, so what matters between them is
+        // not whether the boxes overlap -- they do, by design -- but whether the
+        // GLYPHS do. Width is the label to the left of Random Phase.
+        const int widthText = juce::roundToInt (juce::GlyphArrangement::getStringWidth (font, "Width"));
+        const int phaseText = juce::roundToInt (juce::GlyphArrangement::getStringWidth (font, "Random Phase"));
+        const int gap = unisonCell - widthText / 2 - phaseText / 2;
+
+        std::printf("\n  gap between the \"Width\" and \"Random Phase\" glyphs: %d px\n", gap);
+        std::printf("  %s\n", (clipped == 0 && gap > 0) ? "every label fits and none collide"
+                                                        : "SOMETHING DOES NOT FIT");
     }
 
     std::printf("\n================================================================\n");

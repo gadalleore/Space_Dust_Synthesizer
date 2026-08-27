@@ -4320,22 +4320,23 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
 
         //======================================================================
         // -- Voices, Detune and Width --
-        const char* const unisonLabels[numUnisonKnobs] = { "Voices", "Detune", "Width" };
+        const char* const unisonLabels[numUnisonKnobs] = { "Voices", "Detune", "Width", "Random Phase" };
 
         const char* const osc1UnisonIds[numUnisonKnobs] =
-            { "osc1UnisonVoices", "osc1UnisonDetune", "osc1UnisonWidth" };
+            { "osc1UnisonVoices", "osc1UnisonDetune", "osc1UnisonWidth", "osc1UnisonPhase" };
         const char* const osc2UnisonIds[numUnisonKnobs] =
-            { "osc2UnisonVoices", "osc2UnisonDetune", "osc2UnisonWidth" };
+            { "osc2UnisonVoices", "osc2UnisonDetune", "osc2UnisonWidth", "osc2UnisonPhase" };
         const char* const subOscUnisonIds[numUnisonKnobs] =
-            { "subOscUnisonVoices", "subOscUnisonDetune", "subOscUnisonWidth" };
+            { "subOscUnisonVoices", "subOscUnisonDetune", "subOscUnisonWidth", "subOscUnisonPhase" };
         const char* const noiseUnisonIds[numUnisonKnobs] =
-            { "noiseUnisonVoices", "noiseUnisonDetune", "noiseUnisonWidth" };
+            { "noiseUnisonVoices", "noiseUnisonDetune", "noiseUnisonWidth", "noiseUnisonPhase" };
 
         const char* const unisonTips[numUnisonKnobs] =
         {
             "How many copies of this oscillator play at once. One is the plain oscillator.",
             "How far apart the copies are tuned. At zero they sit on top of each other.",
-            "How far the copies are spread across the stereo field. At zero they are all centred."
+            "How far the copies are spread across the stereo field. At zero they are all centred.",
+            "How far apart the copies START in the cycle. At zero they all start together, which makes the first instant of a note louder than the rest of it."
         };
 
         // The noise source gets its OWN three tips. Detune is the reason: on
@@ -4345,7 +4346,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         {
             "How many independent noise streams play at once. Turn Width up to hear them.",
             "Only for an imported sample, which has a pitch. White and Pink have none, so this does nothing to them.",
-            "How far the streams are spread across the stereo field. This is what makes the noise wide."
+            "How far the streams are spread across the stereo field. This is what makes the noise wide.",
+            "Only for an imported sample, which has a cycle to start in. White and Pink have no phase, so this does nothing to them."
         };
 
         // A table rather than a fourth arm on four ternary chains. Four sources
