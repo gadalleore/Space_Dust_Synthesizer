@@ -270,6 +270,14 @@ public:
     // These scale the raw per-note MPE values before they modulate the voice.
     void setMpePressureDepth(float depth01) { mpePressureDepth = juce::jlimit(0.0f, 1.0f, depth01); }
     void setMpeTimbreDepth(float depth01)   { mpeTimbreDepth   = juce::jlimit(0.0f, 1.0f, depth01); }
+    /** How far a note's MIDI velocity sets its level and opens its filter, 0..1.
+
+        Full velocity is the anchor: at 127 a note is unchanged whatever this is,
+        and raising it only takes softer notes down and darker. So turning this up
+        never makes a patch quieter than it was -- it gives the quiet end of the
+        keyboard somewhere to go. */
+    void setVelocityAmount(float amount01) { velocityAmount = juce::jlimit(0.0f, 1.0f, amount01); }
+
     void setSynthesiser(SpaceDustSynthesiser* s) { synthesiser = s; }
     void setProcessor(SpaceDustAudioProcessor* p) { processor = p; }
     
@@ -813,6 +821,35 @@ private:
     // Set from the UI via setMpePressureDepth / setMpeTimbreDepth.
     float  mpePressureDepth = 1.0f;
     float  mpeTimbreDepth   = 1.0f;
+
+    // -- Velocity --
+    // How hard THIS note was struck, held for as long as it sounds, and how much
+    // of that the patch asked to hear. Both are needed every sample: the level
+    // scales the mix and the same number opens the filter.
+    float  noteVelocity01  = 1.0f;
+    float  velocityAmount  = 0.0f;
+    float  velocityGain    = 1.0f;   // worked out once per note, not per sample
+    float  velocityLogOffset = 0.0f; // ditto, in log-frequency like the other offsets
+    float  velocityResonanceScale = 1.0f;  // multiplies the knob, never replaces it
+
+    /** How much of the resonance knob a soft note gives up, at full amount.
+
+        A quarter, which is deliberately small next to the four octaves of cutoff.
+        Resonance is the one filter control with a cliff in it -- the top of the
+        knob self-oscillates -- so a large velocity swing here would have notes
+        crossing into and out of self-oscillation by how hard they were played.
+        A quarter is enough to hear a soft note as calmer without moving which
+        side of that edge the patch sits on. */
+    static constexpr float velocityResonanceDepth = 0.25f;
+
+    /** How far down velocity may take the filter, in octaves, at full amount.
+
+        Four, not two. Two moved the level but the tone barely followed, so a soft
+        note read as the same sound turned down rather than as a softer sound
+        (Giuseppe, 2026-08-26: "the effect on the velocity should be more
+        dramatic"). Four octaves is the distance between a bright note and a
+        genuinely dull one. */
+    static constexpr float velocityFilterOctaves = 4.0f;
     
     //==============================================================================
     // -- Helper Methods --

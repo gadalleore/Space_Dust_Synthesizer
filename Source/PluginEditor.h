@@ -866,6 +866,10 @@ private:
     // Pitch bend and master pitch (in Master section)
     juce::Slider pitchBendAmountSlider;
     juce::Label pitchBendAmountLabel;
+    // Sits beside Bend Range: how much a note's velocity sets its level and
+    // opens its filter.
+    juce::Slider velocityAmountSlider;
+    juce::Label velocityAmountLabel;
     juce::Slider pitchBendSlider;
     juce::Label pitchBendLabel;
     juce::ToggleButton legatoGlideButton;   // New: Legato Glide / Fingered Glide toggle
@@ -1266,6 +1270,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> glideTimeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> masterVolumeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pitchBendAmountAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> velocityAmountAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pitchBendAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> legatoGlideAttachment;
     

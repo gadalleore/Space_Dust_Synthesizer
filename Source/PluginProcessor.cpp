@@ -1228,6 +1228,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             // MPE expression depth (0-100% â†’ 0.0-1.0)
             voice->setMpePressureDepth(safeGetParam(apvts, "mpePressureDepth") / 100.0f);
             voice->setMpeTimbreDepth(safeGetParam(apvts, "mpeTimbreDepth") / 100.0f);
+            voice->setVelocityAmount(safeGetParam(apvts, "velocityAmount") / 100.0f);
         }
     }
 }
@@ -4924,6 +4925,26 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"mpeTimbreDepth", 1}, "MPE Timbre Depth",
             juce::NormalisableRange<float>(0.0f, 100.0f, 1.0f), 100.0f),
         "mpeTimbreDepth");
+
+    // Velocity Amount (0-100%). How much a note's MIDI velocity sets its level
+    // and how far open its filter starts. Velocity was read at note-on and then
+    // thrown away before this: every note came out the same however hard it was
+    // played.
+    //
+    // FULL velocity is the anchor, not the middle: at 127 a note sounds exactly
+    // as it does with this at zero, whatever the knob says, and turning the knob
+    // up only takes SOFTER notes down and darker. Anchoring in the middle would
+    // have every saved preset change level the moment this appeared.
+    //
+    // LAST in this list on purpose. A VST3 host automates by parameter INDEX, so
+    // a new parameter inserted anywhere but the end renumbers every one after it
+    // and moves the automation in every project that already used them. New
+    // parameters go here, at the bottom.
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"velocityAmount", 1}, "Velocity Amount",
+            juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 100.0f),
+        "velocityAmount");
 
     //==============================================================================
     // -- DEBUG: createParameterLayout End --

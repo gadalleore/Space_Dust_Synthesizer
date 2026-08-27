@@ -1572,14 +1572,18 @@ juce::String WaveformEditorComponent::timeLabel (const UserWaveSlot& entry, doub
 //==============================================================================
 juce::Rectangle<int> WaveformEditorComponent::listBounds() const
 {
-    // The shaping strip lives between the boxes and the status line, so both
-    // boxes give up its height. Asked here, in the one place their height is
-    // worked out, so the list, the detail panel, the picture and the rows all
+    // The shaping strip sits ACROSS THE TOP, above the boxes, so both boxes give
+    // up its height and start below it. Asked here, in the one place their height
+    // is worked out, so the list, the detail panel, the picture and the rows all
     // follow from it.
+    //
+    // Above rather than below because these knobs act on the oscillator as a
+    // whole. Reading down the panel then goes: what the oscillator does to every
+    // waveform, then which waveform, then the one on screen.
     const int strip = shapingControls != nullptr ? shapingStripHeight : 0;
 
-    return { margin, margin, listWidth,
-             getHeight() - margin - statusHeight - 2 * margin - strip };
+    return { margin, 2 * margin + strip, listWidth,
+             getHeight() - 3 * margin - statusHeight - strip };
 }
 
 juce::Rectangle<int> WaveformEditorComponent::detailBounds() const
@@ -1959,8 +1963,8 @@ void WaveformEditorComponent::resized()
     {
         // listBounds() has already given up this height, so the strip goes in the
         // gap that leaves rather than being taken out of the detail box again.
-        auto strip = getLocalBounds().withTrimmedBottom (statusHeight + margin)
-                                     .removeFromBottom (shapingStripHeight)
+        auto strip = getLocalBounds().withTrimmedTop (margin)
+                                     .removeFromTop (shapingStripHeight)
                                      .reduced (margin, 0);
 
         // Split by knob count, so a knob is the same size in both boxes. Five and

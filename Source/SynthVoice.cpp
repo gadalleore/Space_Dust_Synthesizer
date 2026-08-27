@@ -143,6 +143,33 @@ void SynthVoice::noteStarted()
     // this note already reflects the controller's actual pressure / timbre /
     // bend values (not the zeroed defaults).  These members are also written
     // to from the MPE callbacks below as the controller moves.
+    // Velocity, worked out once here rather than per sample. Full velocity is the
+    // anchor: at 1.0 both of these come out neutral whatever the amount knob says,
+    // so raising the knob never makes a patch quieter than it was -- it only gives
+    // the soft end of the keyboard somewhere to go.
+    noteVelocity01 = juce::jlimit (0.0f, 1.0f, velocity);
+    {
+        // Squared, not straight. Level in a straight line off velocity is a weak
+        // effect: half velocity gives half amplitude, which is only 6 dB, and a
+        // keyboard played gently still comes out close to full. Squaring makes
+        // half velocity a quarter of the amplitude -- 12 dB -- which is the range
+        // a player actually feels under their fingers.
+        const float curved = noteVelocity01 * noteVelocity01;
+        velocityGain = (1.0f - velocityAmount) + velocityAmount * curved;
+
+        // The filter follows the same curve, so tone and level move together
+        // rather than the sound going quiet while staying bright.
+        const float shortfall = 1.0f - curved;                  // 0 at full velocity
+        velocityLogOffset = -velocityAmount * shortfall
+                          * velocityFilterOctaves * 0.6931471805599453f;  // ln 2 per octave
+
+        // Resonance comes off the same curve, but only a quarter as far, and as a
+        // SCALE on the knob rather than a subtraction from it. A patch with the
+        // resonance knob down stays down at every velocity instead of the offset
+        // being clamped away at zero, and a patch with it up keeps its character.
+        velocityResonanceScale = 1.0f - velocityAmount * shortfall * velocityResonanceDepth;
+    }
+
     mpeBendSemitones = note.totalPitchbendInSemitones;
     mpePressure01    = note.pressure.asUnsignedFloat();
     mpeTimbre01      = note.timbre.asUnsignedFloat();
@@ -1147,9 +1174,15 @@ void SynthVoice::updateFilter()
 
     // Resonance is passed normalized (0.0-1.0); NonlinearSVF owns the Q curve and
     // the self-oscillation region at the top of the knob.
+    //
+    // velocityResonanceScale is 1.0 unless the patch asked for velocity, and it is
+    // per VOICE: the knob is shared by every note, how hard THIS note was played
+    // is not. Only the master filter takes it. The two Mod filters are effects on
+    // the whole voice rather than the note's own character, and moving them per
+    // note would make the same patch sound like two different ones in a chord.
     filter.setMode(juce::jlimit(0, NonlinearSVF::numModes - 1, filterMode));
     filter.setCutoffFrequency(clampedCutoff);
-    filter.setResonanceNormalized(filterResonance);
+    filter.setResonanceNormalized(juce::jlimit(0.0f, 1.0f, filterResonance * velocityResonanceScale));
 }
 
 void SynthVoice::updateNoiseEqFilters()
@@ -1989,7 +2022,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         }
 
         const float masterKeyTrackOffset = filterKeyTrack ? keyTrackLogOffset : 0.0f;
-        float modulatedCutoff = std::exp(juce::jlimit(logMin, logMax, logModulated + timbreLogOffset + masterKeyTrackOffset)) * lfoFactor;
+        // velocityLogOffset joins the other log-space offsets: it is zero at full
+        // velocity and closes the filter for softer notes.
+        float modulatedCutoff = std::exp(juce::jlimit(logMin, logMax, logModulated + timbreLogOffset + masterKeyTrackOffset + velocityLogOffset)) * lfoFactor;
         modulatedCutoff = juce::jlimit(20.0f, 20000.0f, modulatedCutoff);
 
         // Apply normal cutoff smoothing, but use a much slower slew (extra damping)
@@ -2074,8 +2109,13 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         }
 
         // Apply envelope to stereo mix
-        float leftEnv = leftMix * envelope;
-        float rightEnv = rightMix * envelope;
+        // Velocity scales the note alongside the envelope. One multiply, and it is
+        // 1.0 unless the patch asked for velocity, so nothing changes for a patch
+        // that did not.
+        const float envAndVelocity = envelope * velocityGain;
+
+        float leftEnv = leftMix * envAndVelocity;
+        float rightEnv = rightMix * envAndVelocity;
 
         // Step 7: Process through filter (per-sample so the self-oscillating SVF
         // tracks cutoff/key per sample and follows the amplitude envelope).

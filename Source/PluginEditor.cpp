@@ -4721,6 +4721,23 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     pitchBendAmountLabel.setJustificationType(juce::Justification::centred);
     pitchBendAmountLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     pitchBendAmountLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+
+    velocityAmountSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    velocityAmountSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 50, 18);
+    velocityAmountSlider.setTextValueSuffix(" %");
+    velocityAmountAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "velocityAmount", velocityAmountSlider);
+    velocityAmountLabel.setText(safeString("Velocity"), juce::dontSendNotification);
+    velocityAmountLabel.setJustificationType(juce::Justification::centred);
+    velocityAmountLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    velocityAmountLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+
+    const juce::String velocityTip = safeString(
+        "How much how hard you play sets the note. At 0 every note is the same, "
+        "whatever the keyboard sends. Turn it up and softer notes come out quieter "
+        "and darker; a note at full velocity sounds the same at any setting.");
+    velocityAmountSlider.setTooltip(velocityTip);
+    velocityAmountLabel.setTooltip(velocityTip);
     
     // Pitch bend vertical fader (bipolar -1 to 1)
     pitchBendSlider.setSliderStyle(juce::Slider::LinearVertical);
@@ -6298,6 +6315,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     addAndMakeVisible(masterVolumeLabel);
     addAndMakeVisible(pitchBendAmountSlider);
     addAndMakeVisible(pitchBendAmountLabel);
+    addAndMakeVisible(velocityAmountSlider);
+    addAndMakeVisible(velocityAmountLabel);
     addAndMakeVisible(pitchBendSlider);
     addAndMakeVisible(pitchBendLabel);
     addAndMakeVisible(voiceModeCombo);
@@ -8417,11 +8436,36 @@ void SpaceDustAudioProcessorEditor::layoutPlate()
     }
     masterCurrentY += meterBarHeight + sectionGap;
 
-    // Bend Range (label + rotary + value)
-    pitchBendAmountLabel.setBounds(pitchCentreX - 40, masterCurrentY, 80, labelHeight);
-    pitchBendAmountSlider.setBounds(pitchCentreX - knobDiameter / 2, masterCurrentY + labelHeight + labelGap, knobDiameter, knobDiameter);
-    pitchBendAmountSlider.setVisible(true);
-    pitchBendAmountLabel.setVisible(true);
+    // Bend Range and Velocity, two to a row rather than a new line for Velocity.
+    //
+    // Everything else in Master is one control per line, but the box is height
+    // matched to the Filter box beside it, and a sixth line would push Glide and
+    // the Legato toggle past its bottom. Two 56 px knobs fit across 220 px with
+    // room to spare, so the row splits instead.
+    {
+        // The pair is centred as a GROUP, with the same 10 px gap the Amp Envelope
+        // leaves between Amount and Time, rather than each knob centred in its own
+        // half of the box. Halving the box put these 94 px apart against that
+        // row's 66, so the two did not read as the same kind of row.
+        const int pairGap    = 10;                    // == pitchEnvGap on the Main page
+        const int pairWidth  = 2 * knobDiameter + pairGap;
+        const int pairLeft   = masterContent.getCentreX() - pairWidth / 2;
+        const int bendCentre = pairLeft + knobDiameter / 2;
+        const int velCentre  = pairLeft + knobDiameter + pairGap + knobDiameter / 2;
+        const int labelW     = knobDiameter + pairGap;
+        const int knobY      = masterCurrentY + labelHeight + labelGap;
+
+        pitchBendAmountLabel.setBounds (bendCentre - labelW / 2, masterCurrentY, labelW, labelHeight);
+        pitchBendAmountSlider.setBounds (bendCentre - knobDiameter / 2, knobY, knobDiameter, knobDiameter);
+
+        velocityAmountLabel.setBounds (velCentre - labelW / 2, masterCurrentY, labelW, labelHeight);
+        velocityAmountSlider.setBounds (velCentre - knobDiameter / 2, knobY, knobDiameter, knobDiameter);
+
+        pitchBendAmountSlider.setVisible(true);
+        pitchBendAmountLabel.setVisible(true);
+        velocityAmountSlider.setVisible(true);
+        velocityAmountLabel.setVisible(true);
+    }
     masterCurrentY += knobGroupH + sectionGap;
 
     // Pitch Bend (label + vertical fader)
