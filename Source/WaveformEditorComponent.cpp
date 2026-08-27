@@ -154,7 +154,13 @@ int WaveformEditorComponent::preferredWidth()
 
 int WaveformEditorComponent::preferredHeight (int userBase, bool withShaping)
 {
+    // dropGhostHeight is in here because the drop box is PINNED across the foot of
+    // the list and the rows scroll in what is left above it -- see rowsViewArea.
+    // Without it the panel was sized to show every row and then gave two rows'
+    // worth of that space to the drop box, so the last two rows of a full list sat
+    // below the view with nothing to scroll them into it.
     const int wanted = margin + groupTitleInset + maxRowsFor (userBase) * rowHeight
+                     + dropGhostHeight
                      + groupPadding + margin + statusHeight + margin
                      + (withShaping ? shapingStripHeight : 0);
 
@@ -375,6 +381,13 @@ void WaveformEditorComponent::setListScroll (int newScroll)
 
     listScroll = clamped;
     repaint();
+}
+
+void WaveformEditorComponent::clampListScroll()
+{
+    // setListScroll does the clamping and repaints only if the number moved, so
+    // handing it what is already there is either a no-op or exactly the fix.
+    setListScroll (listScroll);
 }
 
 void WaveformEditorComponent::scrollRowIntoView (int row)
@@ -611,6 +624,14 @@ void WaveformEditorComponent::setTarget (juce::ComboBox* combo, int base, BuiltI
                                          UserWave::Group groupToShow,
                                          const ShapingControls* shaping)
 {
+    // Back to the top before anything else. The panel is re-pointed rather than
+    // rebuilt, so without this the new list inherits the last one's scroll -- and
+    // on a list too short to scroll there is no way to undo it. selectSlot puts
+    // the selected row back in view afterwards, which is the only scrolling an
+    // opening panel should do.
+    if (combo != targetCombo || base != userBase || groupToShow != group)
+        listScroll = 0;
+
     targetCombo = combo;
     userBase = base;
     builtInKind = kind;
@@ -632,6 +653,15 @@ void WaveformEditorComponent::setTarget (juce::ComboBox* combo, int base, BuiltI
     // A list with more built-ins needs more room for them. The window follows
     // this; see WaveformEditorWindow::showFor.
     setSize (preferredWidth(), preferredHeight (userBase, shapingControls != nullptr));
+
+    // Explicitly, and NOT left to setSize above. setSize only calls resized() when
+    // the size actually changed, and two sources can want the same size while
+    // wanting a different layout -- an oscillator and the Transient are both
+    // capped at maxPanelHeight, but one has the shaping strip and the other has
+    // no strip at all. Relying on the size to change left the Transient showing
+    // the oscillator's empty Wave Shaping and Unison boxes with the list drawn
+    // through them.
+    resized();
 
     refresh();
 }
@@ -821,6 +851,10 @@ void WaveformEditorComponent::refresh()
     // moved, shown, hidden and redrawn here rather than only when the window is
     // resized -- selecting a different row is what changes it, not the size.
     positionSampleStrip();
+
+    // A slot filled or cleared has just added or removed a row, so how far the
+    // list CAN scroll has changed even though the scroll itself has not.
+    clampListScroll();
 
     repaint();
 }
@@ -2052,6 +2086,9 @@ void WaveformEditorComponent::resized()
         layOutKnobs (unisonArea, shapingControls->unisonKnobs, shapingControls->unisonLabels,
                      ShapingControls::numUnisonKnobs);
     }
+
+    // The view height has just changed, so what was a legal scroll may not be.
+    clampListScroll();
 
     // Two rows of controls. One row could not hold the name box at a width worth
     // typing into once the four buttons had taken what they need.

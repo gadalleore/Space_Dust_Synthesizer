@@ -346,6 +346,26 @@ private:
     /** Set the scroll, clamped, and repaint if it moved. */
     void setListScroll (int newScroll);
 
+    /** Pull the scroll back inside what the list can actually scroll.
+
+        This panel is ONE component that all five Edit buttons re-point, and
+        listScroll is its member. Every route that changes how much there is to
+        scroll has to come through here afterwards, or a scroll set for one list
+        outlives it into the next:
+
+          * a different source, with a different number of built-in rows and a
+            different height,
+          * a slot filled or cleared, which adds or removes a row,
+          * a resize, which changes how much of the list can be seen.
+
+        The stuck scroll cannot free itself, which is what made this worth its own
+        function rather than a line in one place. mouseWheelMove gives up early
+        when there is nothing to scroll, so a short list holding a tall list's
+        scroll offset can never be scrolled back -- its rows are simply above the
+        top of the box with no way to reach them (Giuseppe, 2026-08-26: the
+        Transient list, which is the shortest and so the one where it bites). */
+    void clampListScroll();
+
     /** Bring a row into view. Called when the selection moves by any route other
         than a click -- opening the panel on a slot, or stepping off one that was
         cleared -- because a selected row nobody can see reads as no selection. */
