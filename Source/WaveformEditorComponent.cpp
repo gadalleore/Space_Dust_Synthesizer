@@ -409,7 +409,7 @@ WaveformEditorComponent::WaveformEditorComponent (UserWaveLibrary& libraryToUse,
     addAndMakeVisible (listGroup);
     addAndMakeVisible (detailGroup);
 
-    // Added hidden. Only the two oscillators have shaping, and the box must not
+    // Added hidden. The noise source and the Transient have no shaping, and the box must not
     // be drawn around nothing on the lists that have none.
     // No setLookAndFeel here, on purpose: listGroup and detailGroup inherit theirs
     // from this component, and a look-and-feel set explicitly on a child is one

@@ -707,12 +707,16 @@ private:
 
     juce::Slider osc1ShapingSliders[numShapingKnobs];
     juce::Slider osc2ShapingSliders[numShapingKnobs];
+    juce::Slider subOscShapingSliders[numShapingKnobs];
     juce::Label osc1ShapingLabels[numShapingKnobs];
     juce::Label osc2ShapingLabels[numShapingKnobs];
+    juce::Label subOscShapingLabels[numShapingKnobs];
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
         osc1ShapingAttachments[numShapingKnobs];
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
         osc2ShapingAttachments[numShapingKnobs];
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
+        subOscShapingAttachments[numShapingKnobs];
 
     /** Voices, Detune and Width per oscillator, lent to the Waveforms panel the
         same way the shaping knobs are. */
@@ -720,15 +724,23 @@ private:
 
     juce::Slider osc1UnisonSliders[numUnisonKnobs];
     juce::Slider osc2UnisonSliders[numUnisonKnobs];
+    juce::Slider subOscUnisonSliders[numUnisonKnobs];
     juce::Label osc1UnisonLabels[numUnisonKnobs];
     juce::Label osc2UnisonLabels[numUnisonKnobs];
+    juce::Label subOscUnisonLabels[numUnisonKnobs];
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
         osc1UnisonAttachments[numUnisonKnobs];
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
         osc2UnisonAttachments[numUnisonKnobs];
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
+        subOscUnisonAttachments[numUnisonKnobs];
 
     WaveformEditorComponent::ShapingControls osc1ShapingControls;
     WaveformEditorComponent::ShapingControls osc2ShapingControls;
+
+    /** The sub oscillator's own eight, so its Waveforms panel is the same panel
+        the oscillators get rather than a shorter one. */
+    WaveformEditorComponent::ShapingControls subOscShapingControls;
 
     juce::Slider osc1DetuneSlider;
     juce::Slider osc2CoarseTuneSlider;

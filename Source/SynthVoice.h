@@ -169,6 +169,15 @@ public:
     void setOsc1WaveShaping(const PhaseShaper::Amounts& a) noexcept { osc1ShapingTarget = a; }
     void setOsc2WaveShaping(const PhaseShaper::Amounts& a) noexcept { osc2ShapingTarget = a; }
 
+    /** The same five, for the sub oscillator.
+
+        It had none of these, on the argument that a sub is meant to be felt
+        rather than heard and that bending it puts harmonics where they are least
+        wanted. That is a good DEFAULT, not a good rule -- and it already is the
+        default, because all five sit at zero until they are turned up. The sub
+        reads a real cycle like the other two, so the same knobs act on it. */
+    void setSubOscWaveShaping(const PhaseShaper::Amounts& a) noexcept { subOscShapingTarget = a; }
+
     /** Unison for one oscillator: how many copies, how far apart, how wide. */
     void setOsc1Unison(int voices, float detune, float width) noexcept
     {
@@ -178,6 +187,11 @@ public:
     void setOsc2Unison(int voices, float detune, float width) noexcept
     {
         updateUnison(osc2Unison, voices, detune, width);
+    }
+
+    void setSubOscUnison(int voices, float detune, float width) noexcept
+    {
+        updateUnison(subUnison, voices, detune, width);
     }
 
     /** Hand over the imported waveforms for this block.
@@ -386,6 +400,14 @@ private:
     UnisonState osc1Unison;
     UnisonState osc2Unison;
 
+    /** The sub's copies, laid out by the same Unison::layout as the others.
+
+        Width is the one control here that changes what the sub USED to be: it
+        was summed to both sides at the same gain and could not be anywhere but
+        the middle. At one voice this is never touched and the sub is still that
+        single centred signal, so no existing patch moves. */
+    UnisonState subUnison;
+
     /** Set the copies up for this block, from the three parameters. */
     void updateUnison (UnisonState& state, int voices, float detune, float width) noexcept;
 
@@ -411,8 +433,10 @@ private:
 
     PhaseShaper::Amounts osc1ShapingTarget;
     PhaseShaper::Amounts osc2ShapingTarget;
+    PhaseShaper::Amounts subOscShapingTarget;
     PhaseShaper::Amounts osc1Shaping;
     PhaseShaper::Amounts osc2Shaping;
+    PhaseShaper::Amounts subOscShaping;
 
     /** How much of the remaining distance the smoothed values close each sample.
         Set from the sample rate in prepareToPlay for a fixed time in
@@ -438,6 +462,7 @@ private:
     {
         osc1Shaping = osc1ShapingTarget;
         osc2Shaping = osc2ShapingTarget;
+        subOscShaping = subOscShapingTarget;
     }
     
     // -- Oscillator Pitch Tuning --
@@ -871,16 +896,17 @@ private:
         that can play one passes its own; a built-in shape has no use for it and
         passes nothing.
     */
-    /** The shaping arguments default to doing nothing, so the sub oscillator and
-        the noise source -- which have no Bend, Intensity or Sync of their own --
-        call this exactly as they always did. */
+    /** The shaping arguments default to doing nothing, so the noise source --
+        which has no Bend, Spectrum or Sync of its own -- calls this exactly as it
+        always did. */
     /** Returns the LEFT channel, and writes the right through rightOut when one is
         asked for.
 
-        Null rightOut means the caller wants one signal, which is what the sub
-        oscillator and the noise source want -- and what an oscillator on a
-        built-in shape or a mono slot gets anyway, since both sides are then the
-        same number. Only a stereo import makes the two differ. */
+        Null rightOut means the caller wants one signal, which is what the noise
+        source wants, and what the sub wants when its unison is not running -- and
+        what an oscillator on a built-in shape or a mono slot gets anyway, since
+        both sides are then the same number. Only a stereo import makes the two
+        differ. */
     float generateWaveform(double angle, int waveform, const UserWaveSlot* userSlot,
                            double freqHz, OneShotState* oneShot = nullptr,
                            const PhaseShaper::Amounts& shaping = {},

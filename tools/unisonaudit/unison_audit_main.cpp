@@ -262,6 +262,219 @@ int main()
         setRaw("filterCutoff", 20000.0f);
     }
 
+    // --- The sub oscillator's own shaping and unison ---
+    //
+    // The sub had neither until now, so there is no "did it change" to measure
+    // against a previous build -- what is measured here is that each control
+    // reaches the sub's DSP and does the thing it says, and that the two faults
+    // already found in the oscillators' unison are not repeated on it:
+    //
+    //   * Voices up with Detune at zero must NOT be quiet. Copies spread evenly
+    //     around one cycle sum to zero; that was silence at -157 dB before, and
+    //     a level near the one-voice level here is what proves the sub seeds its
+    //     copies stacked instead.
+    //   * Width must move the copies apart and NOT off to one side. The side
+    //     signal (L-R)/2 is zero for anything centred, so it rises with Width
+    //     from nothing; the L-R imbalance stays near zero throughout, because
+    //     spreading is not the same as leaning.
+    std::printf("\n================ SUB OSCILLATOR (whole processor) ================\n");
+    {
+        setRaw("osc1Level", 0.0f);
+        setRaw("osc2Level", 0.0f);
+        setRaw("noiseLevel", 0.0f);
+        setRaw("subOscOn", 1.0f);
+        setRaw("subOscLevel", 1.0f);
+        setRaw("subOscCoarse", 0.0f);
+        setRaw("filterCutoff", 20000.0f);
+        setRaw("filterResonance", 0.0f);
+        setRaw("velocityAmount", 0.0f);
+
+        auto zeroSubShaping = [&]
+        {
+            setRaw("subOscBendPlus", 0.0f);
+            setRaw("subOscBendMinus", 0.0f);
+            setRaw("subOscBendPlusMinus", 0.0f);
+            setRaw("subOscSpectrum", 0.0f);
+            setRaw("subOscSync", 0.0f);
+        };
+        zeroSubShaping();
+
+        // rmsS is the SIDE signal, (L-R)/2. Zero for anything in the middle
+        // however loud it is, so it separates "spread across the field" from
+        // "louder", which a per-channel level cannot.
+        struct SubResult { double rmsL, rmsR, rmsS; };
+
+        auto measureSub = [&](int shape, int voices, float detune, float width) -> SubResult
+        {
+            setChoice("subOscWaveform", shape);
+            setRaw("subOscUnisonVoices", (float) voices);
+            setRaw("subOscUnisonDetune", detune);
+            setRaw("subOscUnisonWidth", width);
+
+            sp->setRateAndBufferSizeDetails(sampleRate, blockSize);
+            sp->prepareToPlay(sampleRate, blockSize);
+
+            juce::AudioBuffer<float> buf(2, blockSize);
+            double sumL = 0.0, sumR = 0.0, sumS = 0.0;
+            long long counted = 0;
+
+            // The same 12 s window the oscillator sweep uses, and for the same
+            // reason: the sub runs an octave DOWN, so its beat period is twice
+            // as long and a short window is even more likely to sample a trough
+            // and report it as a level loss.
+            const int numBlocks  = (int) (12.0 * sampleRate / blockSize);
+            const int skipBlocks = (int) (0.25 * sampleRate / blockSize);
+
+            for (int b = 0; b < numBlocks; ++b)
+            {
+                buf.clear();
+                juce::MidiBuffer midi;
+                if (b == 0) midi.addEvent(juce::MidiMessage::noteOn(1, 57, (juce::uint8) 100), 0);
+
+                sp->processBlock(buf, midi);
+
+                if (b < skipBlocks) continue;
+
+                auto* l = buf.getReadPointer(0);
+                auto* r = buf.getReadPointer(1);
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    const double side = 0.5 * ((double) l[i] - (double) r[i]);
+                    sumL += (double) l[i] * l[i];
+                    sumR += (double) r[i] * r[i];
+                    sumS += side * side;
+                    }
+                counted += blockSize;
+            }
+
+            if (counted == 0) counted = 1;
+            return { std::sqrt(sumL / counted), std::sqrt(sumR / counted),
+                     std::sqrt(sumS / counted) };
+        };
+
+        for (float detune : { 0.0f, 0.30f })
+        {
+            SubResult ref = measureSub(0, 1, detune, 0.0f);
+            const double refMono = 0.5 * (ref.rmsL + ref.rmsR);
+
+            std::printf("\n--- Sine sub, detune %.2f, 1 voice = %.5f ---\n", detune, refMono);
+            std::printf("  voices width :   rmsL     rmsR     side    vs 1v     L-R\n");
+
+            for (int v : { 1, 3, 5, 7 })
+            {
+                for (float w : { 0.0f, 0.5f, 1.0f })
+                {
+                    SubResult r = measureSub(0, v, detune, w);
+                    std::printf("    %d    %.2f  : %.5f  %.5f  %.5f  %+6.2f dB  %+6.2f dB\n",
+                                v, w, r.rmsL, r.rmsR, r.rmsS,
+                                db(0.5 * (r.rmsL + r.rmsR), refMono), db(r.rmsL, r.rmsR));
+                }
+            }
+        }
+
+        // --- Shaping ---
+        // A sine, because a sine has nothing but its fundamental: any harmonic
+        // that appears when a knob is turned up came from the shaping and could
+        // not have come from anywhere else. Each knob is measured alone, against
+        // the same sine with all five at zero.
+        std::printf("\n--- Sub shaping, one knob at a time (Sine, 1 voice) ---\n");
+        {
+            setRaw("subOscUnisonVoices", 1.0f);
+            setRaw("subOscUnisonDetune", 0.0f);
+            setRaw("subOscUnisonWidth", 0.0f);
+            setChoice("subOscWaveform", 0);
+
+            // Harmonic 2 of the sub. The sub runs an octave below the played
+            // note, so at MIDI 57 (220 Hz) it is at 110 Hz and this is 220 Hz.
+            const double subFundamental = 110.0;
+
+            auto harmonicAt = [&](const char* knob, float amount, double freq) -> double
+            {
+                zeroSubShaping();
+                if (knob != nullptr) setRaw(knob, amount);
+
+                sp->setRateAndBufferSizeDetails(sampleRate, blockSize);
+                sp->prepareToPlay(sampleRate, blockSize);
+
+                juce::AudioBuffer<float> buf(2, blockSize);
+                double re = 0.0, im = 0.0, sumSq = 0.0;
+                long long n = 0;
+
+                const int numBlocks  = (int) (2.0 * sampleRate / blockSize);
+                const int skipBlocks = (int) (0.25 * sampleRate / blockSize);
+
+                for (int b = 0; b < numBlocks; ++b)
+                {
+                    buf.clear();
+                    juce::MidiBuffer midi;
+                    if (b == 0) midi.addEvent(juce::MidiMessage::noteOn(1, 57, (juce::uint8) 100), 0);
+                    sp->processBlock(buf, midi);
+                    if (b < skipBlocks) continue;
+
+                    auto* l = buf.getReadPointer(0);
+                    for (int i = 0; i < blockSize; ++i)
+                    {
+                        const double t = (double) n / sampleRate;
+                        const double w = 2.0 * juce::MathConstants<double>::pi * freq * t;
+                        re += (double) l[i] * std::cos(w);
+                        im += (double) l[i] * std::sin(w);
+                        sumSq += (double) l[i] * l[i];
+                        ++n;
+                    }
+                }
+
+                if (n == 0) return 0.0;
+                const double mag = 2.0 * std::sqrt(re * re + im * im) / (double) n;
+                const double rms = std::sqrt(sumSq / (double) n);
+                return 20.0 * std::log10((mag + 1e-12) / (rms + 1e-12));
+            };
+
+            const double clean = harmonicAt(nullptr, 0.0f, subFundamental * 2.0);
+            std::printf("  2nd harmonic, all knobs at zero : %+7.2f dB re. total\n", clean);
+
+            for (const char* knob : { "subOscBendPlus", "subOscBendMinus",
+                                      "subOscBendPlusMinus", "subOscSpectrum", "subOscSync" })
+            {
+                const double withKnob = harmonicAt(knob, 1.0f, subFundamental * 2.0);
+                std::printf("  %-20s at 1.00      : %+7.2f dB   (%+.2f dB vs clean)\n",
+                            knob, withKnob, withKnob - clean);
+            }
+
+            // Spectrum, on a SAW.
+            //
+            // It reads +0.00 dB in the table above and that is the right answer,
+            // not a dead knob: Spectrum fades a waveform TOWARDS a plain sine,
+            // and the test above starts from a sine, so there is nothing for it
+            // to take away. Measured here on a saw, where there is -- and where
+            // turning it up must take the 5th harmonic DOWN, the opposite
+            // direction from every Bend above.
+            std::printf("\n--- Sub Spectrum, on a Saw (5th harmonic) ---\n");
+            {
+                setChoice("subOscWaveform", 1);
+
+                const double fifth = subFundamental * 5.0;
+                const double sawClean = harmonicAt(nullptr, 0.0f, fifth);
+
+                std::printf("  Spectrum 0.00 : %+7.2f dB re. total\n", sawClean);
+
+                for (float amount : { 0.50f, 1.00f })
+                {
+                    const double v = harmonicAt("subOscSpectrum", amount, fifth);
+                    std::printf("  Spectrum %.2f : %+7.2f dB re. total   (%+.2f dB vs 0.00)\n",
+                                amount, v, v - sawClean);
+                }
+
+                setChoice("subOscWaveform", 0);
+            }
+
+            zeroSubShaping();
+        }
+
+        setRaw("subOscOn", 0.0f);
+        setRaw("subOscLevel", 0.0f);
+        setRaw("osc1Level", 0.8f);
+    }
+
     std::printf("\n================================================================\n");
     return 0;
 }

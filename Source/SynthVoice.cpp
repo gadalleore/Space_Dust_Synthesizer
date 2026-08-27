@@ -481,6 +481,7 @@ void SynthVoice::noteStarted()
     // detune pulled them apart -- an attack whose shape changed with Voices.
     seedUnisonPhases (osc1Unison, osc1Angle);
     seedUnisonPhases (osc2Unison, osc2Angle);
+    seedUnisonPhases (subUnison, subOscAngle);
 
     if (shouldHardResetForPoly)
     {
@@ -959,6 +960,7 @@ void SynthVoice::advanceShapingSmoothing() noexcept
 
     ease(osc1Shaping, osc1ShapingTarget);
     ease(osc2Shaping, osc2ShapingTarget);
+    ease(subOscShaping, subOscShapingTarget);
 }
 
 float SynthVoice::generateWaveform(double angle, int waveform, const UserWaveSlot* userSlot,
@@ -1701,7 +1703,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // built-in shape or a mono import the two are the same number and every
         // sum below is what it always was; only a stereo import makes them differ.
         float osc1Sample, osc2Sample, subOscSample;
-        float osc1Right = 0.0f, osc2Right = 0.0f;
+        float osc1Right = 0.0f, osc2Right = 0.0f, subOscRight = 0.0f;
 
         if (!oscOSActive)
         {
@@ -1734,7 +1736,23 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
 
                 if (! osc2Stereo) osc2Right = osc2Sample;
             }
-            subOscSample = subOscOn ? generateWaveform(subOscAngle, subOscWaveform, subOscUserSlot, subOscFreq, &subOscOneShot) * subOscLevel : 0.0f;
+            if (! subOscOn)
+            {
+                subOscSample = 0.0f;
+                subOscRight = 0.0f;
+            }
+            else if (subUnison.active())
+            {
+                subOscSample = renderUnison(subUnison, subOscWaveform, subOscUserSlot, subOscFreq,
+                                            subOscAngleDelta, subOscShaping, false, subOscRight) * subOscLevel;
+                subOscRight *= subOscLevel;
+            }
+            else
+            {
+                subOscSample = generateWaveform(subOscAngle, subOscWaveform, subOscUserSlot, subOscFreq,
+                                                &subOscOneShot, subOscShaping) * subOscLevel;
+                subOscRight = subOscSample;
+            }
         }
         else
         {
@@ -1842,18 +1860,42 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                 osc2Right = osc2Sample;
             }
 
-            if (subOscOn)
+            if (! subOscOn)
             {
-                subOscSample = oscSubOS.process(0, 0.0f, [&] (float) -> float
+                subOscSample = 0.0f;
+                subOscRight = 0.0f;
+            }
+            else if (subUnison.active())
+            {
+                // Summed INSIDE the stage, for the same reason the oscillators'
+                // copies are: one decimation pass filters the sum of eight copies
+                // for the price of filtering one. Channels 0 and 1 of this stage,
+                // which the sub had to itself and used only half of.
+                oscSubOS.processStereo(0, 1, 0.0f, [&] (float, float& right) -> float
                 {
-                    const float v = generateWaveform(subOscAngle, subOscWaveform, subOscUserSlot, subOscFreq, &subOscOneShot);
+                    const float v = renderUnison(subUnison, subOscWaveform, subOscUserSlot, subOscFreq,
+                                                 ds, subOscShaping, false, right);
+
+                    // The voice's own angle still runs, so switching unison off
+                    // mid-note picks up where the plain sub would be -- and the
+                    // Waveforms panel's playhead keeps a phase to draw.
                     subOscAngle += ds; wrap(subOscAngle);
                     return v;
-                }) * subOscLevel;
+                }, subOscSample, subOscRight);
+
+                subOscSample *= subOscLevel;
+                subOscRight *= subOscLevel;
             }
             else
             {
-                subOscSample = 0.0f;
+                subOscSample = oscSubOS.process(0, 0.0f, [&] (float) -> float
+                {
+                    const float v = generateWaveform(subOscAngle, subOscWaveform, subOscUserSlot, subOscFreq, &subOscOneShot, subOscShaping);
+                    subOscAngle += ds; wrap(subOscAngle);
+                    return v;
+                }) * subOscLevel;
+
+                subOscRight = subOscSample;
             }
         }
         
@@ -1930,7 +1972,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // rather than collapsing it, and a centred pan leaves the recording's own
         // width untouched.
         float leftMix = osc1Out * gainL1 + osc2Out * gainL2 + noiseOut * centerGain + subOscSample * centerGain;
-        float rightMix = osc1OutR * gainR1 + osc2OutR * gainR2 + noiseOut * centerGain + subOscSample * centerGain;
+        float rightMix = osc1OutR * gainR1 + osc2OutR * gainR2 + noiseOut * centerGain + subOscRight * centerGain;
         
         // Step 6: Process envelopes (returns current amplitude value 0.0-1.0)
         // JUCE's ADSR handles all four stages automatically: Attack â†’ Decay â†’ Sustain â†’ Release

@@ -1152,6 +1152,8 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
                                          "osc1BendPlusMinus", "osc1Spectrum", "osc1Sync");
     const auto osc2Shaping = readShaping("osc2BendPlus", "osc2BendMinus",
                                          "osc2BendPlusMinus", "osc2Spectrum", "osc2Sync");
+    const auto subOscShaping = readShaping("subOscBendPlus", "subOscBendMinus",
+                                           "subOscBendPlusMinus", "subOscSpectrum", "subOscSync");
 
     // Unison, read once for the same reason as the shaping above.
     const int osc1UnisonVoices = juce::jlimit(1, Unison::maxVoices,
@@ -1162,6 +1164,11 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     const float osc2UnisonDetune = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc2UnisonDetune"));
     const float osc1UnisonWidth = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc1UnisonWidth"));
     const float osc2UnisonWidth = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc2UnisonWidth"));
+
+    const int subOscUnisonVoices = juce::jlimit(1, Unison::maxVoices,
+                                                (int) std::lround(safeGetParam(apvts, "subOscUnisonVoices")));
+    const float subOscUnisonDetune = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "subOscUnisonDetune"));
+    const float subOscUnisonWidth = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "subOscUnisonWidth"));
 
     // Update all voices with current parameter values
     for (int i = 0; i < synth.getNumVoices(); ++i)
@@ -1175,6 +1182,8 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setOsc2WaveShaping(osc2Shaping);
             voice->setOsc1Unison(osc1UnisonVoices, osc1UnisonDetune, osc1UnisonWidth);
             voice->setOsc2Unison(osc2UnisonVoices, osc2UnisonDetune, osc2UnisonWidth);
+            voice->setSubOscWaveShaping(subOscShaping);
+            voice->setSubOscUnison(subOscUnisonVoices, subOscUnisonDetune, subOscUnisonWidth);
             voice->setOsc1CoarseTune(osc1CoarseTune);
             voice->setOsc1Detune(osc1Detune);
             voice->setOsc2CoarseTune(osc2CoarseTune);
@@ -3446,9 +3455,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     // All three default to doing nothing -- mode Standard, intensity 0, sync 0 --
     // so every preset written before they existed sounds exactly as it did.
     //
-    // The sub oscillator deliberately has none of them. Its job is to sit under
-    // the others and be felt rather than heard, and bending it would put
-    // harmonics exactly where they are least wanted.
+    // The sub oscillator has these too, but its five are NOT in this list: they
+    // were added later, and a new parameter may only go on the end -- see the
+    // note beside subOscBendPlus at the bottom of this function.
     // Five knobs each, not a mode and an amount. Any of them may be turned up
     // together and they compose -- see PhaseShaper.h. All default to zero, so a
     // patch that never touches them sounds exactly as it always did.
@@ -4945,6 +4954,61 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"velocityAmount", 1}, "Velocity Amount",
             juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 100.0f),
         "velocityAmount");
+
+    //==========================================================================
+    // -- The sub oscillator's shaping and unison --
+    //
+    // The same eight controls the two oscillators have, on the sub's own
+    // parameters, so its Waveforms panel is the oscillators' panel rather than a
+    // shorter one with the top strip missing (Giuseppe, 2026-08-26).
+    //
+    // DOWN HERE and not beside osc1's and osc2's, which is where they belong to
+    // read. A VST3 host automates by parameter INDEX, so slotting these in among
+    // the oscillators' would renumber every parameter after them and move the
+    // automation in every project that already used one. New parameters go on the
+    // end; that rule beats tidiness.
+    //
+    // Every one of them defaults to doing nothing -- shaping at zero, one voice
+    // at no detune and no width -- so a patch saved before they existed plays
+    // exactly as it did, with the sub a single centred signal.
+    {
+        // Said HERE and not on the slider: a SliderAttachment takes its text from
+        // the PARAMETER, so a slider told to show two decimals still reads
+        // 0.00000 unless the parameter agrees.
+        const auto twoDecimals = [] (float value, int)
+        {
+            return juce::String (value, 2);
+        };
+
+        struct SubParam { const char* id; const char* name; };
+
+        const SubParam subShaping[] =
+        {
+            { "subOscBendPlus",      "Sub Bend +" },
+            { "subOscBendMinus",     "Sub Bend -" },
+            { "subOscBendPlusMinus", "Sub Bend +/-" },
+            { "subOscSpectrum",      "Sub Spectrum" },
+            { "subOscSync",          "Sub Sync" },
+            { "subOscUnisonDetune",  "Sub Unison Detune" },
+            { "subOscUnisonWidth",   "Sub Unison Width" },
+        };
+
+        for (const auto& sp : subShaping)
+            addParameterWithLogging(params,
+                std::make_unique<juce::AudioParameterFloat>(
+                    juce::ParameterID{sp.id, 1}, sp.name,
+                    juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f,
+                    juce::AudioParameterFloatAttributes().withStringFromValueFunction(twoDecimals)),
+                safeString(sp.id));
+
+        // An INT, like the oscillators' counts: it is a number of things, and a
+        // float would let automation land between two of them.
+        addParameterWithLogging(params,
+            std::make_unique<juce::AudioParameterInt>(
+                juce::ParameterID{"subOscUnisonVoices", 1}, "Sub Unison Voices",
+                1, Unison::maxVoices, 1),
+            safeString("subOscUnisonVoices"));
+    }
 
     //==============================================================================
     // -- DEBUG: createParameterLayout End --

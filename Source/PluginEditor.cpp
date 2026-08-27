@@ -4267,6 +4267,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             { "osc1BendPlus", "osc1BendMinus", "osc1BendPlusMinus", "osc1Spectrum", "osc1Sync" };
         const char* const osc2Ids[numShapingKnobs] =
             { "osc2BendPlus", "osc2BendMinus", "osc2BendPlusMinus", "osc2Spectrum", "osc2Sync" };
+        const char* const subOscIds[numShapingKnobs] =
+            { "subOscBendPlus", "subOscBendMinus", "subOscBendPlusMinus", "subOscSpectrum", "subOscSync" };
 
         const char* const shapingTips[numShapingKnobs] =
         {
@@ -4277,13 +4279,16 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             "Restarts the waveform several times per note: the hard sync tear."
         };
 
-        for (int osc = 0; osc < 2; ++osc)
+        // Three, not two. The sub oscillator is a real oscillator reading a real
+        // cycle, so it gets the same five on its own parameters -- which is what
+        // makes its Waveforms panel the same panel as the other two.
+        for (int osc = 0; osc < 3; ++osc)
         {
-            auto* sliders = osc == 0 ? osc1ShapingSliders : osc2ShapingSliders;
-            auto* labels = osc == 0 ? osc1ShapingLabels : osc2ShapingLabels;
-            auto* attachments = osc == 0 ? osc1ShapingAttachments : osc2ShapingAttachments;
-            auto* const* ids = osc == 0 ? osc1Ids : osc2Ids;
-            auto& controls = osc == 0 ? osc1ShapingControls : osc2ShapingControls;
+            auto* sliders = osc == 0 ? osc1ShapingSliders : osc == 1 ? osc2ShapingSliders : subOscShapingSliders;
+            auto* labels = osc == 0 ? osc1ShapingLabels : osc == 1 ? osc2ShapingLabels : subOscShapingLabels;
+            auto* attachments = osc == 0 ? osc1ShapingAttachments : osc == 1 ? osc2ShapingAttachments : subOscShapingAttachments;
+            auto* const* ids = osc == 0 ? osc1Ids : osc == 1 ? osc2Ids : subOscIds;
+            auto& controls = osc == 0 ? osc1ShapingControls : osc == 1 ? osc2ShapingControls : subOscShapingControls;
 
             for (int i = 0; i < numShapingKnobs; ++i)
             {
@@ -4321,6 +4326,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             { "osc1UnisonVoices", "osc1UnisonDetune", "osc1UnisonWidth" };
         const char* const osc2UnisonIds[numUnisonKnobs] =
             { "osc2UnisonVoices", "osc2UnisonDetune", "osc2UnisonWidth" };
+        const char* const subOscUnisonIds[numUnisonKnobs] =
+            { "subOscUnisonVoices", "subOscUnisonDetune", "subOscUnisonWidth" };
 
         const char* const unisonTips[numUnisonKnobs] =
         {
@@ -4329,13 +4336,13 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             "How far the copies are spread across the stereo field. At zero they are all centred."
         };
 
-        for (int osc = 0; osc < 2; ++osc)
+        for (int osc = 0; osc < 3; ++osc)
         {
-            auto* sliders = osc == 0 ? osc1UnisonSliders : osc2UnisonSliders;
-            auto* labels = osc == 0 ? osc1UnisonLabels : osc2UnisonLabels;
-            auto* attachments = osc == 0 ? osc1UnisonAttachments : osc2UnisonAttachments;
-            auto* const* ids = osc == 0 ? osc1UnisonIds : osc2UnisonIds;
-            auto& controls = osc == 0 ? osc1ShapingControls : osc2ShapingControls;
+            auto* sliders = osc == 0 ? osc1UnisonSliders : osc == 1 ? osc2UnisonSliders : subOscUnisonSliders;
+            auto* labels = osc == 0 ? osc1UnisonLabels : osc == 1 ? osc2UnisonLabels : subOscUnisonLabels;
+            auto* attachments = osc == 0 ? osc1UnisonAttachments : osc == 1 ? osc2UnisonAttachments : subOscUnisonAttachments;
+            auto* const* ids = osc == 0 ? osc1UnisonIds : osc == 1 ? osc2UnisonIds : subOscUnisonIds;
+            auto& controls = osc == 0 ? osc1ShapingControls : osc == 1 ? osc2ShapingControls : subOscShapingControls;
 
             for (int i = 0; i < numUnisonKnobs; ++i)
             {
@@ -6931,14 +6938,18 @@ void SpaceDustAudioProcessorEditor::openWaveformWindow(juce::Component* anchorBu
     // sound by itself.
     const int slot = combo->getSelectedId() - 1 - userBase;
 
-    // Only the two oscillators have shaping. The sub oscillator is left clean on
-    // purpose, and the noise source and the Transient have no cycle to bend.
+    // The three oscillators have shaping and unison; the noise source and the
+    // Transient do not, because neither has a repeating cycle to bend or a pitch
+    // to detune against. Null leaves the top strip out and the panel comes up
+    // that much shorter.
     const WaveformEditorComponent::ShapingControls* shaping = nullptr;
 
     if (group == UserWave::Group::Osc1)
         shaping = &osc1ShapingControls;
     else if (group == UserWave::Group::Osc2)
         shaping = &osc2ShapingControls;
+    else if (group == UserWave::Group::Sub)
+        shaping = &subOscShapingControls;
 
     waveformWindow->showFor(anchorButton, combo, userBase, kind, group,
                             (slot >= 0 && slot < UserWave::numSlots) ? slot : -1,

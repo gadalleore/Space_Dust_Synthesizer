@@ -71,8 +71,9 @@ public:
         parameters and this window knows nothing about a processor. Borrowed here
         and given back when the panel is pointed at another list.
 
-        Null for a list that has no shaping: the sub oscillator, the noise source
-        and the Transient. The strip then takes no room at all. */
+        Null for a list that has no shaping: the noise source and the Transient,
+        neither of which has a repeating cycle to bend. The strip then takes no
+        room at all. */
     struct ShapingControls
     {
         static constexpr int numKnobs = 5;
