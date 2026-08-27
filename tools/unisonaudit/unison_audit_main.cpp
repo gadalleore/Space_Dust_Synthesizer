@@ -15,14 +15,55 @@
 #include <cstdio>
 #include <cmath>
 #include "PluginProcessor.h"
+#include "PresetManager.h"
 #include "SpaceDustLookAndFeel.h"
 #include "WaveformEditorComponent.h"
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter();
 
+namespace
+{
+    /** Put the player's loaded patch back after this harness has trampled it.
+
+        SpaceDustAudioProcessor starts PresetHotReload from its own CONSTRUCTOR,
+        and that publishes the live parameter state to current.sdpreset every
+        poll. The plugin watches the same file and reloads it. So merely building
+        a processor here -- which this tool has to do, that is the whole point of
+        driving the real thing -- overwrites whatever patch the player had loaded,
+        with this harness's sweep values.
+
+        It is not theoretical: Giuseppe watched his unison knobs move to this
+        tool's settings while the standalone was open (2026-08-27). Any host that
+        SCANS the plugin does the same thing, which is worth knowing separately.
+
+        Declared before the processor so it is destroyed after it, and the file it
+        writes back cannot be published over again. */
+    struct LiveStateGuard
+    {
+        explicit LiveStateGuard (juce::File fileToGuard)
+            : file (std::move (fileToGuard))
+        {
+            had = file.existsAsFile() && file.loadFileAsData (data);
+        }
+
+        ~LiveStateGuard()
+        {
+            if (had)
+                file.replaceWithData (data.getData(), data.getSize());
+        }
+
+        juce::File file;
+        juce::MemoryBlock data;
+        bool had = false;
+    };
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI juceInit;
+
+    const LiveStateGuard liveState (PresetManager::appDataFolder()
+                                        .getChildFile("current.sdpreset"));
 
     std::unique_ptr<juce::AudioProcessor> proc(createPluginFilter());
     auto* sp = dynamic_cast<SpaceDustAudioProcessor*>(proc.get());
