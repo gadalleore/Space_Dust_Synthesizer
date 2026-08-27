@@ -725,15 +725,19 @@ private:
     juce::Slider osc1UnisonSliders[numUnisonKnobs];
     juce::Slider osc2UnisonSliders[numUnisonKnobs];
     juce::Slider subOscUnisonSliders[numUnisonKnobs];
+    juce::Slider noiseUnisonSliders[numUnisonKnobs];
     juce::Label osc1UnisonLabels[numUnisonKnobs];
     juce::Label osc2UnisonLabels[numUnisonKnobs];
     juce::Label subOscUnisonLabels[numUnisonKnobs];
+    juce::Label noiseUnisonLabels[numUnisonKnobs];
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
         osc1UnisonAttachments[numUnisonKnobs];
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
         osc2UnisonAttachments[numUnisonKnobs];
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
         subOscUnisonAttachments[numUnisonKnobs];
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
+        noiseUnisonAttachments[numUnisonKnobs];
 
     WaveformEditorComponent::ShapingControls osc1ShapingControls;
     WaveformEditorComponent::ShapingControls osc2ShapingControls;
@@ -741,6 +745,11 @@ private:
     /** The sub oscillator's own eight, so its Waveforms panel is the same panel
         the oscillators get rather than a shorter one. */
     WaveformEditorComponent::ShapingControls subOscShapingControls;
+
+    /** The noise source's three. Its shaping knobs are deliberately left null --
+        built-in noise has no cycle to bend -- and the panel draws the Unison box
+        on its own when it finds them missing. */
+    WaveformEditorComponent::ShapingControls noiseShapingControls;
 
     juce::Slider osc1DetuneSlider;
     juce::Slider osc2CoarseTuneSlider;

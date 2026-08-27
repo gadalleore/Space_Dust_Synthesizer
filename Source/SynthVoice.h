@@ -194,6 +194,25 @@ public:
         updateUnison(subUnison, voices, detune, width);
     }
 
+    /** Unison for the noise source.
+
+        Two different things behind one control, because the slot holds two
+        different things. An IMPORTED waveform here is a third oscillator with a
+        pitch, so all three knobs do what they do everywhere else. Built-in White
+        and Pink have no pitch and no cycle, so Detune has nothing to act on --
+        what Voices and Width buy there is a STEREO noise field: each copy is its
+        own independent stream, and spreading them decorrelates the two sides.
+
+        The level compensation differs for the same reason, which is why it is
+        worked out here and not left to Unison::layout: independent noise streams
+        never line up, whatever the detune says, so they sum to sqrt(N) and the
+        compensation is 1/sqrt(N) flat. */
+    void setNoiseUnison(int voices, float detune, float width) noexcept
+    {
+        updateUnison(noiseUnison, voices, detune, width);
+        noiseIncoherentComp = 1.0f / std::sqrt ((float) juce::jmax (1, noiseUnison.voices));
+    }
+
     /** Hand over the imported waveforms for this block.
 
         The bank is owned by the processor, which holds it for the whole of
@@ -407,6 +426,40 @@ private:
         the middle. At one voice this is never touched and the sub is still that
         single centred signal, so no existing patch moves. */
     UnisonState subUnison;
+
+    /** The noise source's copies. See setNoiseUnison for why this one is not
+        quite like the other three. */
+    UnisonState noiseUnison;
+
+    /** 1/sqrt(voices). Used INSTEAD of UnisonState::compensation for built-in
+        White and Pink, whose copies are independent streams and so are fully
+        decorrelated at every detune setting, zero included. An imported waveform
+        in the noise slot is a real oscillator and takes the ordinary
+        detune-dependent compensation. */
+    float noiseIncoherentComp = 1.0f;
+
+    /** One independent pink-noise generator.
+
+        Pink noise IS its state -- the Voss-McCartney rows are what makes it pink
+        -- so copies cannot share one. Reading a single generator N times per
+        sample would run it N times too fast and the noise would get brighter as
+        Voices went up, which is a spectrum change dressed up as a width control.
+
+        Copy 0 is NOT here: it stays on the voice's own pinkState / pinkSum /
+        pinkNoiseCounter, untouched, so one voice runs exactly the code it always
+        did. These are copies 1 upwards. */
+    struct PinkGenerator
+    {
+        std::array<float, 16> state {};
+        float sum = 0.0f;
+        std::uint32_t counter = 0;
+    };
+
+    PinkGenerator pinkCopies[Unison::maxVoices - 1];
+
+    /** One Voss-McCartney step on the state handed in. */
+    float nextPinkSample (std::array<float, 16>& state, float& sum,
+                          std::uint32_t& counter) noexcept;
 
     /** Set the copies up for this block, from the three parameters. */
     void updateUnison (UnisonState& state, int voices, float detune, float width) noexcept;
@@ -626,6 +679,16 @@ private:
     // Noise EQ filters: simple 1-pole shelf filters for low and high frequency shaping
     juce::dsp::IIR::Filter<float> lowShelfFilter;
     juce::dsp::IIR::Filter<float> highShelfFilter;
+
+    /** The right channel's pair.
+
+        The noise source was mono, so one filter each was enough. With Width up it
+        is not: filtering only the left would leave the right unshelved, and the
+        Low and High Shelf knobs would tilt the noise off to one side. They share
+        the left pair's coefficient objects -- same numbers, separate state --
+        which is what keeps the two sides identical when Width is at zero. */
+    juce::dsp::IIR::Filter<float> lowShelfFilterR;
+    juce::dsp::IIR::Filter<float> highShelfFilterR;
     int filterMode = 0;               // 0=LowPass, 1=BandPass, 2=HighPass, 3=Notch, 4=Peak
     float filterCutoff = 8000.0f;     // Hz (20-20000) - current modulated cutoff
     float baseFilterCutoff = 8000.0f; // Base cutoff value (unmodulated, from parameter)

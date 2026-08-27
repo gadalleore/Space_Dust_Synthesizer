@@ -475,6 +475,136 @@ int main()
         setRaw("osc1Level", 0.8f);
     }
 
+    // --- The noise source's unison ---
+    //
+    // Built-in noise is not an oscillator and its unison is not the oscillators':
+    // Detune has no pitch to act on, and what Voices and Width buy is a stereo
+    // field rather than a thicker note. So the thing to measure is not level --
+    // it is CORRELATION between the two sides.
+    //
+    //   corr = mean(L*R) / sqrt(mean(L*L) * mean(R*R))
+    //
+    // 1.00 is mono: the two sides carry the same signal, however loud. 0.00 is
+    // fully decorrelated -- a real stereo noise field. The claims being checked:
+    //
+    //   * Width 0 stays at 1.00 whatever Voices says. Independent streams summed
+    //     with equal gains both sides is still the same number both sides.
+    //   * Width up drops it, and further at higher Voices, because there are more
+    //     independent streams to spread.
+    //   * The LEVEL barely moves through all of it: 1/sqrt(N) is the right
+    //     compensation for streams that never line up, and it is used flat rather
+    //     than the detune-dependent one the oscillators take.
+    //   * White and Pink both do it. Pink is the one that could go wrong -- its
+    //     rows ARE the generator, so copies sharing one would run it N times too
+    //     fast and the noise would get brighter with Voices instead of wider.
+    std::printf("\n================ NOIZE UNISON (whole processor) ================\n");
+    {
+        setRaw("osc1Level", 0.0f);
+        setRaw("osc2Level", 0.0f);
+        setRaw("subOscOn", 0.0f);
+        setRaw("subOscLevel", 0.0f);
+        setRaw("noiseLevel", 1.0f);
+        setRaw("lowShelfAmount", 0.0f);
+        setRaw("highShelfAmount", 0.0f);
+        setRaw("filterCutoff", 20000.0f);
+        setRaw("filterResonance", 0.0f);
+        setRaw("velocityAmount", 0.0f);
+
+        struct NoiseResult { double rms, corr, centroid; };
+
+        auto measureNoise = [&](int type, int voices, float detune, float width) -> NoiseResult
+        {
+            setChoice("noiseType", type);
+            setRaw("noiseUnisonVoices", (float) voices);
+            setRaw("noiseUnisonDetune", detune);
+            setRaw("noiseUnisonWidth", width);
+
+            sp->setRateAndBufferSizeDetails(sampleRate, blockSize);
+            sp->prepareToPlay(sampleRate, blockSize);
+
+            juce::AudioBuffer<float> buf(2, blockSize);
+            double sumLL = 0.0, sumRR = 0.0, sumLR = 0.0;
+            // A crude brightness reading: the mean absolute first difference
+            // against the mean absolute sample. It rises with the spectral
+            // centroid and needs no FFT, which is all that is wanted here --
+            // whether Pink got brighter as Voices went up.
+            double sumAbs = 0.0, sumDiff = 0.0;
+            float previous = 0.0f;
+            long long counted = 0;
+
+            const int numBlocks  = (int) (4.0 * sampleRate / blockSize);
+            const int skipBlocks = (int) (0.25 * sampleRate / blockSize);
+
+            for (int b = 0; b < numBlocks; ++b)
+            {
+                buf.clear();
+                juce::MidiBuffer midi;
+                if (b == 0) midi.addEvent(juce::MidiMessage::noteOn(1, 57, (juce::uint8) 100), 0);
+
+                sp->processBlock(buf, midi);
+
+                if (b < skipBlocks) continue;
+
+                auto* l = buf.getReadPointer(0);
+                auto* r = buf.getReadPointer(1);
+                for (int i = 0; i < blockSize; ++i)
+                {
+                    sumLL += (double) l[i] * l[i];
+                    sumRR += (double) r[i] * r[i];
+                    sumLR += (double) l[i] * r[i];
+                    sumAbs += std::abs((double) l[i]);
+                    sumDiff += std::abs((double) l[i] - (double) previous);
+                    previous = l[i];
+                    ++counted;
+                }
+            }
+
+            if (counted == 0) counted = 1;
+            const double rmsL = std::sqrt(sumLL / counted);
+            const double rmsR = std::sqrt(sumRR / counted);
+            const double corr = (sumLR / counted) / (rmsL * rmsR + 1e-15);
+            const double centroid = sumDiff / (sumAbs + 1e-15);
+
+            return { 0.5 * (rmsL + rmsR), corr, centroid };
+        };
+
+        const char* typeNames[] = { "White", "Pink" };
+
+        for (int t = 0; t < 2; ++t)
+        {
+            NoiseResult ref = measureNoise(t, 1, 0.0f, 0.0f);
+
+            std::printf("\n--- %s noise, 1 voice = rms %.5f, brightness %.4f ---\n",
+                        typeNames[t], ref.rms, ref.centroid);
+            std::printf("  voices width : correlation   level vs 1v   brightness\n");
+
+            for (int v : { 1, 3, 5, 7 })
+            {
+                for (float w : { 0.0f, 0.5f, 1.0f })
+                {
+                    NoiseResult r = measureNoise(t, v, 0.0f, w);
+                    std::printf("    %d    %.2f  :    %+6.3f      %+6.2f dB      %.4f\n",
+                                v, w, r.corr, db(r.rms, ref.rms), r.centroid);
+                }
+            }
+        }
+
+        // Detune, on built-in noise, must change NOTHING. It has no pitch to pull
+        // apart, and a knob that moved the sound here would be moving it by
+        // accident.
+        std::printf("\n--- Detune on built-in White (7 voices, width 1.00) ---\n");
+        for (float d : { 0.0f, 0.30f, 1.00f })
+        {
+            NoiseResult r = measureNoise(0, 7, d, 1.0f);
+            std::printf("  detune %.2f : rms %.5f   correlation %+6.3f\n", d, r.rms, r.corr);
+        }
+
+        setRaw("noiseUnisonVoices", 1.0f);
+        setRaw("noiseUnisonWidth", 0.0f);
+        setRaw("noiseLevel", 0.0f);
+        setRaw("osc1Level", 0.8f);
+    }
+
     std::printf("\n================================================================\n");
     return 0;
 }

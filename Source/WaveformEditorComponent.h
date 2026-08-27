@@ -445,6 +445,15 @@ private:
         from setTarget, which is the only thing that changes which list is shown. */
     void adoptShapingControls (const ShapingControls* shaping);
 
+    /** Whether the borrowed controls actually carry any of the five shaping
+        knobs.
+
+        The noise source borrows a ShapingControls that holds only the three
+        unison knobs -- it has unison but nothing to bend -- so "there is a strip"
+        and "there is a Wave Shaping box in it" stopped being the same question
+        the moment that existed. */
+    bool hasShapingKnobs() const noexcept;
+
     /** What the five knobs are set to right now.
 
         Read from the sliders rather than kept in a member, because the sliders are

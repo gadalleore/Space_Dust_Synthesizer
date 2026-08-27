@@ -1170,6 +1170,11 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     const float subOscUnisonDetune = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "subOscUnisonDetune"));
     const float subOscUnisonWidth = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "subOscUnisonWidth"));
 
+    const int noiseUnisonVoices = juce::jlimit(1, Unison::maxVoices,
+                                               (int) std::lround(safeGetParam(apvts, "noiseUnisonVoices")));
+    const float noiseUnisonDetune = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "noiseUnisonDetune"));
+    const float noiseUnisonWidth = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "noiseUnisonWidth"));
+
     // Update all voices with current parameter values
     for (int i = 0; i < synth.getNumVoices(); ++i)
     {
@@ -1184,6 +1189,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setOsc2Unison(osc2UnisonVoices, osc2UnisonDetune, osc2UnisonWidth);
             voice->setSubOscWaveShaping(subOscShaping);
             voice->setSubOscUnison(subOscUnisonVoices, subOscUnisonDetune, subOscUnisonWidth);
+            voice->setNoiseUnison(noiseUnisonVoices, noiseUnisonDetune, noiseUnisonWidth);
             voice->setOsc1CoarseTune(osc1CoarseTune);
             voice->setOsc1Detune(osc1Detune);
             voice->setOsc2CoarseTune(osc2CoarseTune);
@@ -5008,6 +5014,43 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
                 juce::ParameterID{"subOscUnisonVoices", 1}, "Sub Unison Voices",
                 1, Unison::maxVoices, 1),
             safeString("subOscUnisonVoices"));
+
+        //======================================================================
+        // -- The noise source's unison --
+        //
+        // Same three knobs, and on an IMPORTED waveform in the noise slot they do
+        // the same three things -- that slot holds a third oscillator with a
+        // pitch, not noise.
+        //
+        // On built-in White and Pink, Detune has nothing to act on: noise has no
+        // pitch to pull apart. Voices and Width still do, and what they buy there
+        // is a STEREO noise field -- each copy is an independent stream, so
+        // spreading them decorrelates the two sides. One stream panned anywhere
+        // is still mono, however wide the knob says it is.
+        //
+        // No shaping knobs to go with them. Bend and Sync move a position in a
+        // cycle, and built-in noise has no cycle.
+        //
+        // On the end of the list for the same reason as everything above it.
+        addParameterWithLogging(params,
+            std::make_unique<juce::AudioParameterInt>(
+                juce::ParameterID{"noiseUnisonVoices", 1}, "Noize Unison Voices",
+                1, Unison::maxVoices, 1),
+            safeString("noiseUnisonVoices"));
+
+        const SubParam noiseAmounts[] =
+        {
+            { "noiseUnisonDetune", "Noize Unison Detune" },
+            { "noiseUnisonWidth",  "Noize Unison Width" },
+        };
+
+        for (const auto& np : noiseAmounts)
+            addParameterWithLogging(params,
+                std::make_unique<juce::AudioParameterFloat>(
+                    juce::ParameterID{np.id, 1}, np.name,
+                    juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f,
+                    juce::AudioParameterFloatAttributes().withStringFromValueFunction(twoDecimals)),
+                safeString(np.id));
     }
 
     //==============================================================================

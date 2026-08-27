@@ -4328,6 +4328,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             { "osc2UnisonVoices", "osc2UnisonDetune", "osc2UnisonWidth" };
         const char* const subOscUnisonIds[numUnisonKnobs] =
             { "subOscUnisonVoices", "subOscUnisonDetune", "subOscUnisonWidth" };
+        const char* const noiseUnisonIds[numUnisonKnobs] =
+            { "noiseUnisonVoices", "noiseUnisonDetune", "noiseUnisonWidth" };
 
         const char* const unisonTips[numUnisonKnobs] =
         {
@@ -4336,37 +4338,65 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
             "How far the copies are spread across the stereo field. At zero they are all centred."
         };
 
-        for (int osc = 0; osc < 3; ++osc)
+        // The noise source gets its OWN three tips. Detune is the reason: on
+        // built-in White and Pink there is no pitch to pull apart, and a tooltip
+        // that says there is would be the knob lying about itself.
+        const char* const noiseUnisonTips[numUnisonKnobs] =
         {
-            auto* sliders = osc == 0 ? osc1UnisonSliders : osc == 1 ? osc2UnisonSliders : subOscUnisonSliders;
-            auto* labels = osc == 0 ? osc1UnisonLabels : osc == 1 ? osc2UnisonLabels : subOscUnisonLabels;
-            auto* attachments = osc == 0 ? osc1UnisonAttachments : osc == 1 ? osc2UnisonAttachments : subOscUnisonAttachments;
-            auto* const* ids = osc == 0 ? osc1UnisonIds : osc == 1 ? osc2UnisonIds : subOscUnisonIds;
-            auto& controls = osc == 0 ? osc1ShapingControls : osc == 1 ? osc2ShapingControls : subOscShapingControls;
+            "How many independent noise streams play at once. Turn Width up to hear them.",
+            "Only for an imported sample, which has a pitch. White and Pink have none, so this does nothing to them.",
+            "How far the streams are spread across the stereo field. This is what makes the noise wide."
+        };
 
+        // A table rather than a fourth arm on four ternary chains. Four sources
+        // now share this loop and the chains had stopped being readable.
+        struct UnisonGroupSetup
+        {
+            juce::Slider* sliders;
+            juce::Label* labels;
+            std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>* attachments;
+            const char* const* ids;
+            WaveformEditorComponent::ShapingControls* controls;
+            const char* const* tips;
+        };
+
+        const UnisonGroupSetup unisonGroups[] =
+        {
+            { osc1UnisonSliders,   osc1UnisonLabels,   osc1UnisonAttachments,
+              osc1UnisonIds,   &osc1ShapingControls,   unisonTips },
+            { osc2UnisonSliders,   osc2UnisonLabels,   osc2UnisonAttachments,
+              osc2UnisonIds,   &osc2ShapingControls,   unisonTips },
+            { subOscUnisonSliders, subOscUnisonLabels, subOscUnisonAttachments,
+              subOscUnisonIds, &subOscShapingControls, unisonTips },
+            { noiseUnisonSliders,  noiseUnisonLabels,  noiseUnisonAttachments,
+              noiseUnisonIds,  &noiseShapingControls,  noiseUnisonTips },
+        };
+
+        for (const auto& group : unisonGroups)
+        {
             for (int i = 0; i < numUnisonKnobs; ++i)
             {
-                auto& s = sliders[i];
+                auto& s = group.sliders[i];
                 s.setSliderStyle(juce::Slider::RotaryVerticalDrag);
                 s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 46, 16);
                 s.setLookAndFeel(&customLookAndFeel);
-                s.setTooltip(safeString(unisonTips[i]));
+                s.setTooltip(safeString(group.tips[i]));
 
-                attachments[i] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-                    audioProcessor.getValueTreeState(), ids[i], s);
+                group.attachments[i] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+                    audioProcessor.getValueTreeState(), group.ids[i], s);
 
                 // AFTER the attachment, which sets the range and resets this.
                 // Voices is a count, so it shows none: "3", not "3.00".
                 s.setNumDecimalPlacesToDisplay(i == 0 ? 0 : 2);
 
-                auto& l = labels[i];
+                auto& l = group.labels[i];
                 l.setText(safeString(unisonLabels[i]), juce::dontSendNotification);
                 l.setJustificationType(juce::Justification::centred);
                 l.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
                 l.setFont(customLookAndFeel.getBodyFont(11.0f, true));
 
-                controls.unisonKnobs[i] = &s;
-                controls.unisonLabels[i] = &l;
+                group.controls->unisonKnobs[i] = &s;
+                group.controls->unisonLabels[i] = &l;
             }
         }
     }
@@ -6938,10 +6968,13 @@ void SpaceDustAudioProcessorEditor::openWaveformWindow(juce::Component* anchorBu
     // sound by itself.
     const int slot = combo->getSelectedId() - 1 - userBase;
 
-    // The three oscillators have shaping and unison; the noise source and the
-    // Transient do not, because neither has a repeating cycle to bend or a pitch
-    // to detune against. Null leaves the top strip out and the panel comes up
-    // that much shorter.
+    // The three oscillators have shaping and unison. The noise source has unison
+    // ONLY -- its ShapingControls carries the three unison knobs and leaves the
+    // five shaping ones null, and the panel draws the Unison box on its own when
+    // it finds them missing. Bend and Sync move a position in a cycle, and
+    // built-in noise has no cycle to have a position in.
+    //
+    // The Transient has neither, so it gets null and no strip at all.
     const WaveformEditorComponent::ShapingControls* shaping = nullptr;
 
     if (group == UserWave::Group::Osc1)
@@ -6950,6 +6983,8 @@ void SpaceDustAudioProcessorEditor::openWaveformWindow(juce::Component* anchorBu
         shaping = &osc2ShapingControls;
     else if (group == UserWave::Group::Sub)
         shaping = &subOscShapingControls;
+    else if (group == UserWave::Group::Noise)
+        shaping = &noiseShapingControls;
 
     waveformWindow->showFor(anchorButton, combo, userBase, kind, group,
                             (slot >= 0 && slot < UserWave::numSlots) ? slot : -1,

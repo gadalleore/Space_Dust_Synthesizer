@@ -482,6 +482,7 @@ void SynthVoice::noteStarted()
     seedUnisonPhases (osc1Unison, osc1Angle);
     seedUnisonPhases (osc2Unison, osc2Angle);
     seedUnisonPhases (subUnison, subOscAngle);
+    seedUnisonPhases (noiseUnison, noiseWaveAngle);
 
     if (shouldHardResetForPoly)
     {
@@ -493,6 +494,12 @@ void SynthVoice::noteStarted()
         pinkState.fill(0.0f);
         pinkSum = 0.0f;
         pinkNoiseCounter = 0;
+        for (auto& copy : pinkCopies)
+        {
+            copy.state.fill(0.0f);
+            copy.sum = 0.0f;
+            copy.counter = 0;
+        }
         random.setSeed(static_cast<juce::int64>(reinterpret_cast<uintptr_t>(this)) + juce::Time::getHighResolutionTicks());
         for (auto& val : pinkState)
             val = (random.nextFloat() * 2.0f - 1.0f) * 0.0625f;
@@ -945,6 +952,36 @@ float SynthVoice::renderUnison (UnisonState& state, int waveform, const UserWave
     return left * state.compensation;
 }
 
+float SynthVoice::nextPinkSample (std::array<float, 16>& state, float& sum,
+                                  std::uint32_t& counter) noexcept
+{
+    // Voss-McCartney update (16 rows). The row index is the index of the lowest
+    // set bit of a running counter. With only state[0..15], that index must stay
+    // at 15 or below. The old int counter could reach 65536 -> bitPos 16 ->
+    // out-of-bounds writes and intermittent digital garbage (often bright and
+    // harsh) after about 1.3 s at 48 kHz per voice.
+    //
+    // Lifted out of renderNextBlock so each unison copy can be handed its own
+    // rows. The arithmetic is unchanged, so one voice is what it always was.
+    counter = (counter + 1u) & 0xFFFFu;
+    std::uint32_t p = counter;
+    if (p == 0u)
+        p = 1u;
+
+    const std::uint32_t lowestChangedBitU = p & static_cast<std::uint32_t>(-static_cast<std::int32_t>(p));
+    int bitPos = 0;
+    for (std::uint32_t t = lowestChangedBitU; (t >>= 1u) != 0u;)
+        ++bitPos;
+    bitPos = juce::jmin(bitPos, static_cast<int>(state.size()) - 1);
+
+    const float newVal = (random.nextFloat() * 2.0f - 1.0f) * 0.0625f;
+    sum -= state[bitPos];
+    sum += newVal;
+    state[bitPos] = newVal;
+
+    return sum * 3.8f;   // scaling to roughly match white noise RMS level
+}
+
 void SynthVoice::advanceShapingSmoothing() noexcept
 {
     const double c = shapingSmoothingCoeff;
@@ -1241,6 +1278,13 @@ void SynthVoice::updateNoiseEqFilters()
         // Zero: bypass (all-pass)
         *highShelfFilter.coefficients = *juce::dsp::IIR::Coefficients<float>::makeAllPass(sampleRate, 1.0f);
     }
+
+    // The right-hand pair points at the SAME coefficient objects, so it can never
+    // drift from the left. The pointer is assigned, not the numbers: every branch
+    // above writes THROUGH the left filter's pointer, so the right sees each
+    // change without this function having to remember to copy it.
+    lowShelfFilterR.coefficients = lowShelfFilter.coefficients;
+    highShelfFilterR.coefficients = highShelfFilter.coefficients;
 }
 
 //==============================================================================
@@ -1900,7 +1944,13 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         }
         
         // Step 3: Generate the noise source (white, pink, or an imported waveform)
+        //
+        // Two values now, not one. The noise source was summed to both sides at
+        // the same gain and could not be anywhere but the middle; with Width up
+        // its copies are spread, and on built-in noise that spread IS the effect
+        // -- see setNoiseUnison.
         float noiseSample = 0.0f;
+        float noiseRight = 0.0f;
 
         if (noiseUserSlot != nullptr)
         {
@@ -1909,40 +1959,73 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             // knob as its volume and the noise shelves as its tone controls. So it
             // goes through generateWaveform like the others, and a non-looping
             // sample in it stops after one pass like the others.
-            noiseSample = generateWaveform(noiseWaveAngle, noiseType, noiseUserSlot,
-                                           noiseWaveFreq, &noiseOneShot);
+            //
+            // Being a real oscillator, its unison is the ordinary one: detuned
+            // copies that beat against each other, compensated by how far apart
+            // they are.
+            if (noiseUnison.active())
+            {
+                noiseSample = renderUnison(noiseUnison, noiseType, noiseUserSlot, noiseWaveFreq,
+                                           noiseWaveAngleDelta, {}, false, noiseRight);
+            }
+            else
+            {
+                noiseSample = generateWaveform(noiseWaveAngle, noiseType, noiseUserSlot,
+                                               noiseWaveFreq, &noiseOneShot);
+                noiseRight = noiseSample;
+            }
+        }
+        else if (noiseUnison.active())
+        {
+            // Built-in noise, several copies. Each is its OWN stream -- white
+            // draws again from the same generator, which is what a generator is
+            // for; pink gets its own rows, because sharing one would run it N
+            // times too fast and make the noise brighter as Voices went up.
+            //
+            // Detune is not read here and cannot be: there is no pitch to pull
+            // apart. Width is the whole point -- independent streams panned to
+            // different places is a stereo noise field, where one stream panned
+            // anywhere is still mono.
+            float l = 0.0f;
+            float r = 0.0f;
+
+            for (int i = 0; i < noiseUnison.voices; ++i)
+            {
+                const float v = (noiseType == White)
+                              ? (random.nextFloat() * 2.0f - 1.0f)
+                              : (i == 0 ? nextPinkSample (pinkState, pinkSum, pinkNoiseCounter)
+                                        : nextPinkSample (pinkCopies[i - 1].state,
+                                                          pinkCopies[i - 1].sum,
+                                                          pinkCopies[i - 1].counter));
+
+                l += v * noiseUnison.copies[i].gainLeft;
+                r += v * noiseUnison.copies[i].gainRight;
+            }
+
+            // 1/sqrt(N), not UnisonState::compensation. These copies are
+            // decorrelated at every detune setting, so the coherence term that
+            // one carries would be answering a question noise never asks.
+            noiseSample = l * noiseIncoherentComp;
+            noiseRight  = r * noiseIncoherentComp;
         }
         else if (noiseType == White)
         {
             noiseSample = random.nextFloat() * 2.0f - 1.0f;
+            noiseRight = noiseSample;
         }
         else // Pink
         {
-            // Voss-McCartney update (16 rows). The row index is the index of the lowest
-            // set bit of a running counter. With only pinkState[0..15], that index must stay â‰¤15.
-            // The old int counter could reach 65536 â†’ bitPos 16 â†’ out-of-bounds writes and
-            // intermittent digital garbage (often bright/harsh) after ~1.3 s @ 48 kHz per voice.
-            pinkNoiseCounter = (pinkNoiseCounter + 1u) & 0xFFFFu;
-            std::uint32_t p = pinkNoiseCounter;
-            if (p == 0u)
-                p = 1u;
-            const std::uint32_t lowestChangedBitU = p & static_cast<std::uint32_t>(-static_cast<std::int32_t>(p));
-            int bitPos = 0;
-            for (std::uint32_t t = lowestChangedBitU; (t >>= 1u) != 0u;)
-                ++bitPos;
-            bitPos = juce::jmin(bitPos, static_cast<int>(pinkState.size()) - 1);
-
-            float newVal = (random.nextFloat() * 2.0f - 1.0f) * 0.0625f;
-            pinkSum -= pinkState[bitPos];
-            pinkSum += newVal;
-            pinkState[bitPos] = newVal;
-            
-            noiseSample = pinkSum * 3.8f;  // scaling to roughly match white noise RMS level
+            noiseSample = nextPinkSample (pinkState, pinkSum, pinkNoiseCounter);
+            noiseRight = noiseSample;
         }
-        
+
         // Apply noise EQ filters (low shelf and high shelf)
         // Process through low shelf first, then high shelf
         // Use a small temporary buffer for processing
+        //
+        // BOTH sides, through their own filter state. One filter over the left
+        // only would leave the right unshelved, and the two shelf knobs would
+        // tilt a spread noise field off to one side.
         float filteredNoise = noiseSample;
         float* channelData[1] = { &filteredNoise };
         juce::dsp::AudioBlock<float> noiseBlock(channelData, 1, 1);
@@ -1952,6 +2035,26 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         if (highShelfAmount != 0.0f)
             highShelfFilter.process(noiseContext);
         noiseSample = filteredNoise;
+
+        // The right side only when the two actually differ. With Width at zero
+        // they hold the same number, and a second filter would compute a copy of
+        // the first -- per voice, per sample, for nothing.
+        if (noiseUnison.active())
+        {
+            float filteredRight = noiseRight;
+            float* rightData[1] = { &filteredRight };
+            juce::dsp::AudioBlock<float> rightBlock(rightData, 1, 1);
+            juce::dsp::ProcessContextReplacing<float> rightContext(rightBlock);
+            if (lowShelfAmount != 0.0f)
+                lowShelfFilterR.process(rightContext);
+            if (highShelfAmount != 0.0f)
+                highShelfFilterR.process(rightContext);
+            noiseRight = filteredRight;
+        }
+        else
+        {
+            noiseRight = noiseSample;
+        }
         
         // Step 4: Apply independent levels to each source (real-time safe: atomic parameter reads)
         // LFO volume modulation: multiply by (1 + mod) so depth scales 0-2x at full LFO swing
@@ -1962,7 +2065,9 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         float osc2Out = osc2Sample * osc2Gain;
         float osc1OutR = osc1Right * osc1Gain;
         float osc2OutR = osc2Right * osc2Gain;
-        float noiseOut = noiseSample * noiseLevel * 0.75f * juce::jlimit(0.0f, 2.0f, 1.0f + noiseVolMod);
+        const float noiseGain = noiseLevel * 0.75f * juce::jlimit(0.0f, 2.0f, 1.0f + noiseVolMod);
+        float noiseOut = noiseSample * noiseGain;
+        float noiseOutR = noiseRight * noiseGain;
 
         // Step 5: Stereo mixing with per-oscillator pan (gains cached per block above)
         //
@@ -1972,7 +2077,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // rather than collapsing it, and a centred pan leaves the recording's own
         // width untouched.
         float leftMix = osc1Out * gainL1 + osc2Out * gainL2 + noiseOut * centerGain + subOscSample * centerGain;
-        float rightMix = osc1OutR * gainR1 + osc2OutR * gainR2 + noiseOut * centerGain + subOscRight * centerGain;
+        float rightMix = osc1OutR * gainR1 + osc2OutR * gainR2 + noiseOutR * centerGain + subOscRight * centerGain;
         
         // Step 6: Process envelopes (returns current amplitude value 0.0-1.0)
         // JUCE's ADSR handles all four stages automatically: Attack â†’ Decay â†’ Sustain â†’ Release
@@ -2600,6 +2705,8 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
     juce::dsp::ProcessSpec eqSpec{ sampleRate, maxBlockSize, 1 };
     lowShelfFilter.prepare(eqSpec);
     highShelfFilter.prepare(eqSpec);
+    lowShelfFilterR.prepare(eqSpec);
+    highShelfFilterR.prepare(eqSpec);
     updateNoiseEqFilters();
     
     // Update filter parameters AFTER filter is prepared
@@ -2715,6 +2822,8 @@ void SynthVoice::setCurrentSampleRate(double newRate)
         juce::dsp::ProcessSpec eqSpec{ newRate, maxBlockSize, 1 };
         lowShelfFilter.prepare(eqSpec);
         highShelfFilter.prepare(eqSpec);
+        lowShelfFilterR.prepare(eqSpec);
+        highShelfFilterR.prepare(eqSpec);
         updateNoiseEqFilters();
         
         adsr.setSampleRate(newRate);

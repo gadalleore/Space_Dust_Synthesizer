@@ -333,6 +333,18 @@ void WaveformEditorComponent::paintDropIcon (juce::Graphics& g, juce::Rectangle<
     }
 }
 
+bool WaveformEditorComponent::hasShapingKnobs() const noexcept
+{
+    if (shapingControls == nullptr)
+        return false;
+
+    for (int i = 0; i < ShapingControls::numKnobs; ++i)
+        if (shapingControls->knobs[i] != nullptr)
+            return true;
+
+    return false;
+}
+
 PhaseShaper::Amounts WaveformEditorComponent::currentShaping() const
 {
     PhaseShaper::Amounts a;
@@ -1956,7 +1968,13 @@ void WaveformEditorComponent::resized()
     // the slot on screen: they act on the oscillator, and every waveform it plays
     // goes through them. Sitting them among the Load and Clear buttons would say
     // the opposite.
-    shapingGroup.setVisible (shapingControls != nullptr);
+    // The Unison box appears wherever there is a strip at all. The Wave Shaping
+    // box appears only where there are shaping knobs to put in it -- the noise
+    // source has unison and nothing to bend, and an empty box with a title on it
+    // would be worse than no box.
+    const bool withShaping = hasShapingKnobs();
+
+    shapingGroup.setVisible (withShaping);
     unisonGroup.setVisible (shapingControls != nullptr);
 
     if (shapingControls != nullptr)
@@ -1970,12 +1988,27 @@ void WaveformEditorComponent::resized()
         // Split by knob count, so a knob is the same size in both boxes. Five and
         // three, plus the padding each box spends on its own border.
         const int totalKnobs = shapingKnobCount + unisonKnobCount;
-        const int shapingWidth = (strip.getWidth() - groupPadding)
-                               * shapingKnobCount / totalKnobs;
+        const int unisonWidth = (strip.getWidth() - groupPadding)
+                              * unisonKnobCount / totalKnobs;
 
-        auto shapingArea = strip.removeFromLeft (shapingWidth);
-        strip.removeFromLeft (groupPadding);
-        auto unisonArea = strip;
+        juce::Rectangle<int> shapingArea;
+        juce::Rectangle<int> unisonArea;
+
+        if (withShaping)
+        {
+            shapingArea = strip.removeFromLeft (strip.getWidth() - groupPadding - unisonWidth);
+            strip.removeFromLeft (groupPadding);
+            unisonArea = strip;
+        }
+        else
+        {
+            // Alone, and CENTRED at the width it would have had beside a Wave
+            // Shaping box -- not stretched across the panel. Stretching it would
+            // make the noise source's Voices knob bigger than Oscillator 1's, and
+            // they are the same control.
+            unisonArea = strip.withWidth (unisonWidth)
+                              .withX (strip.getCentreX() - unisonWidth / 2);
+        }
 
         shapingGroup.setBounds (shapingArea);
         unisonGroup.setBounds (unisonArea);
@@ -2012,8 +2045,9 @@ void WaveformEditorComponent::resized()
             }
         };
 
-        layOutKnobs (shapingArea, shapingControls->knobs, shapingControls->labels,
-                     ShapingControls::numKnobs);
+        if (withShaping)
+            layOutKnobs (shapingArea, shapingControls->knobs, shapingControls->labels,
+                         ShapingControls::numKnobs);
 
         layOutKnobs (unisonArea, shapingControls->unisonKnobs, shapingControls->unisonLabels,
                      ShapingControls::numUnisonKnobs);
