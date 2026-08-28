@@ -1078,6 +1078,38 @@ private:
 
 In `Source/PluginProcessor.cpp`, move the body of the effects section (the calls from `reverb_.process` at line 2753 through `finalEQ_.process` at 2955, with their surrounding enable checks) into `runEffectsChain`, passing `startSampleInBlock` to the trance gate call.
 
+Each effect reads its own parameters inline, immediately before its `process` call —
+`safeGetParam(apvts, "reverbWetMix")` and friends. Those reads move with the section,
+so each chunk re-reads them. That is what makes the substitution in Task 4 a local
+one.
+
+**Every use of `numSamples` in the moved region must become `buffer.getNumSamples()`.**
+
+There are **15** of them between lines 2700 and 2960. This is not tidying — it is the
+one thing in this task that can corrupt memory. `numSamples` is a local in
+`processBlock` holding the whole block length. Inside `runEffectsChain` operating on a
+32-sample chunk view, a line like
+
+```cpp
+    buffer.applyGain (0, 0, numSamples, reverbDrive);   // WRONG in a chunk
+```
+
+would apply gain to 512 samples starting at the chunk's own offset, running off the
+end of the buffer. It must read:
+
+```cpp
+    buffer.applyGain (0, 0, buffer.getNumSamples(), reverbDrive);
+```
+
+The guard conditions (`&& numSamples > 0`) need the same change. After moving the
+section, confirm none are left:
+
+```bash
+awk '/^void SpaceDustAudioProcessor::runEffectsChain/,/^}/' Source/PluginProcessor.cpp | grep -n "numSamples" | grep -v "getNumSamples"
+```
+
+Expected: no output.
+
 - [ ] **Step 6: Call it chunked or whole**
 
 At the point in `processBlock` where the effects section used to begin:
