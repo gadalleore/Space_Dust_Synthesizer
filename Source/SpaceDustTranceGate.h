@@ -39,8 +39,14 @@ public:
     void prepare(const juce::dsp::ProcessSpec& spec);
     void reset();
     void setParameters(const Parameters& p);
+    /** sampleOffset is how far into the host's current block this buffer starts.
+
+        The gate works out its own position in the bar from the playhead, and the
+        playhead reports the position of the BLOCK. Called on 32-sample chunks
+        without this, it would read the same position sixteen times and its grid
+        would stand still while the audio moved. */
     void process(juce::AudioBuffer<float>& buffer, double sampleRate,
-                 juce::AudioPlayHead* playHead);
+                 juce::AudioPlayHead* playHead, int sampleOffset = 0);
 
 private:
     float getStepValue(float phase) const;

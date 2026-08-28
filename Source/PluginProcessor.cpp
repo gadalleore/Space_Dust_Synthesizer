@@ -2721,241 +2721,28 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         }
     }
     
-    //==============================================================================
-    // -- Reverb Effect --
-    bool reverbEnabled = safeGetParam(apvts, "reverbEnabled") > 0.5f;
-    float reverbDecayTime = safeGetParam(apvts, "reverbDecayTime");
-    if (reverbEnabled && buffer.getNumChannels() >= 2 && numSamples > 0)
+    // Whole block unless something needs the chain finer than that. A patch that
+    // modulates no effect parameter costs exactly what it cost before, and
+    // produces exactly the same samples -- which tools/chunkaudit proves.
+    if (! forceChunking && ! anyEffectParameterIsModulated())
     {
-        // Decay at minimum: flush reverb once and bypass (Void Verb still diffuses when decay_ == 0).
-        if (reverbDecayTime <= 0.001f)
+        runEffectsChain (buffer, 0);
+    }
+    else
+    {
+        const int total = buffer.getNumSamples();
+
+        for (int start = 0; start < total; start += effectChunkSamples)
         {
-            if (lastReverbDecayForBypass_ > 0.001f || lastReverbDecayForBypass_ < 0.0f)
-                reverb_.reset();
-        }
-        else
-        {
-            float reverbWetMix = safeGetParam(apvts, "reverbWetMix");
-            float reverbDrive = std::pow(10.0f, reverbWetMix * 3.0f / 20.0f);
-            buffer.applyGain(0, 0, numSamples, reverbDrive);
-            buffer.applyGain(1, 0, numSamples, reverbDrive);
-            SpaceDustReverb::Parameters rp;
-            if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"reverbType", 1}.getParamID())))
-                rp.type = p->getIndex();
-            else
-                rp.type = 0;
-            rp.wetMix = reverbWetMix;
-            rp.decayTime = reverbDecayTime;
-            rp.filterOn = safeGetParam(apvts, "reverbFilterShow") > 0.5f;
-            rp.filterWarmSaturation = safeGetParam(apvts, "reverbFilterWarmSaturation") > 0.5f;
-            rp.filterHPCutoff = safeGetParam(apvts, "reverbFilterHPCutoff");
-            rp.filterHPResonance = safeGetParam(apvts, "reverbFilterHPResonance");
-            rp.filterLPCutoff = safeGetParam(apvts, "reverbFilterLPCutoff");
-            rp.filterLPResonance = safeGetParam(apvts, "reverbFilterLPResonance");
-            reverb_.setParameters(rp);
-            reverb_.process(buffer);
-        }
-        lastReverbDecayForBypass_ = reverbDecayTime;
-    }
-    else if (!reverbEnabled)
-    {
-        lastReverbDecayForBypass_ = -1.0f;
-    }
+            const int len = juce::jmin (effectChunkSamples, total - start);
 
-    //==============================================================================
-    // -- Grain Delay Effect --
-    bool grainDelayEnabled = safeGetParam(apvts, "grainDelayEnabled") > 0.5f;
-    if (grainDelayEnabled && buffer.getNumChannels() >= 2 && numSamples > 0)
-    {
-        float grainMix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "grainDelayMix") * 0.01f);
-        float grainDrive = std::pow(10.0f, grainMix * 3.0f / 20.0f);
-        buffer.applyGain(0, 0, numSamples, grainDrive);
-        buffer.applyGain(1, 0, numSamples, grainDrive);
-        SpaceDustGrainDelay::Parameters gp;
-        gp.enabled = true;
-        gp.delayMs = juce::jlimit(20.0f, 2000.0f, safeGetParam(apvts, "grainDelayTime"));
-        gp.grainSizeMs = juce::jlimit(10.0f, 500.0f, safeGetParam(apvts, "grainDelaySize"));
-        gp.pitchSemitones = juce::jlimit(-12.0f, 12.0f, safeGetParam(apvts, "grainDelayPitch"));
-        gp.mix = grainMix;
-        // Decay is 0â€“150% in the APVTS; getRawParameterValue is normalized â€” must use get() for real percent.
-        float grainDecayPct = 0.0f;
-        if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("grainDelayDecay")))
-            grainDecayPct = p->get();
-        gp.decay = juce::jlimit(0.0f, 1.0f, grainDecayPct / 150.0f);
-        gp.density = juce::jlimit(1.0f, 8.0f, safeGetParam(apvts, "grainDelayDensity"));
-        gp.jitter = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "grainDelayJitter") * 0.01f);
-        gp.pingPong = safeGetParam(apvts, "grainDelayPingPong") > 0.5f;
-        gp.filterOn = safeGetParam(apvts, "grainDelayFilterShow") > 0.5f;
-        gp.hpCutoffHz = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "grainDelayFilterHPCutoff"));
-        gp.lpCutoffHz = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "grainDelayFilterLPCutoff"));
-        gp.hpRes = safeGetParam(apvts, "grainDelayFilterHPResonance");
-        gp.lpRes = safeGetParam(apvts, "grainDelayFilterLPResonance");
-        gp.warmSaturation = safeGetParam(apvts, "grainDelayFilterWarmSaturation") > 0.5f;
-        grainDelay_.setParameters(gp);
-        grainDelay_.process(buffer);
-    }
+            // A view onto the same memory, not a copy.
+            juce::AudioBuffer<float> chunk (buffer.getArrayOfWritePointers(),
+                                            buffer.getNumChannels(),
+                                            start,
+                                            len);
 
-    //==============================================================================
-    // -- Phaser Effect --
-    bool phaserEnabled = safeGetParam(apvts, "phaserEnabled") > 0.5f;
-    if (phaserEnabled && buffer.getNumChannels() >= 2 && numSamples > 0)
-    {
-        float phaserMix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "phaserMix"));
-        float phaserDrive = std::pow(10.0f, phaserMix * 3.0f / 20.0f);
-        buffer.applyGain(0, 0, numSamples, phaserDrive);
-        buffer.applyGain(1, 0, numSamples, phaserDrive);
-        SpaceDustPhaser::Parameters pp;
-        pp.enabled = true;
-        pp.rateHz = juce::jlimit(0.05f, 200.0f, safeGetParam(apvts, "phaserRate"));
-        pp.depth = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "phaserDepth"));
-        pp.feedback = juce::jlimit(-1.0f, 1.0f, safeGetParam(apvts, "phaserFeedback"));
-        pp.scriptMode = safeGetParam(apvts, "phaserScriptMode") > 0.5f;
-        pp.mix = phaserMix;
-        pp.centreHz = juce::jlimit(50.0f, 2000.0f, safeGetParam(apvts, "phaserCentre"));
-        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"phaserStages", 1}.getParamID())))
-            pp.numStages = (p->getIndex() == 0) ? 4 : 6;
-        else
-            pp.numStages = 4;
-        pp.stereoOffset = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "phaserStereoOffset"));
-        pp.vintageMode = safeGetParam(apvts, "phaserVintageMode") > 0.5f;
-        phaser_.setParameters(pp);
-        phaser_.process(buffer);
-    }
-
-    //==============================================================================
-    // -- Flanger Effect --
-    bool flangerEnabled = safeGetParam(apvts, "flangerEnabled") > 0.5f;
-    if (flangerEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
-    {
-        float flangerMix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "flangerMix"));
-        float flangerDrive = std::pow(10.0f, flangerMix * 3.0f / 20.0f);
-        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
-            buffer.applyGain(ch, 0, numSamples, flangerDrive);
-        SpaceDustFlanger::Parameters fp;
-        fp.enabled = true;
-        fp.rateHz = juce::jlimit(0.05f, 200.0f, safeGetParam(apvts, "flangerRate"));
-        fp.depth = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "flangerDepth"));
-        fp.feedback = juce::jlimit(-1.0f, 1.0f, safeGetParam(apvts, "flangerFeedback"));
-        fp.width = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "flangerWidth"));
-        fp.mix = flangerMix;
-        flanger_.setParameters(fp);
-        flanger_.process(buffer);
-    }
-
-    // -- Transient (Post: end of chain, before late BC) --
-    if (transientEnabled && transientPostEffect)
-    {
-        SpaceDustTransient::Parameters tp;
-        tp.enabled = true;
-        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"transientType", 1}.getParamID())))
-            tp.type = p->getIndex();
-        tp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientMix"));
-        tp.postEffect = true;
-        tp.kaDonk = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientKaDonk"));
-        tp.coarse = juce::jlimit(-24.0f, 24.0f, safeGetParam(apvts, "transientCoarse"));
-        tp.length = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientLength"));
-        transient_.setParameters(tp);
-        transient_.process(buffer);
-    }
-
-    // -- Bit Crusher (late: after Flanger, before TG) --
-    if (bitCrusherEnabled && bitCrusherPostEffect)
-        runBitCrusher();
-
-    // -- Trance Gate (Post: when Post Effect ON, always last) --
-    if (tranceGateEnabled && tranceGatePostEffect)
-        runTranceGate();
-
-    //==============================================================================
-    // -- Compressor (Saturation Color) - after BitCrusher/TranceGate, before Soft Clipper --
-    bool compressorEnabled = safeGetParam(apvts, "compressorEnabled") > 0.5f;
-    if (compressorEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
-    {
-        SpaceDustCompressor::Parameters cp;
-        cp.enabled = true;
-        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"compressorType", 1}.getParamID())))
-            cp.type = p->getIndex();
-        else
-            cp.type = 0;
-        cp.thresholdDb = juce::jlimit(-60.0f, 0.0f, safeGetParam(apvts, "compressorThreshold"));
-        cp.ratio = juce::jlimit(1.0f, 20.0f, safeGetParam(apvts, "compressorRatio"));
-        cp.attackMs = juce::jlimit(0.1f, 80.0f, safeGetParam(apvts, "compressorAttack"));
-        cp.releaseMs = juce::jlimit(5.0f, 1200.0f, safeGetParam(apvts, "compressorRelease"));
-        cp.makeupGainDb = juce::jlimit(0.0f, 24.0f, safeGetParam(apvts, "compressorMakeup"));
-        cp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "compressorMix"));
-        cp.autoRelease = safeGetParam(apvts, "compressorAutoRelease") > 0.5f;
-        cp.softClip = safeGetParam(apvts, "compressorSoftClip") > 0.5f;
-        compressor_.setParameters(cp);
-        compressor_.process(buffer);
-    }
-
-    //==============================================================================
-    // -- Soft Clipper (Saturation Color) - before master volume --
-    bool softClipperEnabled = safeGetParam(apvts, "softClipperEnabled") > 0.5f;
-    if (softClipperEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
-    {
-        SpaceDustSoftClipper::Parameters sp;
-        sp.enabled = true;
-        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"softClipperMode", 1}.getParamID())))
-            sp.mode = p->getIndex();
-        else
-            sp.mode = 0;
-        sp.drive = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "softClipperDrive"));
-        sp.knee = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "softClipperKnee"));
-        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"softClipperOversample", 1}.getParamID())))
-        {
-            const int idx = p->getIndex();
-            sp.oversample = (idx == 0) ? 2 : (idx == 1) ? 4 : (idx == 2) ? 8 : 16;
-        }
-        else
-            sp.oversample = 2;
-        sp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "softClipperMix"));
-        softClipper_.setParameters(sp);
-        softClipper_.process(buffer);
-    }
-    
-    //==============================================================================
-    // -- Lo-Fi (Saturation Color) - end of effects chain, before master volume --
-    bool lofiEnabled = safeGetParam(apvts, "lofiEnabled") > 0.5f;
-    if (lofiEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
-    {
-        SpaceDustLofi::Parameters lp;
-        lp.enabled = true;
-        lp.amount = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "lofiAmount"));
-        lofi_.setParameters(lp);
-        lofi_.process(buffer);
-    }
-
-    //==============================================================================
-    // -- Final EQ (5-band, end of chain, Saturation Color tab) --
-    {
-        bool finalEQEnabled = safeGetParam(apvts, "finalEQEnabled") > 0.5f;
-        if (finalEQEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
-        {
-            // Each band's shape is its own parameter now. The fallback index is the
-            // band's original fixed type, so a preset saved before the Type dropdown
-            // existed still loads with the EQ it was built on.
-            const int defaultTypeIndex[5] = {
-                static_cast<int>(SpaceDustFinalEQ::BandType::LowShelf),
-                static_cast<int>(SpaceDustFinalEQ::BandType::Bell),
-                static_cast<int>(SpaceDustFinalEQ::BandType::Bell),
-                static_cast<int>(SpaceDustFinalEQ::BandType::Bell),
-                static_cast<int>(SpaceDustFinalEQ::BandType::HighShelf)
-            };
-            SpaceDustFinalEQ::Parameters fep;
-            fep.enabled = true;
-            for (int i = 0; i < 5; ++i)
-            {
-                juce::String n(i + 1);
-                fep.bands[i].freqHz = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "finalEQB" + n + "Freq", 1000.0f));
-                fep.bands[i].gainDb = juce::jlimit(-15.0f, 15.0f,    safeGetParam(apvts, "finalEQB" + n + "Gain"));
-                fep.bands[i].Q      = juce::jlimit(0.1f, 10.0f,      safeGetParam(apvts, "finalEQB" + n + "Q", 1.0f));
-                fep.bands[i].type   = SpaceDustFinalEQ::typeFromChoiceIndex(
-                    static_cast<int>(safeGetParam(apvts, "finalEQB" + n + "Type",
-                                                  static_cast<float>(defaultTypeIndex[i]))));
-            }
-            finalEQ_.setParameters(fep);
-            finalEQ_.process(buffer);
+            runEffectsChain (chunk, start);
         }
     }
 
@@ -3084,6 +2871,295 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 }
 
 //==============================================================================
+void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer, int startSampleInBlock)
+{
+    //==============================================================================
+    // -- Reverb Effect --
+    bool reverbEnabled = safeGetParam(apvts, "reverbEnabled") > 0.5f;
+    float reverbDecayTime = safeGetParam(apvts, "reverbDecayTime");
+    if (reverbEnabled && buffer.getNumChannels() >= 2 && buffer.getNumSamples() > 0)
+    {
+        // Decay at minimum: flush reverb once and bypass (Void Verb still diffuses when decay_ == 0).
+        if (reverbDecayTime <= 0.001f)
+        {
+            if (lastReverbDecayForBypass_ > 0.001f || lastReverbDecayForBypass_ < 0.0f)
+                reverb_.reset();
+        }
+        else
+        {
+            float reverbWetMix = safeGetParam(apvts, "reverbWetMix");
+            float reverbDrive = std::pow(10.0f, reverbWetMix * 3.0f / 20.0f);
+            buffer.applyGain(0, 0, buffer.getNumSamples(), reverbDrive);
+            buffer.applyGain(1, 0, buffer.getNumSamples(), reverbDrive);
+            SpaceDustReverb::Parameters rp;
+            if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"reverbType", 1}.getParamID())))
+                rp.type = p->getIndex();
+            else
+                rp.type = 0;
+            rp.wetMix = reverbWetMix;
+            rp.decayTime = reverbDecayTime;
+            rp.filterOn = safeGetParam(apvts, "reverbFilterShow") > 0.5f;
+            rp.filterWarmSaturation = safeGetParam(apvts, "reverbFilterWarmSaturation") > 0.5f;
+            rp.filterHPCutoff = safeGetParam(apvts, "reverbFilterHPCutoff");
+            rp.filterHPResonance = safeGetParam(apvts, "reverbFilterHPResonance");
+            rp.filterLPCutoff = safeGetParam(apvts, "reverbFilterLPCutoff");
+            rp.filterLPResonance = safeGetParam(apvts, "reverbFilterLPResonance");
+            reverb_.setParameters(rp);
+            reverb_.process(buffer);
+        }
+        lastReverbDecayForBypass_ = reverbDecayTime;
+    }
+    else if (!reverbEnabled)
+    {
+        lastReverbDecayForBypass_ = -1.0f;
+    }
+
+    //==============================================================================
+    // -- Grain Delay Effect --
+    bool grainDelayEnabled = safeGetParam(apvts, "grainDelayEnabled") > 0.5f;
+    if (grainDelayEnabled && buffer.getNumChannels() >= 2 && buffer.getNumSamples() > 0)
+    {
+        float grainMix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "grainDelayMix") * 0.01f);
+        float grainDrive = std::pow(10.0f, grainMix * 3.0f / 20.0f);
+        buffer.applyGain(0, 0, buffer.getNumSamples(), grainDrive);
+        buffer.applyGain(1, 0, buffer.getNumSamples(), grainDrive);
+        SpaceDustGrainDelay::Parameters gp;
+        gp.enabled = true;
+        gp.delayMs = juce::jlimit(20.0f, 2000.0f, safeGetParam(apvts, "grainDelayTime"));
+        gp.grainSizeMs = juce::jlimit(10.0f, 500.0f, safeGetParam(apvts, "grainDelaySize"));
+        gp.pitchSemitones = juce::jlimit(-12.0f, 12.0f, safeGetParam(apvts, "grainDelayPitch"));
+        gp.mix = grainMix;
+        // Decay is 0â€“150% in the APVTS; getRawParameterValue is normalized â€” must use get() for real percent.
+        float grainDecayPct = 0.0f;
+        if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("grainDelayDecay")))
+            grainDecayPct = p->get();
+        gp.decay = juce::jlimit(0.0f, 1.0f, grainDecayPct / 150.0f);
+        gp.density = juce::jlimit(1.0f, 8.0f, safeGetParam(apvts, "grainDelayDensity"));
+        gp.jitter = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "grainDelayJitter") * 0.01f);
+        gp.pingPong = safeGetParam(apvts, "grainDelayPingPong") > 0.5f;
+        gp.filterOn = safeGetParam(apvts, "grainDelayFilterShow") > 0.5f;
+        gp.hpCutoffHz = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "grainDelayFilterHPCutoff"));
+        gp.lpCutoffHz = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "grainDelayFilterLPCutoff"));
+        gp.hpRes = safeGetParam(apvts, "grainDelayFilterHPResonance");
+        gp.lpRes = safeGetParam(apvts, "grainDelayFilterLPResonance");
+        gp.warmSaturation = safeGetParam(apvts, "grainDelayFilterWarmSaturation") > 0.5f;
+        grainDelay_.setParameters(gp);
+        grainDelay_.process(buffer);
+    }
+
+    //==============================================================================
+    // -- Phaser Effect --
+    bool phaserEnabled = safeGetParam(apvts, "phaserEnabled") > 0.5f;
+    if (phaserEnabled && buffer.getNumChannels() >= 2 && buffer.getNumSamples() > 0)
+    {
+        float phaserMix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "phaserMix"));
+        float phaserDrive = std::pow(10.0f, phaserMix * 3.0f / 20.0f);
+        buffer.applyGain(0, 0, buffer.getNumSamples(), phaserDrive);
+        buffer.applyGain(1, 0, buffer.getNumSamples(), phaserDrive);
+        SpaceDustPhaser::Parameters pp;
+        pp.enabled = true;
+        pp.rateHz = juce::jlimit(0.05f, 200.0f, safeGetParam(apvts, "phaserRate"));
+        pp.depth = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "phaserDepth"));
+        pp.feedback = juce::jlimit(-1.0f, 1.0f, safeGetParam(apvts, "phaserFeedback"));
+        pp.scriptMode = safeGetParam(apvts, "phaserScriptMode") > 0.5f;
+        pp.mix = phaserMix;
+        pp.centreHz = juce::jlimit(50.0f, 2000.0f, safeGetParam(apvts, "phaserCentre"));
+        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"phaserStages", 1}.getParamID())))
+            pp.numStages = (p->getIndex() == 0) ? 4 : 6;
+        else
+            pp.numStages = 4;
+        pp.stereoOffset = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "phaserStereoOffset"));
+        pp.vintageMode = safeGetParam(apvts, "phaserVintageMode") > 0.5f;
+        phaser_.setParameters(pp);
+        phaser_.process(buffer);
+    }
+
+    //==============================================================================
+    // -- Flanger Effect --
+    bool flangerEnabled = safeGetParam(apvts, "flangerEnabled") > 0.5f;
+    if (flangerEnabled && buffer.getNumChannels() >= 1 && buffer.getNumSamples() > 0)
+    {
+        float flangerMix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "flangerMix"));
+        float flangerDrive = std::pow(10.0f, flangerMix * 3.0f / 20.0f);
+        for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
+            buffer.applyGain(ch, 0, buffer.getNumSamples(), flangerDrive);
+        SpaceDustFlanger::Parameters fp;
+        fp.enabled = true;
+        fp.rateHz = juce::jlimit(0.05f, 200.0f, safeGetParam(apvts, "flangerRate"));
+        fp.depth = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "flangerDepth"));
+        fp.feedback = juce::jlimit(-1.0f, 1.0f, safeGetParam(apvts, "flangerFeedback"));
+        fp.width = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "flangerWidth"));
+        fp.mix = flangerMix;
+        flanger_.setParameters(fp);
+        flanger_.process(buffer);
+    }
+
+    // -- Transient (Post: end of chain, before late BC) --
+    {
+        const bool transientEnabled = safeGetParam(apvts, "transientEnabled") > 0.5f;
+        const bool transientPostEffect = safeGetParam(apvts, "transientPostEffect") > 0.5f;
+        if (transientEnabled && transientPostEffect)
+        {
+            SpaceDustTransient::Parameters tp;
+            tp.enabled = true;
+            if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"transientType", 1}.getParamID())))
+                tp.type = p->getIndex();
+            tp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientMix"));
+            tp.postEffect = true;
+            tp.kaDonk = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientKaDonk"));
+            tp.coarse = juce::jlimit(-24.0f, 24.0f, safeGetParam(apvts, "transientCoarse"));
+            tp.length = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientLength"));
+            transient_.setParameters(tp);
+            transient_.process(buffer);
+        }
+    }
+
+    // -- Bit Crusher (late: after Flanger, before TG) --
+    {
+        const bool bitCrusherEnabled = safeGetParam(apvts, "bitCrusherEnabled") > 0.5f;
+        const bool bitCrusherPostEffect = safeGetParam(apvts, "bitCrusherPostEffect") > 0.5f;
+        if (bitCrusherEnabled && bitCrusherPostEffect && buffer.getNumChannels() >= 1 && buffer.getNumSamples() > 0)
+        {
+            SpaceDustBitCrusher::Parameters bp;
+            bp.enabled = true;
+            bp.amount = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherAmount"));
+            bp.rate = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherRate"));
+            bp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherMix"));
+            bitCrusher_.setParameters(bp);
+            bitCrusher_.process(buffer);
+        }
+    }
+
+    // -- Trance Gate (Post: when Post Effect ON, always last) --
+    {
+        const bool tranceGateEnabled = safeGetParam(apvts, "tranceGateEnabled") > 0.5f;
+        const bool tranceGatePostEffect = safeGetParam(apvts, "tranceGatePostEffect") > 0.5f;
+        if (tranceGateEnabled && tranceGatePostEffect && buffer.getNumChannels() >= 2 && buffer.getNumSamples() > 0)
+        {
+            SpaceDustTranceGate::Parameters tp;
+            tp.enabled = true;
+            if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"tranceGateSteps", 1}.getParamID())))
+                tp.numSteps = (p->getIndex() == 0) ? 4 : (p->getIndex() == 1) ? 8 : 16;
+            else
+                tp.numSteps = 8;
+            tp.sync = safeGetParam(apvts, "tranceGateSync") > 0.5f;
+            tp.rate = safeGetParam(apvts, "tranceGateRate");
+            tp.attackMs = safeGetParam(apvts, "tranceGateAttack");
+            tp.releaseMs = safeGetParam(apvts, "tranceGateRelease");
+            tp.mix = safeGetParam(apvts, "tranceGateMix");
+            for (int s = 0; s < 16; ++s)
+            {
+                juce::String stepId = "tranceGateStep" + juce::String(s + 1);
+                if (auto* rp = apvts.getRawParameterValue(stepId))
+                    tp.stepOn[s] = rp->load() > 0.5f;
+            }
+            tranceGate_.setParameters(tp);
+            tranceGate_.process(buffer, currentSampleRate, getPlayHead(), startSampleInBlock);
+        }
+    }
+
+    //==============================================================================
+    // -- Compressor (Saturation Color) - after BitCrusher/TranceGate, before Soft Clipper --
+    bool compressorEnabled = safeGetParam(apvts, "compressorEnabled") > 0.5f;
+    if (compressorEnabled && buffer.getNumChannels() >= 1 && buffer.getNumSamples() > 0)
+    {
+        SpaceDustCompressor::Parameters cp;
+        cp.enabled = true;
+        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"compressorType", 1}.getParamID())))
+            cp.type = p->getIndex();
+        else
+            cp.type = 0;
+        cp.thresholdDb = juce::jlimit(-60.0f, 0.0f, safeGetParam(apvts, "compressorThreshold"));
+        cp.ratio = juce::jlimit(1.0f, 20.0f, safeGetParam(apvts, "compressorRatio"));
+        cp.attackMs = juce::jlimit(0.1f, 80.0f, safeGetParam(apvts, "compressorAttack"));
+        cp.releaseMs = juce::jlimit(5.0f, 1200.0f, safeGetParam(apvts, "compressorRelease"));
+        cp.makeupGainDb = juce::jlimit(0.0f, 24.0f, safeGetParam(apvts, "compressorMakeup"));
+        cp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "compressorMix"));
+        cp.autoRelease = safeGetParam(apvts, "compressorAutoRelease") > 0.5f;
+        cp.softClip = safeGetParam(apvts, "compressorSoftClip") > 0.5f;
+        compressor_.setParameters(cp);
+        compressor_.process(buffer);
+    }
+
+    //==============================================================================
+    // -- Soft Clipper (Saturation Color) - before master volume --
+    bool softClipperEnabled = safeGetParam(apvts, "softClipperEnabled") > 0.5f;
+    if (softClipperEnabled && buffer.getNumChannels() >= 1 && buffer.getNumSamples() > 0)
+    {
+        SpaceDustSoftClipper::Parameters sp;
+        sp.enabled = true;
+        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"softClipperMode", 1}.getParamID())))
+            sp.mode = p->getIndex();
+        else
+            sp.mode = 0;
+        sp.drive = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "softClipperDrive"));
+        sp.knee = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "softClipperKnee"));
+        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"softClipperOversample", 1}.getParamID())))
+        {
+            const int idx = p->getIndex();
+            sp.oversample = (idx == 0) ? 2 : (idx == 1) ? 4 : (idx == 2) ? 8 : 16;
+        }
+        else
+            sp.oversample = 2;
+        sp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "softClipperMix"));
+        softClipper_.setParameters(sp);
+        softClipper_.process(buffer);
+    }
+    
+    //==============================================================================
+    // -- Lo-Fi (Saturation Color) - end of effects chain, before master volume --
+    bool lofiEnabled = safeGetParam(apvts, "lofiEnabled") > 0.5f;
+    if (lofiEnabled && buffer.getNumChannels() >= 1 && buffer.getNumSamples() > 0)
+    {
+        SpaceDustLofi::Parameters lp;
+        lp.enabled = true;
+        lp.amount = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "lofiAmount"));
+        lofi_.setParameters(lp);
+        lofi_.process(buffer);
+    }
+
+    //==============================================================================
+    // -- Final EQ (5-band, end of chain, Saturation Color tab) --
+    {
+        bool finalEQEnabled = safeGetParam(apvts, "finalEQEnabled") > 0.5f;
+        if (finalEQEnabled && buffer.getNumChannels() >= 1 && buffer.getNumSamples() > 0)
+        {
+            // Each band's shape is its own parameter now. The fallback index is the
+            // band's original fixed type, so a preset saved before the Type dropdown
+            // existed still loads with the EQ it was built on.
+            const int defaultTypeIndex[5] = {
+                static_cast<int>(SpaceDustFinalEQ::BandType::LowShelf),
+                static_cast<int>(SpaceDustFinalEQ::BandType::Bell),
+                static_cast<int>(SpaceDustFinalEQ::BandType::Bell),
+                static_cast<int>(SpaceDustFinalEQ::BandType::Bell),
+                static_cast<int>(SpaceDustFinalEQ::BandType::HighShelf)
+            };
+            SpaceDustFinalEQ::Parameters fep;
+            fep.enabled = true;
+            for (int i = 0; i < 5; ++i)
+            {
+                juce::String n(i + 1);
+                fep.bands[i].freqHz = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "finalEQB" + n + "Freq", 1000.0f));
+                fep.bands[i].gainDb = juce::jlimit(-15.0f, 15.0f,    safeGetParam(apvts, "finalEQB" + n + "Gain"));
+                fep.bands[i].Q      = juce::jlimit(0.1f, 10.0f,      safeGetParam(apvts, "finalEQB" + n + "Q", 1.0f));
+                fep.bands[i].type   = SpaceDustFinalEQ::typeFromChoiceIndex(
+                    static_cast<int>(safeGetParam(apvts, "finalEQB" + n + "Type",
+                                                  static_cast<float>(defaultTypeIndex[i]))));
+            }
+            finalEQ_.setParameters(fep);
+            finalEQ_.process(buffer);
+        }
+    }
+}
+
+bool SpaceDustAudioProcessor::anyEffectParameterIsModulated() const noexcept
+{
+    // Task 4 replaces this BODY with a real check against the compiled routings.
+    // Declared in the header and defined here, never inline, so Task 4 has one
+    // definition to replace rather than two to reconcile.
+    return false;
+}
+
 void SpaceDustAudioProcessor::readSpectrumSamples(float* dest, int numSamples) const
 {
     constexpr int mask = spectrumFifoSize - 1;

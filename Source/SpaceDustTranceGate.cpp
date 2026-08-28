@@ -60,7 +60,7 @@ float SpaceDustTranceGate::smoothEnvelope(float raw, float current, bool rising)
 
 //==============================================================================
 void SpaceDustTranceGate::process(juce::AudioBuffer<float>& buffer, double sampleRate,
-                                  juce::AudioPlayHead* playHead)
+                                  juce::AudioPlayHead* playHead, int sampleOffset)
 {
     if (!params_.enabled || buffer.getNumSamples() == 0)
         return;
@@ -100,6 +100,14 @@ void SpaceDustTranceGate::process(juce::AudioBuffer<float>& buffer, double sampl
                 double ppq = *posInfo->getPpqPosition();
                 phaseStart = std::fmod(ppq / beatsPerCycle, 1.0);
                 if (phaseStart < 0.0) phaseStart += 1.0;
+
+                // This buffer may be a CHUNK that starts partway through the
+                // host's block, and the playhead reports the position of the
+                // BLOCK. Without this every chunk would restart the pattern at
+                // the same point, sixteen times a block, and the gate would
+                // stand still while the audio moved.
+                phaseStart += phaseIncrement * (double) sampleOffset;
+                phaseStart -= std::floor (phaseStart);
             }
             else
             {

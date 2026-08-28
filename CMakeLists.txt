@@ -708,6 +708,36 @@ if(ENABLE_UNISON_AUDIT)
 endif()
 
 #==============================================================================
+# Chunked effects chain audit. Renders the same notes with the effects chain run
+# whole and run in 32-sample pieces, and compares them bit for bit. Per-sample
+# modulation of an effect is only safe if these are identical.
+# Build:  cmake -B build -DENABLE_CHUNK_AUDIT=ON
+#         cmake --build build --config Release --target SpaceDustChunkAudit
+#==============================================================================
+option(ENABLE_CHUNK_AUDIT "Build the offline chunked-effects equality audit" OFF)
+if(ENABLE_CHUNK_AUDIT)
+    juce_add_console_app(SpaceDustChunkAudit PRODUCT_NAME "SpaceDustChunkAudit")
+    target_sources(SpaceDustChunkAudit PRIVATE tools/chunkaudit/chunk_audit_main.cpp)
+    target_include_directories(SpaceDustChunkAudit PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/Source")
+    target_link_libraries(SpaceDustChunkAudit PRIVATE
+        SpaceDust
+        SpaceDustBinaryData
+        juce::juce_audio_basics
+        juce::juce_audio_devices
+        juce::juce_audio_formats
+        juce::juce_audio_processors
+        juce::juce_audio_utils
+        juce::juce_core
+        juce::juce_data_structures
+        juce::juce_dsp
+        juce::juce_events
+        juce::juce_graphics
+        juce::juce_gui_basics
+        juce::juce_gui_extra)
+    message(STATUS "SpaceDustChunkAudit ENABLED.")
+endif()
+
+#==============================================================================
 # Transient Pre/Post filter routing test (plain Release, no sanitizer). A tiny
 # console app that drives the processor offline to confirm the "Post Effect"
 # toggle changes whether the Main filter colours the transient.

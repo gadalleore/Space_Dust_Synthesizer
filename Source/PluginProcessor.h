@@ -66,6 +66,24 @@ public:
 
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
 
+    /** Every effect, in order, over one buffer.
+
+        startSampleInBlock is how far into the host's block this buffer begins,
+        which the trance gate needs so its grid keeps moving when the chain is
+        called on chunks.
+
+        Split out of processBlock so it can be called once per block, or sixteen
+        times on 32-sample views of the same memory when an effect parameter is
+        modulated. */
+    void runEffectsChain (juce::AudioBuffer<float>& buffer, int startSampleInBlock);
+
+    /** Test hook: make the chain run chunked even with nothing modulated, so the
+        chunk audit can compare the two paths on the same patch. */
+    void setForceEffectChunkingForTests (bool shouldChunk) noexcept
+    {
+        forceChunking = shouldChunk;
+    }
+
     //==============================================================================
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override;
@@ -382,6 +400,19 @@ private:
     // the note stack desyncs from the host across a loop → wrong / stuck notes.
     bool   wasPlayingState = false;
     double lastPpqPosition = 0.0;
+
+    //==============================================================================
+    // -- Effects chain chunking --
+    bool forceChunking = false;
+
+    /** 32 samples is a control rate near 1400 Hz at 44.1 kHz -- smooth for any
+        LFO you can hear -- and short enough that no effect's own smoothing can
+        step audibly between pieces. */
+    static constexpr int effectChunkSamples = 32;
+
+    /** Whether any live routing lands on a parameter the effects chain reads.
+        Task 3 stubs this to false; Task 4 gives it the real answer. */
+    bool anyEffectParameterIsModulated() const noexcept;
 
     //==============================================================================
     // -- Reverb Effect State --
