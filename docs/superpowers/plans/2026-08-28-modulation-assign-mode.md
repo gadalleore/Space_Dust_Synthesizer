@@ -1015,7 +1015,34 @@ In `Source/SpaceDustTranceGate.h`, change the declaration:
                   int sampleOffset = 0);
 ```
 
-In `Source/SpaceDustTranceGate.cpp`, find where the playhead position is turned into a position in samples or beats, and add the offset to it before it is used. The exact line depends on the existing code; the rule is that the gate's position must advance by `sampleOffset` samples relative to what the playhead reported.
+In `Source/SpaceDustTranceGate.cpp`, the fix is in the PPQ branch at lines 97-103.
+It currently reads:
+
+```cpp
+            if (posInfo->getIsPlaying() && posInfo->getPpqPosition().hasValue())
+            {
+                // Host playing: align phase to beat position
+                double ppq = *posInfo->getPpqPosition();
+                phaseStart = std::fmod(ppq / beatsPerCycle, 1.0);
+                if (phaseStart < 0.0) phaseStart += 1.0;
+            }
+```
+
+Add the offset after the wrap:
+
+```cpp
+                // This buffer may be a CHUNK that starts partway through the
+                // host's block, and the playhead reports the position of the
+                // BLOCK. Without this every chunk would restart the pattern at
+                // the same point, sixteen times a block, and the gate would
+                // stand still while the audio moved.
+                phaseStart += phaseIncrement * (double) sampleOffset;
+                phaseStart -= std::floor (phaseStart);
+```
+
+**Do not touch the `else` branch.** When the host is stopped it uses the
+accumulated `phase_`, which already chains correctly from one call to the next, so
+adding an offset there would double-count.
 
 - [ ] **Step 5: Extract the effects chain into one function**
 
