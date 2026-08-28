@@ -2443,58 +2443,16 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // -- Effect order (TG/BC Post Effect toggles) --
     // TG Post OFF: TG first. BC Post OFF: BC before all effects (second, after TG). BC Post ON: BC late.
     // TG Post ON:  TG last.  BC Post OFF: BC before all effects (first). BC Post ON: BC late (after Flanger).
-    bool tranceGateEnabled = safeGetParam(apvts, "tranceGateEnabled") > 0.5f;
     bool tranceGatePostEffect = safeGetParam(apvts, "tranceGatePostEffect") > 0.5f;
-    bool bitCrusherEnabled = safeGetParam(apvts, "bitCrusherEnabled") > 0.5f;
     bool bitCrusherPostEffect = safeGetParam(apvts, "bitCrusherPostEffect") > 0.5f;
 
-    auto runBitCrusher = [&]()
-    {
-        if (bitCrusherEnabled && buffer.getNumChannels() >= 1 && numSamples > 0)
-        {
-            SpaceDustBitCrusher::Parameters bp;
-            bp.enabled = true;
-            bp.amount = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherAmount"));
-            bp.rate = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherRate"));
-            bp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherMix"));
-            bitCrusher_.setParameters(bp);
-            bitCrusher_.process(buffer);
-        }
-    };
-
-    auto runTranceGate = [&]()
-    {
-        if (tranceGateEnabled && buffer.getNumChannels() >= 2 && numSamples > 0)
-        {
-            SpaceDustTranceGate::Parameters tp;
-            tp.enabled = true;
-            if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"tranceGateSteps", 1}.getParamID())))
-                tp.numSteps = (p->getIndex() == 0) ? 4 : (p->getIndex() == 1) ? 8 : 16;
-            else
-                tp.numSteps = 8;
-            tp.sync = safeGetParam(apvts, "tranceGateSync") > 0.5f;
-            tp.rate = safeGetParam(apvts, "tranceGateRate");
-            tp.attackMs = safeGetParam(apvts, "tranceGateAttack");
-            tp.releaseMs = safeGetParam(apvts, "tranceGateRelease");
-            tp.mix = safeGetParam(apvts, "tranceGateMix");
-            for (int s = 0; s < 16; ++s)
-            {
-                juce::String stepId = "tranceGateStep" + juce::String(s + 1);
-                if (auto* rp = apvts.getRawParameterValue(stepId))
-                    tp.stepOn[s] = rp->load() > 0.5f;
-            }
-            tranceGate_.setParameters(tp);
-            tranceGate_.process(buffer, currentSampleRate, getPlayHead());
-        }
-    };
-
     // -- 1) Trance Gate (Pre: when Post Effect OFF) --
-    if (tranceGateEnabled && !tranceGatePostEffect)
-        runTranceGate();
+    if (! tranceGatePostEffect)
+        processTranceGate (buffer, 0);
 
     // -- 2) Bit Crusher (early: before all effects except TG. When TG Post OFF, TG is first so BC is second) --
-    if (bitCrusherEnabled && !bitCrusherPostEffect)
-        runBitCrusher();
+    if (! bitCrusherPostEffect)
+        processBitCrusher (buffer, 0);
 
     //==============================================================================
     // -- Delay Effect --
@@ -2871,6 +2829,55 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 }
 
 //==============================================================================
+// -- Bit Crusher / Trance Gate: single implementation, called from BOTH the
+//    Pre placement (processBlock, unchunked) and the Post placement
+//    (runEffectsChain, chunked). Each one re-reads its own parameters so a
+//    later change to how a parameter is read (e.g. a modulated value instead
+//    of the raw APVTS value) takes effect at both placements at once.
+//==============================================================================
+void SpaceDustAudioProcessor::processBitCrusher (juce::AudioBuffer<float>& buffer, int /*startSampleInBlock*/)
+{
+    bool bitCrusherEnabled = safeGetParam(apvts, "bitCrusherEnabled") > 0.5f;
+    if (bitCrusherEnabled && buffer.getNumChannels() >= 1 && buffer.getNumSamples() > 0)
+    {
+        SpaceDustBitCrusher::Parameters bp;
+        bp.enabled = true;
+        bp.amount = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherAmount"));
+        bp.rate = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherRate"));
+        bp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherMix"));
+        bitCrusher_.setParameters(bp);
+        bitCrusher_.process(buffer);
+    }
+}
+
+void SpaceDustAudioProcessor::processTranceGate (juce::AudioBuffer<float>& buffer, int startSampleInBlock)
+{
+    bool tranceGateEnabled = safeGetParam(apvts, "tranceGateEnabled") > 0.5f;
+    if (tranceGateEnabled && buffer.getNumChannels() >= 2 && buffer.getNumSamples() > 0)
+    {
+        SpaceDustTranceGate::Parameters tp;
+        tp.enabled = true;
+        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"tranceGateSteps", 1}.getParamID())))
+            tp.numSteps = (p->getIndex() == 0) ? 4 : (p->getIndex() == 1) ? 8 : 16;
+        else
+            tp.numSteps = 8;
+        tp.sync = safeGetParam(apvts, "tranceGateSync") > 0.5f;
+        tp.rate = safeGetParam(apvts, "tranceGateRate");
+        tp.attackMs = safeGetParam(apvts, "tranceGateAttack");
+        tp.releaseMs = safeGetParam(apvts, "tranceGateRelease");
+        tp.mix = safeGetParam(apvts, "tranceGateMix");
+        for (int s = 0; s < 16; ++s)
+        {
+            juce::String stepId = "tranceGateStep" + juce::String(s + 1);
+            if (auto* rp = apvts.getRawParameterValue(stepId))
+                tp.stepOn[s] = rp->load() > 0.5f;
+        }
+        tranceGate_.setParameters(tp);
+        tranceGate_.process(buffer, currentSampleRate, getPlayHead(), startSampleInBlock);
+    }
+}
+
+//==============================================================================
 void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer, int startSampleInBlock)
 {
     //==============================================================================
@@ -3016,46 +3023,16 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
 
     // -- Bit Crusher (late: after Flanger, before TG) --
     {
-        const bool bitCrusherEnabled = safeGetParam(apvts, "bitCrusherEnabled") > 0.5f;
         const bool bitCrusherPostEffect = safeGetParam(apvts, "bitCrusherPostEffect") > 0.5f;
-        if (bitCrusherEnabled && bitCrusherPostEffect && buffer.getNumChannels() >= 1 && buffer.getNumSamples() > 0)
-        {
-            SpaceDustBitCrusher::Parameters bp;
-            bp.enabled = true;
-            bp.amount = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherAmount"));
-            bp.rate = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherRate"));
-            bp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherMix"));
-            bitCrusher_.setParameters(bp);
-            bitCrusher_.process(buffer);
-        }
+        if (bitCrusherPostEffect)
+            processBitCrusher (buffer, startSampleInBlock);
     }
 
     // -- Trance Gate (Post: when Post Effect ON, always last) --
     {
-        const bool tranceGateEnabled = safeGetParam(apvts, "tranceGateEnabled") > 0.5f;
         const bool tranceGatePostEffect = safeGetParam(apvts, "tranceGatePostEffect") > 0.5f;
-        if (tranceGateEnabled && tranceGatePostEffect && buffer.getNumChannels() >= 2 && buffer.getNumSamples() > 0)
-        {
-            SpaceDustTranceGate::Parameters tp;
-            tp.enabled = true;
-            if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"tranceGateSteps", 1}.getParamID())))
-                tp.numSteps = (p->getIndex() == 0) ? 4 : (p->getIndex() == 1) ? 8 : 16;
-            else
-                tp.numSteps = 8;
-            tp.sync = safeGetParam(apvts, "tranceGateSync") > 0.5f;
-            tp.rate = safeGetParam(apvts, "tranceGateRate");
-            tp.attackMs = safeGetParam(apvts, "tranceGateAttack");
-            tp.releaseMs = safeGetParam(apvts, "tranceGateRelease");
-            tp.mix = safeGetParam(apvts, "tranceGateMix");
-            for (int s = 0; s < 16; ++s)
-            {
-                juce::String stepId = "tranceGateStep" + juce::String(s + 1);
-                if (auto* rp = apvts.getRawParameterValue(stepId))
-                    tp.stepOn[s] = rp->load() > 0.5f;
-            }
-            tranceGate_.setParameters(tp);
-            tranceGate_.process(buffer, currentSampleRate, getPlayHead(), startSampleInBlock);
-        }
+        if (tranceGatePostEffect)
+            processTranceGate (buffer, startSampleInBlock);
     }
 
     //==============================================================================

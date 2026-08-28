@@ -414,6 +414,16 @@ private:
         Task 3 stubs this to false; Task 4 gives it the real answer. */
     bool anyEffectParameterIsModulated() const noexcept;
 
+    /** The single implementation of each effect, called from BOTH placements:
+        the Pre site in processBlock (always startSampleInBlock == 0, never
+        chunked -- the delay ahead of it isn't chunk-aware) and the Post site
+        in runEffectsChain (chunked when an effect parameter is modulated).
+        One body each, so a later change to how these read their parameters
+        -- e.g. reading a modulated value instead of the raw APVTS value --
+        takes effect at both placements instead of silently only one. */
+    void processBitCrusher (juce::AudioBuffer<float>& buffer, int startSampleInBlock);
+    void processTranceGate (juce::AudioBuffer<float>& buffer, int startSampleInBlock);
+
     //==============================================================================
     // -- Reverb Effect State --
     SpaceDustReverb reverb_;
