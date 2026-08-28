@@ -46,15 +46,11 @@ namespace
     constexpr int    blockSize  = 512;
     constexpr int    numBlocks  = 40;
 
-    /** Render a fixed two-note phrase through a processor and return every
-        sample. forceChunking makes the effects chain run in 32-sample pieces
-        even though nothing is modulated. */
-    std::vector<float> render (bool forceChunking)
+    /** Render a fixed two-note phrase through an already-configured processor
+        and return every sample. */
+    std::vector<float> renderWith (SpaceDustAudioProcessor& sd)
     {
-        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
-        auto* sd = dynamic_cast<SpaceDustAudioProcessor*> (proc.get());
-
-        sd->setForceEffectChunkingForTests (forceChunking);
+        auto* proc = static_cast<juce::AudioProcessor*> (&sd);
 
         proc->prepareToPlay (sampleRate, blockSize);
 
@@ -87,6 +83,18 @@ namespace
 
         proc->releaseResources();
         return out;
+    }
+
+    /** The same phrase on a fresh processor. forceChunking makes the effects
+        chain run in 32-sample pieces even though nothing is modulated. */
+    std::vector<float> render (bool forceChunking)
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* sd = dynamic_cast<SpaceDustAudioProcessor*> (proc.get());
+
+        sd->setForceEffectChunkingForTests (forceChunking);
+
+        return renderWith (*sd);
     }
 }
 
@@ -169,6 +177,65 @@ int main()
         }
 
         std::printf ("  the routing list survives save and load.\n");
+    }
+
+    // -- the destination sweep --
+    // A routing that reaches an effect must audibly change the output, and it
+    // must do so through the chunked path. Without this, a matrix that compiles
+    // to nothing would pass every test above.
+    //
+    // Two FRESH processors rather than one rendered twice: the reverb tail, the
+    // delay lines and the LFO phase all survive a render, so a second pass on
+    // the same instance would start somewhere else and the difference measured
+    // would be that, not the routing. The bit-identical check above already
+    // proves two fresh processors render the same samples.
+    {
+        // Reverb on and wide open, so the knob under test has something to move.
+        auto configure = [] (SpaceDustAudioProcessor& sd)
+        {
+            auto set = [&] (const char* id, float value)
+            {
+                if (auto* p = sd.getValueTreeState().getParameter (id))
+                    p->setValueNotifyingHost (p->convertTo0to1 (value));
+            };
+
+            set ("reverbEnabled", 1.0f);
+            set ("reverbWetMix", 0.5f);
+            set ("lfo1Enabled", 1.0f);
+            set ("lfo1Depth", 100.0f);
+            set ("lfo1Sync", 0.0f);
+            set ("lfo1Rate", 6.0f);
+        };
+
+        std::unique_ptr<juce::AudioProcessor> flatProc (createPluginFilter());
+        auto* flatSd = dynamic_cast<SpaceDustAudioProcessor*> (flatProc.get());
+        configure (*flatSd);
+        const auto flat = renderWith (*flatSd);
+
+        std::unique_ptr<juce::AudioProcessor> movedProc (createPluginFilter());
+        auto* movedSd = dynamic_cast<SpaceDustAudioProcessor*> (movedProc.get());
+        configure (*movedSd);
+
+        movedSd->modMatrix.setRouting (0, "reverbWetMix", 1.0f);
+        movedSd->rebuildCompiledRoutings();
+
+        const auto moved = renderWith (*movedSd);
+
+        double biggest = 0.0;
+        for (size_t i = 0; i < flat.size() && i < moved.size(); ++i)
+            biggest = juce::jmax (biggest, std::abs ((double) flat[i] - (double) moved[i]));
+
+        std::printf ("\n  destination sweep, LFO 1 -> reverbWetMix\n");
+        std::printf ("  largest difference: %.9f\n", biggest);
+
+        if (biggest < 1.0e-6)
+        {
+            // Never the string "error :" -- MSBuild reads that as a build failure.
+            std::printf ("  FAIL  an assigned routing changed nothing.\n");
+            return 1;
+        }
+
+        std::printf ("  an assigned routing moves the sound.\n");
     }
 
     return 0;

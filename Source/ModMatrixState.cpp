@@ -82,7 +82,14 @@ namespace spacedust
 
             // setRouting refuses an illegal index and an empty id on its own, so
             // a patch saved by a build with different parameters loads rather
-            // than failing. The routing it cannot place is simply dropped.
+            // than failing.
+            //
+            // Deliberate: a routing that names a parameter THIS build does not
+            // have is KEPT, not dropped. Dropping it would mean that opening a
+            // patch in a build lacking that knob and re-saving it destroys the
+            // routing permanently, and the player would never be told. Keeping
+            // it costs nothing and reaches no audio:
+            // rebuildCompiledRoutings looks the id up, gets -1, and skips it.
             matrix.setRouting (lfo, dest, amount);
         }
     }

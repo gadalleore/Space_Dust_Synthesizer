@@ -124,20 +124,85 @@ public:
     spacedust::ModMatrix        modMatrix;
     spacedust::DestinationTable modDestinations;
 
-    // LFO buffers for per-sample access from voices
-    juce::AudioBuffer<float> lfo1Buffer;
-    juce::AudioBuffer<float> lfo2Buffer;
-    
+    /** Rebuild the compiled form from modMatrix.
+
+        MESSAGE THREAD ONLY -- it allocates. Call after every change to the
+        routing list, and after the patch is restored. */
+    void rebuildCompiledRoutings();
+
+    /** Where one destination sits right now, modulation included.
+
+        Only meaningful for destinations the EFFECTS read: it is refreshed per
+        chunk inside runEffectsChain, which does not run until about 400 lines
+        after the voices have already rendered. A voice must read
+        voiceModRow() instead. */
+    float effectModulatedValue (int slot) const noexcept
+    {
+        return effectModulated[(size_t) slot];
+    }
+
+    //==========================================================================
+    // -- Per-sample modulated values for VOICE destinations --
+    //
+    // Filled by fillVoiceModScratch(), which processBlock calls immediately
+    // BEFORE synth.renderNextBlock(). It cannot share effectModulated: the
+    // voices render at the top of processBlock and the effects chain -- where
+    // effectModulated is filled -- does not run until roughly 400 lines later,
+    // so a voice reading effectModulated would get the PREVIOUS block's numbers.
+    //
+    // Only destinations that actually carry a routing get a row -- normally
+    // none, sometimes a handful. A row per destination would be about 150 by
+    // 512 floats, 300 KB every block, for a patch that usually modulates
+    // nothing. The rows are allocated once, in prepareToPlay.
+
+    /** How many rows fillVoiceModScratch filled for THIS block. */
+    int numVoiceModRows() const noexcept { return voiceModRowsFilled; }
+
+    /** The destination slot row `row` carries. */
+    int voiceModSlotForRow (int row) const noexcept
+    {
+        return (row >= 0 && row < voiceModRowsFilled) ? voiceModRowSlots[row] : -1;
+    }
+
+    /** One row of per-sample values, or nullptr when there is no such row.
+        Row, not slot: the scratch holds only the destinations that carry a
+        routing, so the row index is the voice's own small handful. */
+    const float* voiceModRow (int row) const noexcept
+    {
+        if (row < 0 || row >= voiceModRowsFilled || voiceModRowSamples <= 0)
+            return nullptr;
+
+        return voiceModScratch.data() + (size_t) row * (size_t) voiceModRowSamples;
+    }
+
+    // LFO buffers for per-sample access from voices. One per LFO, indexed 0..3.
+    //
+    // There are four buffers but only two LFOs have parameters today. The other
+    // two stay SILENT: safeGetParam returns 0 for a parameter that does not
+    // exist, which gives a depth of 0 and a buffer of zeros, and a zero buffer
+    // contributes nothing. The parameters arrive later; the buffers are here now
+    // because the modulation matrix indexes LFOs 0..3.
+    juce::AudioBuffer<float> lfoBuffers[spacedust::numLfos];
+
+    /** The buffer for one LFO, with the index held inside the array. */
+    juce::AudioBuffer<float>& lfoBufferFor (int lfo) noexcept
+    {
+        return lfoBuffers[juce::jlimit (0, spacedust::numLfos - 1, lfo)];
+    }
+
+    const juce::AudioBuffer<float>& lfoBufferFor (int lfo) const noexcept
+    {
+        return lfoBuffers[juce::jlimit (0, spacedust::numLfos - 1, lfo)];
+    }
+
     // LFO retrigger flags (public for voice access)
-    std::atomic<bool> lfo1Retrigger{true};
-    std::atomic<bool> lfo2Retrigger{true};
+    std::atomic<bool> lfoRetrigger[spacedust::numLfos] { {true}, {true}, {true}, {true} };
 
     // Realised free-run rate of each LFO, published to the voices so their oversample
     // latch can tell that a cutoff is being swept at audio rate. Written during the
     // LFO render, read on the next block -- the latch only consults it at note start,
     // so a block of delay is immaterial.
-    double lastLfo1Hz{0.0};
-    double lastLfo2Hz{0.0};
+    double lastLfoHz[spacedust::numLfos] { 0.0, 0.0, 0.0, 0.0 };
 
 public:
     //==========================================================================
@@ -197,21 +262,18 @@ public:
         it must not follow OscShape::numShapes when more shapes are added. */
     static constexpr int legacyOscUserBase = 4;
 
-    // LFO current phases (public for voice access)
-    double lfo1CurrentPhase{0.0};         // Current LFO1 phase (0.0 to 1.0)
-    double lfo2CurrentPhase{0.0};         // Current LFO2 phase (0.0 to 1.0)
+    // LFO current phases (public for voice access), 0.0 to 1.0
+    double lfoCurrentPhase[spacedust::numLfos] { 0.0, 0.0, 0.0, 0.0 };
 
     // LFO output smoothing (prevents clicks on retrigger/phase jumps)
-    float lfo1SmoothedValue{0.0f};
-    float lfo2SmoothedValue{0.0f};
+    float lfoSmoothedValue[spacedust::numLfos] { 0.0f, 0.0f, 0.0f, 0.0f };
 
-    // Sample & Hold: held random value and RNG state (audio thread only)
-    float lfo1SampleHoldValue{0.0f};
-    float lfo2SampleHoldValue{0.0f};
-    uint32_t lfo1ShState{12345u};
-    uint32_t lfo2ShState{67890u};
-    double lfo1PrevPhase{-1.0};  // For beat-phase wrap detection
-    double lfo2PrevPhase{-1.0};
+    // Sample & Hold: held random value and RNG state (audio thread only).
+    // The seeds differ per LFO so four LFOs on Sample & Hold do not step in
+    // lockstep, which is what the original two seeds were for.
+    float lfoSampleHoldValue[spacedust::numLfos] { 0.0f, 0.0f, 0.0f, 0.0f };
+    uint32_t lfoShState[spacedust::numLfos] { 12345u, 67890u, 24681u, 13579u };
+    double lfoPrevPhase[spacedust::numLfos] { -1.0, -1.0, -1.0, -1.0 };  // beat-phase wrap detection
 
     /** Incremented on the audio thread when a voice replaces non-finite osc freq or sample output. */
     std::atomic<std::uint32_t> dspSanitizeEventCount { 0 };
@@ -411,8 +473,36 @@ private:
     static constexpr int effectChunkSamples = 32;
 
     /** Whether any live routing lands on a parameter the effects chain reads.
-        Task 3 stubs this to false; Task 4 gives it the real answer. */
+        Decides whether the chain is chunked at all: with nothing modulated the
+        chain runs as ONE whole block, exactly as it did before the matrix. */
     bool anyEffectParameterIsModulated() const noexcept;
+
+    /** Whether this parameter id names a knob the effects chain reads.
+
+        "master" is deliberately absent: masterVolume is one of the six
+        destinations the VOICE already applies per sample, so listing it would
+        chunk the whole effects chain for a knob that does not need it, and
+        risks the same knob being applied twice. */
+    static bool isEffectParameter (const std::string& id) noexcept;
+
+    /** One effect parameter read by the chain, as the modulated value when a
+        routing reaches it and as the raw parameter value when none does.
+
+        `which` is an index into the effect-parameter list in the .cpp, not a
+        destination slot: the slot is resolved once on the message thread so the
+        chunk loop never looks a string up. */
+    float modParam (int which, float fallback = 0.0f) noexcept;
+
+    /** Recompute effectModulated for one point in the block. Audio thread.
+
+        Called at the top of runEffectsChain, once per chunk, and once per block
+        before the Pre placements of the bit crusher and trance gate. Reads no
+        strings and writes no memory the message thread owns. */
+    void refreshEffectModulatedValues (int startSampleInBlock) noexcept;
+
+    /** Fill voiceModScratch for this block. Audio thread, BEFORE the voices
+        render -- see the note on voiceModScratch. */
+    void fillVoiceModScratch (int numSamples) noexcept;
 
     /** The single implementation of each effect, called from BOTH placements:
         the Pre site in processBlock (always startSampleInBlock == 0, never
@@ -423,6 +513,65 @@ private:
         takes effect at both placements instead of silently only one. */
     void processBitCrusher (juce::AudioBuffer<float>& buffer, int startSampleInBlock);
     void processTranceGate (juce::AudioBuffer<float>& buffer, int startSampleInBlock);
+
+    //==============================================================================
+    // -- The modulation matrix, as the audio thread sees it --
+
+    /** The routings with the strings and the lookups taken out, plus the voice
+        destinations picked out of them.
+
+        The two live together so the audio thread gets ONE atomic load and a
+        coherent pair: a routing list and the voice rows derived from that very
+        list. */
+    struct CompiledSet
+    {
+        std::vector<spacedust::CompiledRouting> routings;
+        std::vector<int>                        voiceSlots;   // distinct, non-effect
+    };
+
+    /** Two buffers and an atomic index rather than a lock. The message thread
+        fills the buffer that is NOT live and then stores its index; the audio
+        thread reads whichever index it finds. The audio thread therefore never
+        allocates, never compares a string, and never waits. */
+    CompiledSet      compiledBuffers[2];
+    std::atomic<int> liveCompiled { 0 };
+
+    /** Base values and ranges, one per destination slot.
+
+        Sized on the FIRST rebuild and never again: the destination table is
+        built once in the constructor and never changes, so re-sizing these on
+        every rebuild would write zeros into arrays the audio thread is reading
+        from at that moment. destRawValues holds the same atomic the old
+        safeGetParam() call looked up by name, so an unmodulated destination
+        reads bit-identically to the way it read before the matrix existed. */
+    std::vector<float>                destBases;
+    std::vector<spacedust::DestRange> destRanges;
+    std::vector<std::atomic<float>*>  destRawValues;
+    std::vector<float>                effectModulated;
+
+    /** Destination slot for each parameter the effects chain reads, resolved
+        once on the message thread. -1 for a parameter that cannot be modulated
+        -- a bool or a choice -- which then reads raw exactly as it did before.
+        Indexed by the effect-parameter list in the .cpp. */
+    std::vector<int> effectParamSlots;
+
+    /** Whether any live routing lands on a parameter the effects chain reads. */
+    std::atomic<bool> effectsAreModulated { false };
+
+    /** Each LFO's current value at the start of the piece being processed,
+        already scaled by that LFO's Depth. */
+    float lfoValues[spacedust::numLfos] { 0.0f, 0.0f, 0.0f, 0.0f };
+
+    /** Voice scratch: maxVoiceModRows rows of voiceModRowSamples floats, one
+        flat block allocated in prepareToPlay and never resized afterwards.
+        A patch that routes more than maxVoiceModRows DISTINCT voice knobs
+        loses the ones past the cap; sixteen is far past "a handful". */
+    static constexpr int maxVoiceModRows = 16;
+
+    std::vector<float> voiceModScratch;
+    int                voiceModRowSamples = 0;   // columns per row
+    int                voiceModRowsFilled = 0;   // audio thread only
+    int                voiceModRowSlots[maxVoiceModRows] { };   // audio thread only
 
     //==============================================================================
     // -- Reverb Effect State --

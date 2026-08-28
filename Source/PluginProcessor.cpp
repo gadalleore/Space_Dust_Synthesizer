@@ -53,6 +53,7 @@
 #include "SpaceDustTranceGate.h"
 #include "MemorySafetyLogger.h"
 #include <juce_core/juce_core.h>
+#include <algorithm>
 #include <cstdarg>
 
 //==============================================================================
@@ -248,6 +249,118 @@ namespace
             return atomic->load();
         return fallback;
     }
+
+    //==========================================================================
+    // -- The parameter ids of every LFO, in one table --
+    //
+    // The LFO fill loop reaches LFO n through this, so it never builds a
+    // juce::String on the audio thread. LFOs 3 and 4 have no parameters yet:
+    // safeGetParam returns 0 for an id that does not exist, which gives a depth
+    // of 0 and a buffer of zeros, and a zero buffer contributes nothing to
+    // anything that reads it. Their rows are here so the buffers the modulation
+    // matrix indexes exist before the knobs that drive them do.
+    struct LfoParamIds
+    {
+        const char* enabled;
+        const char* depth;
+        const char* sync;
+        const char* rate;
+        const char* triplet;
+        const char* tripletAll;
+        const char* phase;
+        const char* waveform;
+    };
+
+    constexpr LfoParamIds lfoParamIds[spacedust::numLfos] = {
+        { "lfo1Enabled", "lfo1Depth", "lfo1Sync", "lfo1Rate",
+          "lfo1TripletEnabled", "lfo1TripletStraightToggle", "lfo1Phase", "lfo1Waveform" },
+        { "lfo2Enabled", "lfo2Depth", "lfo2Sync", "lfo2Rate",
+          "lfo2TripletEnabled", "lfo2TripletStraightToggle", "lfo2Phase", "lfo2Waveform" },
+        { "lfo3Enabled", "lfo3Depth", "lfo3Sync", "lfo3Rate",
+          "lfo3TripletEnabled", "lfo3TripletStraightToggle", "lfo3Phase", "lfo3Waveform" },
+        { "lfo4Enabled", "lfo4Depth", "lfo4Sync", "lfo4Rate",
+          "lfo4TripletEnabled", "lfo4TripletStraightToggle", "lfo4Phase", "lfo4Waveform" },
+    };
+
+    //==========================================================================
+    // -- Every knob the effects chain reads that an LFO may reach --
+    //
+    // ONE list, which gives both an index (ep::xxx) and the id string. The index
+    // is what the chain uses; the id is looked up ONCE, on the message thread,
+    // in rebuildCompiledRoutings, so a chunk never hashes a string to find out
+    // where a knob sits.
+    //
+    // Floats only. A bool or a choice cannot be a modulation destination -- see
+    // DestinationTable::isLegalDestination -- so those reads stay on
+    // safeGetParam exactly as they were.
+    //
+    // Adding a knob to the chain and forgetting it here is not a crash: it keeps
+    // its old raw read and simply cannot be modulated.
+    #define SPACEDUST_EFFECT_PARAMS(X) \
+        X (reverbDecayTime)               X (reverbWetMix) \
+        X (reverbFilterHPCutoff)          X (reverbFilterHPResonance) \
+        X (reverbFilterLPCutoff)          X (reverbFilterLPResonance) \
+        /* The Delay sits AHEAD of runEffectsChain and is not chunk-aware, so  */ \
+        /* these are refreshed once per block, like the Pre placements of the  */ \
+        /* bit crusher and the trance gate. Coarser, but not silent.           */ \
+        X (delayDecay)                    X (delayDryWet) \
+        X (delayRate) \
+        X (delayFilterHPCutoff)           X (delayFilterLPCutoff) \
+        X (delayFilterHPResonance)        X (delayFilterLPResonance) \
+        X (grainDelayMix)                 X (grainDelayTime) \
+        X (grainDelaySize)                X (grainDelayPitch) \
+        X (grainDelayDensity)             X (grainDelayJitter) \
+        X (grainDelayFilterHPCutoff)      X (grainDelayFilterLPCutoff) \
+        X (grainDelayFilterHPResonance)   X (grainDelayFilterLPResonance) \
+        X (phaserMix)                     X (phaserRate) \
+        X (phaserDepth)                   X (phaserFeedback) \
+        X (phaserCentre)                  X (phaserStereoOffset) \
+        X (flangerMix)                    X (flangerRate) \
+        X (flangerDepth)                  X (flangerFeedback) \
+        X (flangerWidth) \
+        X (transientMix)                  X (transientKaDonk) \
+        X (transientCoarse)               X (transientLength) \
+        X (compressorThreshold)           X (compressorRatio) \
+        X (compressorAttack)              X (compressorRelease) \
+        X (compressorMakeup)              X (compressorMix) \
+        X (softClipperDrive)              X (softClipperKnee) \
+        X (softClipperMix) \
+        X (lofiAmount) \
+        X (bitCrusherAmount)              X (bitCrusherRate) \
+        X (bitCrusherMix) \
+        X (tranceGateRate)                X (tranceGateAttack) \
+        X (tranceGateRelease)             X (tranceGateMix) \
+        /* The five EQ bands last, and in strict Freq / Gain / Q order: the  */ \
+        /* chain reaches band i by adding i * finalEQParamsPerBand to the    */ \
+        /* first one, and the static_assert below keeps that true.           */ \
+        X (finalEQB1Freq) X (finalEQB1Gain) X (finalEQB1Q) \
+        X (finalEQB2Freq) X (finalEQB2Gain) X (finalEQB2Q) \
+        X (finalEQB3Freq) X (finalEQB3Gain) X (finalEQB3Q) \
+        X (finalEQB4Freq) X (finalEQB4Gain) X (finalEQB4Q) \
+        X (finalEQB5Freq) X (finalEQB5Gain) X (finalEQB5Q)
+
+    enum EffectParam
+    {
+        #define SPACEDUST_EP_ENUM(name) ep_##name,
+        SPACEDUST_EFFECT_PARAMS (SPACEDUST_EP_ENUM)
+        #undef SPACEDUST_EP_ENUM
+        numEffectParams
+    };
+
+    constexpr int finalEQParamsPerBand = 3;
+    static_assert (ep_finalEQB2Freq - ep_finalEQB1Freq == finalEQParamsPerBand,
+                   "the final EQ bands must stay Freq/Gain/Q, three apart");
+    static_assert (ep_finalEQB5Q + 1 == numEffectParams,
+                   "the final EQ bands must stay last in the list");
+
+    const char* const effectParamIds[] = {
+        #define SPACEDUST_EP_ID(name) #name,
+        SPACEDUST_EFFECT_PARAMS (SPACEDUST_EP_ID)
+        #undef SPACEDUST_EP_ID
+    };
+
+    static_assert (sizeof (effectParamIds) / sizeof (effectParamIds[0]) == numEffectParams,
+                   "the id table and the enum come from the same list");
 
     //==========================================================================
     // -- Crash-safety marker for state restoration --
@@ -478,11 +591,11 @@ SpaceDustAudioProcessor::SpaceDustAudioProcessor()
         // Initialize LFO retrigger flags from parameters
         if (auto* lfo1RetriggerParam = apvts.getParameter(juce::ParameterID{"lfo1Retrigger", 1}.getParamID()))
         {
-            lfo1Retrigger.store(lfo1RetriggerParam->getValue() > 0.5f);
+            lfoRetrigger[0].store(lfo1RetriggerParam->getValue() > 0.5f);
         }
         if (auto* lfo2RetriggerParam = apvts.getParameter(juce::ParameterID{"lfo2Retrigger", 1}.getParamID()))
         {
-            lfo2Retrigger.store(lfo2RetriggerParam->getValue() > 0.5f);
+            lfoRetrigger[1].store(lfo2RetriggerParam->getValue() > 0.5f);
         }
     }
     catch (const std::exception& e)
@@ -500,6 +613,10 @@ SpaceDustAudioProcessor::SpaceDustAudioProcessor()
 
     // After the parameters exist, because this walks them.
     modDestinations.build (apvts);
+
+    // And after the destination table, because this looks every routing up in
+    // it. Sizes the audio thread's arrays on this first call.
+    rebuildCompiledRoutings();
 
     //==============================================================================
     DBG("Space Dust: Processor ctor END");
@@ -787,16 +904,23 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         // declared here, and the LFO fill loops write `numSamples` entries via the
         // unchecked setSample(). Without headroom that overruns the buffer and
         // corrupts the heap. processBlock also has a hard grow-guard as a backstop.
-        lfo1Buffer.setSize(1, juce::jmax(samplesPerBlock, 8192));
-        lfo2Buffer.setSize(1, juce::jmax(samplesPerBlock, 8192));
-        lfo1Buffer.clear();
-        lfo2Buffer.clear();
-        // Seed Sample & Hold with initial random values (avoids first period at 0)
-        lfo1ShState = lfo1ShState * 1103515245u + 12345u;
-        lfo1SampleHoldValue = (static_cast<float>((lfo1ShState >> 16) & 0x7FFF) / 32767.5f) * 2.0f - 1.0f;
-        lfo2ShState = lfo2ShState * 1103515245u + 12345u;
-        lfo2SampleHoldValue = (static_cast<float>((lfo2ShState >> 16) & 0x7FFF) / 32767.5f) * 2.0f - 1.0f;
-        
+        for (int lfo = 0; lfo < spacedust::numLfos; ++lfo)
+        {
+            lfoBuffers[lfo].setSize(1, juce::jmax(samplesPerBlock, 8192));
+            lfoBuffers[lfo].clear();
+            // Seed Sample & Hold with initial random values (avoids first period at 0)
+            lfoShState[lfo] = lfoShState[lfo] * 1103515245u + 12345u;
+            lfoSampleHoldValue[lfo] = (static_cast<float>((lfoShState[lfo] >> 16) & 0x7FFF) / 32767.5f) * 2.0f - 1.0f;
+        }
+
+        // The voice modulation scratch, allocated ONCE here where the audio is
+        // stopped, so filling it every block never allocates. Same 8192 headroom
+        // as the LFO buffers, and for the same reason: some hosts hand
+        // processBlock a bigger block than they declared.
+        voiceModRowSamples = juce::jmax(samplesPerBlock, 8192);
+        voiceModScratch.assign((size_t) maxVoiceModRows * (size_t) voiceModRowSamples, 0.0f);
+        voiceModRowsFilled = 0;
+
         // Initialize delay lines
         juce::dsp::ProcessSpec delaySpec;
         delaySpec.sampleRate = sampleRate;
@@ -1249,7 +1373,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setPitchBendAmount(pitchBendAmount);
             voice->setPitchBend(pitchBend);
             voice->setLfoTargets(lfo1Target, lfo2Target);
-            voice->setLfoRates(lastLfo1Hz, lastLfo2Hz);
+            voice->setLfoRates(lastLfoHz[0], lastLfoHz[1]);
             voice->setAnalogDrift(analogDrift);
 
             // MPE expression depth (0-100% â†’ 0.0-1.0)
@@ -1300,11 +1424,11 @@ void SpaceDustAudioProcessor::parameterChanged(const juce::String& parameterID, 
     }
     else if (parameterID == juce::ParameterID{"lfo1Retrigger", 1}.getParamID())
     {
-        lfo1Retrigger.store(newValue > 0.5f);
+        lfoRetrigger[0].store(newValue > 0.5f);
     }
     else if (parameterID == juce::ParameterID{"lfo2Retrigger", 1}.getParamID())
     {
-        lfo2Retrigger.store(newValue > 0.5f);
+        lfoRetrigger[1].store(newValue > 0.5f);
     }
     else if (parameterID == juce::ParameterID{"filterEnvAttack", 1}.getParamID())
     {
@@ -1709,29 +1833,10 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // Release â€” an oversized block would write past the end and corrupt the heap
     // (ASan-confirmed heap-buffer-overflow). Grow the buffers if the block exceeds
     // their current capacity. Allocates only on growth (rare), then stays grown.
-    if (lfo1Buffer.getNumSamples() < numSamples)
-        lfo1Buffer.setSize(1, numSamples, false, false, true);
-    if (lfo2Buffer.getNumSamples() < numSamples)
-        lfo2Buffer.setSize(1, numSamples, false, false, true);
+    for (int lfo = 0; lfo < spacedust::numLfos; ++lfo)
+        if (lfoBuffers[lfo].getNumSamples() < numSamples)
+            lfoBuffers[lfo].setSize(1, numSamples, false, false, true);
 
-    // Get LFO parameters
-    bool lfo1Enabled = safeGetParam(apvts, "lfo1Enabled") > 0.5f;
-    float lfo1Depth = lfo1Enabled ? (safeGetParam(apvts, "lfo1Depth") * 2.0f / 100.0f) : 0.0f;  // 0-2.0 when on
-    bool lfo1Sync = safeGetParam(apvts, "lfo1Sync") > 0.5f;
-    float lfo1Rate = safeGetParam(apvts, "lfo1Rate");  // 0-12
-    bool lfo1Triplet = safeGetParam(apvts, "lfo1TripletEnabled") > 0.5f;
-    bool lfo1All = safeGetParam(apvts, "lfo1TripletStraightToggle") > 0.5f;
-    float lfo1PhaseParam = safeGetParam(apvts, "lfo1Phase");
-    int lfo1Waveform = (int)safeGetParam(apvts, "lfo1Waveform");
-    
-    bool lfo2Enabled = safeGetParam(apvts, "lfo2Enabled") > 0.5f;
-    float lfo2Depth = lfo2Enabled ? (safeGetParam(apvts, "lfo2Depth") * 2.0f / 100.0f) : 0.0f;  // 0-2.0 when on
-    bool lfo2Sync = safeGetParam(apvts, "lfo2Sync") > 0.5f;
-    float lfo2Rate = safeGetParam(apvts, "lfo2Rate");  // 0-12
-    bool lfo2Triplet = safeGetParam(apvts, "lfo2TripletEnabled") > 0.5f;
-    bool lfo2All = safeGetParam(apvts, "lfo2TripletStraightToggle") > 0.5f;
-    float lfo2PhaseParam = safeGetParam(apvts, "lfo2Phase");
-    int lfo2Waveform = (int)safeGetParam(apvts, "lfo2Waveform");
     // LFO waveform generation lives in Source/LfoWaveform.cpp so its fold-back can be
     // measured directly (tools/lfotest). It takes the per-sample phase advance so the
     // eased edges cannot collapse into steps once cycles get short at audio rates.
@@ -1773,298 +1878,169 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         return static_cast<float>(juce::jlimit(static_cast<double>(kLfoSmoothAlpha), 1.0, a));
     };
 
-
-    // Process LFO1
-    if (lfo1Sync)
+    // One body for every LFO. LFO 1 and LFO 2 were two copies of this, character
+    // for character apart from their names, so folding them into a loop changes
+    // nothing about how either one sounds -- and it is what lets the modulation
+    // matrix address an LFO by number.
+    for (int lfo = 0; lfo < spacedust::numLfos; ++lfo)
     {
-        // Get tempo from host
-        double tempo = 120.0;
-        auto* playHead = getPlayHead();
-        if (playHead != nullptr)
+        const auto& ids = lfoParamIds[lfo];
+        auto&       buf = lfoBuffers[lfo];
+
+        const bool  lfoEnabled    = safeGetParam(apvts, ids.enabled) > 0.5f;
+        const float lfoDepth      = lfoEnabled ? (safeGetParam(apvts, ids.depth) * 2.0f / 100.0f) : 0.0f;  // 0-2.0 when on
+        const bool  lfoSync       = safeGetParam(apvts, ids.sync) > 0.5f;
+        const float lfoRate       = safeGetParam(apvts, ids.rate);  // 0-12
+        const bool  lfoTriplet    = safeGetParam(apvts, ids.triplet) > 0.5f;
+        const bool  lfoAll        = safeGetParam(apvts, ids.tripletAll) > 0.5f;
+        const float lfoPhaseParam = safeGetParam(apvts, ids.phase);
+        const int   lfoWaveform   = static_cast<int>(safeGetParam(apvts, ids.waveform));
+
+        if (lfoSync)
         {
-            auto posInfo = playHead->getPosition();
-            if (posInfo.hasValue())
-            {
-                if (posInfo->getBpm().hasValue() && *posInfo->getBpm() > 0.0)
-                    tempo = *posInfo->getBpm();
-            }
-        }
-        
-        double samplesPerBeat = currentSampleRate * 60.0 / tempo;
-        
-        // Linear rate mapping (0-12) -> index: avoids fold-back at high rates
-        float rateClamped = juce::jlimit(0.0f, 12.0f, lfo1Rate);
-        int musicalIndex = static_cast<int>(std::round(rateClamped * 8.0f / 12.0f));
-        musicalIndex = juce::jlimit(0, 8, musicalIndex);
-        
-        double multiplier = 1.0;
-        
-        if (lfo1Triplet && lfo1All)
-        {
-            // All mode: 18 steps - linear map rate 0-12 to index 0-17
-            static const double allMultipliers[18] = {
-                8.0, 6.0, 4.0, 2.6666666666666665, 2.0, 1.3333333333333333,
-                1.0, 0.6666666666666666, 0.5, 0.3333333333333333, 0.25,
-                0.16666666666666666, 0.125, 0.08333333333333333, 0.0625,
-                0.0510204081632653, 0.03125, 0.03125
-            };
-            int mappedIndex = static_cast<int>(std::round(rateClamped * 17.0f / 12.0f));
-            mappedIndex = juce::jlimit(0, 17, mappedIndex);
-            multiplier = allMultipliers[mappedIndex];
-        }
-        else if (lfo1Triplet && !lfo1All)
-        {
-            static const double tripletMultipliers[9] = {
-                32.0/3.0, 16.0/3.0, 8.0/3.0, 4.0/3.0, 2.0/3.0,
-                1.0/3.0, 1.0/6.0, 1.0/12.0, 1.0/24.0
-            };
-            multiplier = tripletMultipliers[musicalIndex];
-        }
-        else
-        {
-            static const double straightMultipliers[9] = {
-                8.0, 4.0, 2.0, 1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125
-            };
-            multiplier = straightMultipliers[musicalIndex];
-        }
-        
-        double periodSamples = samplesPerBeat * multiplier;
-        double hz = currentSampleRate / periodSamples;
-        double delta = hz / currentSampleRate;
-        
-        float phaseOffset = lfo1PhaseParam / 360.0f;
-        bool isPlaying = false;
-        if (playHead != nullptr)
-        {
-            auto posInfo = playHead->getPosition();
-            if (posInfo.hasValue())
-                isPlaying = posInfo->getIsPlaying();
-        }
-        bool useBeatPhase = !lfo1Retrigger.load() && isPlaying;  // Beat phase only when playing + no retrigger
-        
-        if (useBeatPhase)
-        {
-            // Derive phase from beat position so wave start (phase 0) aligns with beat 1
-            double ppqStart = 0.0;
+            // Get tempo from host
+            double tempo = 120.0;
+            auto* playHead = getPlayHead();
             if (playHead != nullptr)
             {
                 auto posInfo = playHead->getPosition();
-                if (posInfo.hasValue() && posInfo->getPpqPosition().hasValue())
-                    ppqStart = *posInfo->getPpqPosition();
+                if (posInfo.hasValue())
+                {
+                    if (posInfo->getBpm().hasValue() && *posInfo->getBpm() > 0.0)
+                        tempo = *posInfo->getBpm();
+                }
             }
-            double periodBeats = multiplier;
-            double prevPhase = lfo1PrevPhase;
-            for (int s = 0; s < numSamples; ++s)
+            
+            double samplesPerBeat = currentSampleRate * 60.0 / tempo;
+            
+            // Linear rate mapping (0-12) -> index: avoids fold-back at high rates
+            float rateClamped = juce::jlimit(0.0f, 12.0f, lfoRate);
+            int musicalIndex = static_cast<int>(std::round(rateClamped * 8.0f / 12.0f));
+            musicalIndex = juce::jlimit(0, 8, musicalIndex);
+            
+            double multiplier = 1.0;
+            
+            if (lfoTriplet && lfoAll)
             {
-                double ppq = ppqStart + static_cast<double>(s) / samplesPerBeat;
-                double phase = std::fmod(ppq, periodBeats) / periodBeats;
-                float raw;
-                if (lfo1Waveform == 5)
-                {
-                    bool wrapped = (prevPhase < 0) || (prevPhase > 0.5 && phase < prevPhase);
-                    if (wrapped)
-                        nextSampleHoldValue(lfo1ShState, lfo1SampleHoldValue);
-                    raw = lfo1SampleHoldValue * lfo1Depth;
-                    prevPhase = phase;
-                }
-                else
-                {
-                    raw = LfoWaveform::generate(phase + phaseOffset, lfo1Waveform, delta) * lfo1Depth;
-                }
-                lfo1SmoothedValue += smoothingAlphaFor(delta) * (raw - lfo1SmoothedValue);
-                lfo1Buffer.setSample(0, s, lfo1SmoothedValue);
+                // All mode: 18 steps - linear map rate 0-12 to index 0-17
+                static const double allMultipliers[18] = {
+                    8.0, 6.0, 4.0, 2.6666666666666665, 2.0, 1.3333333333333333,
+                    1.0, 0.6666666666666666, 0.5, 0.3333333333333333, 0.25,
+                    0.16666666666666666, 0.125, 0.08333333333333333, 0.0625,
+                    0.0510204081632653, 0.03125, 0.03125
+                };
+                int mappedIndex = static_cast<int>(std::round(rateClamped * 17.0f / 12.0f));
+                mappedIndex = juce::jlimit(0, 17, mappedIndex);
+                multiplier = allMultipliers[mappedIndex];
             }
-            lfo1PrevPhase = prevPhase;
+            else if (lfoTriplet && !lfoAll)
+            {
+                static const double tripletMultipliers[9] = {
+                    32.0/3.0, 16.0/3.0, 8.0/3.0, 4.0/3.0, 2.0/3.0,
+                    1.0/3.0, 1.0/6.0, 1.0/12.0, 1.0/24.0
+                };
+                multiplier = tripletMultipliers[musicalIndex];
+            }
+            else
+            {
+                static const double straightMultipliers[9] = {
+                    8.0, 4.0, 2.0, 1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125
+                };
+                multiplier = straightMultipliers[musicalIndex];
+            }
+            
+            double periodSamples = samplesPerBeat * multiplier;
+            double hz = currentSampleRate / periodSamples;
+            double delta = hz / currentSampleRate;
+            
+            float phaseOffset = lfoPhaseParam / 360.0f;
+            bool isPlaying = false;
+            if (playHead != nullptr)
+            {
+                auto posInfo = playHead->getPosition();
+                if (posInfo.hasValue())
+                    isPlaying = posInfo->getIsPlaying();
+            }
+            bool useBeatPhase = !lfoRetrigger[lfo].load() && isPlaying;  // Beat phase only when playing + no retrigger
+            
+            if (useBeatPhase)
+            {
+                // Derive phase from beat position so wave start (phase 0) aligns with beat 1
+                double ppqStart = 0.0;
+                if (playHead != nullptr)
+                {
+                    auto posInfo = playHead->getPosition();
+                    if (posInfo.hasValue() && posInfo->getPpqPosition().hasValue())
+                        ppqStart = *posInfo->getPpqPosition();
+                }
+                double periodBeats = multiplier;
+                double prevPhase = lfoPrevPhase[lfo];
+                for (int s = 0; s < numSamples; ++s)
+                {
+                    double ppq = ppqStart + static_cast<double>(s) / samplesPerBeat;
+                    double phase = std::fmod(ppq, periodBeats) / periodBeats;
+                    float raw;
+                    if (lfoWaveform == 5)
+                    {
+                        bool wrapped = (prevPhase < 0) || (prevPhase > 0.5 && phase < prevPhase);
+                        if (wrapped)
+                            nextSampleHoldValue(lfoShState[lfo], lfoSampleHoldValue[lfo]);
+                        raw = lfoSampleHoldValue[lfo] * lfoDepth;
+                        prevPhase = phase;
+                    }
+                    else
+                    {
+                        raw = LfoWaveform::generate(phase + phaseOffset, lfoWaveform, delta) * lfoDepth;
+                    }
+                    lfoSmoothedValue[lfo] += smoothingAlphaFor(delta) * (raw - lfoSmoothedValue[lfo]);
+                    buf.setSample(0, s, lfoSmoothedValue[lfo]);
+                }
+                lfoPrevPhase[lfo] = prevPhase;
+            }
+            else
+            {
+                // Retrigger ON: use accumulator (reset on note in voice)
+                double phase = lfoCurrentPhase[lfo];
+                for (int s = 0; s < numSamples; ++s)
+                {
+                    double phaseNext = phase + delta;
+                    bool wrapped = (phaseNext >= 1.0);
+                    if (lfoWaveform == 5 && wrapped)
+                        nextSampleHoldValue(lfoShState[lfo], lfoSampleHoldValue[lfo]);
+                    phase = std::fmod(phaseNext, 1.0);
+                    float raw = (lfoWaveform == 5) ? (lfoSampleHoldValue[lfo] * lfoDepth)
+                        : (LfoWaveform::generate(phase + phaseOffset, lfoWaveform, delta) * lfoDepth);
+                    lfoSmoothedValue[lfo] += smoothingAlphaFor(delta) * (raw - lfoSmoothedValue[lfo]);
+                    buf.setSample(0, s, lfoSmoothedValue[lfo]);
+                }
+                lfoCurrentPhase[lfo] = phase;
+            }
         }
         else
         {
-            // Retrigger ON: use accumulator (reset on note in voice)
-            double phase = lfo1CurrentPhase;
+            // Free mode: the knob is Hz, straight through the shared mapping.
+            const double hz = lfoBaseHz(lfoRate);
+
+            double delta = (currentSampleRate > 0.0) ? (hz / currentSampleRate) : 0.0;
+            lastLfoHz[lfo] = hz;   // for the voices' oversample latch
+
+            // Fill per-sample buffer
+            double phase = lfoCurrentPhase[lfo];
+            float phaseOffset = lfoPhaseParam / 360.0f;
             for (int s = 0; s < numSamples; ++s)
             {
                 double phaseNext = phase + delta;
                 bool wrapped = (phaseNext >= 1.0);
-                if (lfo1Waveform == 5 && wrapped)
-                    nextSampleHoldValue(lfo1ShState, lfo1SampleHoldValue);
+                if (lfoWaveform == 5 && wrapped)
+                    nextSampleHoldValue(lfoShState[lfo], lfoSampleHoldValue[lfo]);
                 phase = std::fmod(phaseNext, 1.0);
-                float raw = (lfo1Waveform == 5) ? (lfo1SampleHoldValue * lfo1Depth)
-                    : (LfoWaveform::generate(phase + phaseOffset, lfo1Waveform, delta) * lfo1Depth);
-                lfo1SmoothedValue += smoothingAlphaFor(delta) * (raw - lfo1SmoothedValue);
-                lfo1Buffer.setSample(0, s, lfo1SmoothedValue);
+                float raw = (lfoWaveform == 5) ? (lfoSampleHoldValue[lfo] * lfoDepth)
+                    : (LfoWaveform::generate(phase + phaseOffset, lfoWaveform, delta) * lfoDepth);
+                lfoSmoothedValue[lfo] += smoothingAlphaFor(delta) * (raw - lfoSmoothedValue[lfo]);
+                buf.setSample(0, s, lfoSmoothedValue[lfo]);
             }
-            lfo1CurrentPhase = phase;
+            lfoCurrentPhase[lfo] = phase;
         }
-    }
-    else
-    {
-        // Free mode: the knob is Hz, straight through the shared mapping.
-        const double hz = lfoBaseHz(lfo1Rate);
-
-        double delta = (currentSampleRate > 0.0) ? (hz / currentSampleRate) : 0.0;
-        lastLfo1Hz = hz;   // for the voices' oversample latch
-
-        // Fill per-sample buffer
-        double phase = lfo1CurrentPhase;
-        float phaseOffset = lfo1PhaseParam / 360.0f;
-        for (int s = 0; s < numSamples; ++s)
-        {
-            double phaseNext = phase + delta;
-            bool wrapped = (phaseNext >= 1.0);
-            if (lfo1Waveform == 5 && wrapped)
-                nextSampleHoldValue(lfo1ShState, lfo1SampleHoldValue);
-            phase = std::fmod(phaseNext, 1.0);
-            float raw = (lfo1Waveform == 5) ? (lfo1SampleHoldValue * lfo1Depth)
-                : (LfoWaveform::generate(phase + phaseOffset, lfo1Waveform, delta) * lfo1Depth);
-            lfo1SmoothedValue += smoothingAlphaFor(delta) * (raw - lfo1SmoothedValue);
-            lfo1Buffer.setSample(0, s, lfo1SmoothedValue);
-        }
-        lfo1CurrentPhase = phase;
-    }
-    
-    // Process LFO2 (same logic as LFO1)
-    if (lfo2Sync)
-    {
-        // Get tempo from host
-        double tempo = 120.0;
-        auto* playHead = getPlayHead();
-        if (playHead != nullptr)
-        {
-            auto posInfo = playHead->getPosition();
-            if (posInfo.hasValue())
-            {
-                if (posInfo->getBpm().hasValue() && *posInfo->getBpm() > 0.0)
-                    tempo = *posInfo->getBpm();
-            }
-        }
-        
-        double samplesPerBeat = currentSampleRate * 60.0 / tempo;
-        
-        // Linear rate mapping (0-12) -> index: avoids fold-back at high rates
-        float rateClamped = juce::jlimit(0.0f, 12.0f, lfo2Rate);
-        int musicalIndex = static_cast<int>(std::round(rateClamped * 8.0f / 12.0f));
-        musicalIndex = juce::jlimit(0, 8, musicalIndex);
-        
-        double multiplier = 1.0;
-        
-        if (lfo2Triplet && lfo2All)
-        {
-            static const double allMultipliers[18] = {
-                8.0, 6.0, 4.0, 2.6666666666666665, 2.0, 1.3333333333333333,
-                1.0, 0.6666666666666666, 0.5, 0.3333333333333333, 0.25,
-                0.16666666666666666, 0.125, 0.08333333333333333, 0.0625,
-                0.0510204081632653, 0.03125, 0.03125
-            };
-            int mappedIndex = static_cast<int>(std::round(rateClamped * 17.0f / 12.0f));
-            mappedIndex = juce::jlimit(0, 17, mappedIndex);
-            multiplier = allMultipliers[mappedIndex];
-        }
-        else if (lfo2Triplet && !lfo2All)
-        {
-            static const double tripletMultipliers[9] = {
-                32.0/3.0, 16.0/3.0, 8.0/3.0, 4.0/3.0, 2.0/3.0,
-                1.0/3.0, 1.0/6.0, 1.0/12.0, 1.0/24.0
-            };
-            multiplier = tripletMultipliers[musicalIndex];
-        }
-        else
-        {
-            static const double straightMultipliers[9] = {
-                8.0, 4.0, 2.0, 1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125
-            };
-            multiplier = straightMultipliers[musicalIndex];
-        }
-        
-        double periodSamples = samplesPerBeat * multiplier;
-        double hz = currentSampleRate / periodSamples;
-        double delta = hz / currentSampleRate;
-        
-        float phaseOffset = lfo2PhaseParam / 360.0f;
-        bool isPlaying = false;
-        if (playHead != nullptr)
-        {
-            auto posInfo = playHead->getPosition();
-            if (posInfo.hasValue())
-                isPlaying = posInfo->getIsPlaying();
-        }
-        bool useBeatPhase = !lfo2Retrigger.load() && isPlaying;  // Beat phase only when playing + no retrigger
-        
-        if (useBeatPhase)
-        {
-            // Derive phase from beat position so wave start (phase 0) aligns with beat 1
-            double ppqStart = 0.0;
-            if (playHead != nullptr)
-            {
-                auto posInfo = playHead->getPosition();
-                if (posInfo.hasValue() && posInfo->getPpqPosition().hasValue())
-                    ppqStart = *posInfo->getPpqPosition();
-            }
-            double periodBeats = multiplier;
-            double prevPhase = lfo2PrevPhase;
-            for (int s = 0; s < numSamples; ++s)
-            {
-                double ppq = ppqStart + static_cast<double>(s) / samplesPerBeat;
-                double phase = std::fmod(ppq, periodBeats) / periodBeats;
-                float raw;
-                if (lfo2Waveform == 5)
-                {
-                    bool wrapped = (prevPhase < 0) || (prevPhase > 0.5 && phase < prevPhase);
-                    if (wrapped)
-                        nextSampleHoldValue(lfo2ShState, lfo2SampleHoldValue);
-                    raw = lfo2SampleHoldValue * lfo2Depth;
-                    prevPhase = phase;
-                }
-                else
-                {
-                    raw = LfoWaveform::generate(phase + phaseOffset, lfo2Waveform, delta) * lfo2Depth;
-                }
-                lfo2SmoothedValue += smoothingAlphaFor(delta) * (raw - lfo2SmoothedValue);
-                lfo2Buffer.setSample(0, s, lfo2SmoothedValue);
-            }
-            lfo2PrevPhase = prevPhase;
-        }
-        else
-        {
-            // Retrigger ON: use accumulator (reset on note in voice)
-            double phase = lfo2CurrentPhase;
-            for (int s = 0; s < numSamples; ++s)
-            {
-                double phaseNext = phase + delta;
-                bool wrapped = (phaseNext >= 1.0);
-                if (lfo2Waveform == 5 && wrapped)
-                    nextSampleHoldValue(lfo2ShState, lfo2SampleHoldValue);
-                phase = std::fmod(phaseNext, 1.0);
-                float raw = (lfo2Waveform == 5) ? (lfo2SampleHoldValue * lfo2Depth)
-                    : (LfoWaveform::generate(phase + phaseOffset, lfo2Waveform, delta) * lfo2Depth);
-                lfo2SmoothedValue += smoothingAlphaFor(delta) * (raw - lfo2SmoothedValue);
-                lfo2Buffer.setSample(0, s, lfo2SmoothedValue);
-            }
-            lfo2CurrentPhase = phase;
-        }
-    }
-    else
-    {
-        // Free mode -- see the LFO1 branch above.
-        const double hz = lfoBaseHz(lfo2Rate);
-
-        double delta = (currentSampleRate > 0.0) ? (hz / currentSampleRate) : 0.0;
-        lastLfo2Hz = hz;   // for the voices' oversample latch
-
-        // Fill per-sample buffer
-        double phase = lfo2CurrentPhase;
-        float phaseOffset = lfo2PhaseParam / 360.0f;
-        for (int s = 0; s < numSamples; ++s)
-        {
-            double phaseNext = phase + delta;
-            bool wrapped = (phaseNext >= 1.0);
-            if (lfo2Waveform == 5 && wrapped)
-                nextSampleHoldValue(lfo2ShState, lfo2SampleHoldValue);
-            phase = std::fmod(phaseNext, 1.0);
-            float raw = (lfo2Waveform == 5) ? (lfo2SampleHoldValue * lfo2Depth)
-                : (LfoWaveform::generate(phase + phaseOffset, lfo2Waveform, delta) * lfo2Depth);
-            lfo2SmoothedValue += smoothingAlphaFor(delta) * (raw - lfo2SmoothedValue);
-            lfo2Buffer.setSample(0, s, lfo2SmoothedValue);
-        }
-        lfo2CurrentPhase = phase;
     }
 
     // Pitch bend snap-back: smooth linear ramp over 0.05s (per-block interpolation, no stepping)
@@ -2309,6 +2285,12 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // (see SynthVoice::setOsc* â€” must align with renderNextBlock base Hz, not stale MIDI note).
     updateVoicesWithParameters(0.0f, 0.0f);
 
+    // Per-sample modulated values for the VOICE destinations, filled HERE
+    // because renderNextBlock is the next statement. The effects chain, where
+    // effectModulated is filled, does not run for another 400 lines, so a voice
+    // reading effectModulated would get the PREVIOUS block's numbers.
+    fillVoiceModScratch(numSamples);
+
     //==============================================================================
     // -- Render the Synthesizer --
     // CRITICAL: This processes MIDI messages and triggers voices.
@@ -2446,6 +2428,16 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     bool tranceGatePostEffect = safeGetParam(apvts, "tranceGatePostEffect") > 0.5f;
     bool bitCrusherPostEffect = safeGetParam(apvts, "bitCrusherPostEffect") > 0.5f;
 
+    // The modulated values for everything read between here and runEffectsChain:
+    // the Pre placements of the trance gate and the bit crusher, and the Delay.
+    //
+    // These are refreshed ONCE PER BLOCK, not per chunk, so they modulate at
+    // block rate and the Post placements modulate at chunk rate. That is not a
+    // bug. The Pre sites are called from processBlock, outside the chunk loop,
+    // and moving them inside would mean moving the Delay too -- the Delay is not
+    // chunk-aware. Coarser, but not silent.
+    refreshEffectModulatedValues (0);
+
     // -- 1) Trance Gate (Pre: when Post Effect OFF) --
     if (! tranceGatePostEffect)
         processTranceGate (buffer, 0);
@@ -2457,9 +2449,9 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     //==============================================================================
     // -- Delay Effect --
     bool delayEnabled = safeGetParam(apvts, "delayEnabled") > 0.5f;
-    float delayDecay = safeGetParam(apvts, "delayDecay") * 0.01f;  // 0-1
-    float delayDryWet = safeGetParam(apvts, "delayDryWet") * 0.01f;  // 0-1
-    float delayRate = safeGetParam(apvts, "delayRate");
+    float delayDecay = modParam(ep_delayDecay) * 0.01f;  // 0-1
+    float delayDryWet = modParam(ep_delayDryWet) * 0.01f;  // 0-1
+    float delayRate = modParam(ep_delayRate);
     bool delaySync = safeGetParam(apvts, "delaySync") > 0.5f;
     bool delayPingPong = safeGetParam(apvts, "delayPingPong") > 0.5f;
     
@@ -2534,11 +2526,11 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         smoothedDelayDryWet.setTargetValue(delayDryWet);
         
         bool delayFilterOn = safeGetParam(apvts, "delayFilterShow") > 0.5f;
-        float delayHPCutoff = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "delayFilterHPCutoff"));
-        float delayLPCutoff = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "delayFilterLPCutoff"));
+        float delayHPCutoff = juce::jlimit(20.0f, 20000.0f, modParam(ep_delayFilterHPCutoff));
+        float delayLPCutoff = juce::jlimit(20.0f, 20000.0f, modParam(ep_delayFilterLPCutoff));
         // Clamp Q to 0.1-5.0 to prevent resonance runaway (was 0.1-20, caused instability)
-        float delayHPRes = safeGetParam(apvts, "delayFilterHPResonance");
-        float delayLPRes = safeGetParam(apvts, "delayFilterLPResonance");
+        float delayHPRes = modParam(ep_delayFilterHPResonance);
+        float delayLPRes = modParam(ep_delayFilterLPResonance);
         float hpQ = juce::jlimit(0.1f, 5.0f, 0.1f + delayHPRes * 4.9f);
         float lpQ = juce::jlimit(0.1f, 5.0f, 0.1f + delayLPRes * 4.9f);
         bool delayWarmSat = safeGetParam(apvts, "delayFilterWarmSaturation") > 0.5f;
@@ -2724,10 +2716,10 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 for (int i = 0; i < numSamples; ++i)
                 {
                     float mod = 1.0f;
-                    if (lfo1Master && i < lfo1Buffer.getNumSamples())
-                        mod += lfo1Buffer.getSample(0, i);
-                    if (lfo2Master && i < lfo2Buffer.getNumSamples())
-                        mod += lfo2Buffer.getSample(0, i);
+                    if (lfo1Master && i < lfoBufferFor(0).getNumSamples())
+                        mod += lfoBufferFor(0).getSample(0, i);
+                    if (lfo2Master && i < lfoBufferFor(1).getNumSamples())
+                        mod += lfoBufferFor(1).getSample(0, i);
                     ptr[i] *= masterVol * juce::jlimit(0.0f, 2.0f, mod);
                 }
             }
@@ -2842,9 +2834,9 @@ void SpaceDustAudioProcessor::processBitCrusher (juce::AudioBuffer<float>& buffe
     {
         SpaceDustBitCrusher::Parameters bp;
         bp.enabled = true;
-        bp.amount = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherAmount"));
-        bp.rate = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherRate"));
-        bp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "bitCrusherMix"));
+        bp.amount = juce::jlimit(0.0f, 1.0f, modParam(ep_bitCrusherAmount));
+        bp.rate = juce::jlimit(0.0f, 1.0f, modParam(ep_bitCrusherRate));
+        bp.mix = juce::jlimit(0.0f, 1.0f, modParam(ep_bitCrusherMix));
         bitCrusher_.setParameters(bp);
         bitCrusher_.process(buffer);
     }
@@ -2862,10 +2854,10 @@ void SpaceDustAudioProcessor::processTranceGate (juce::AudioBuffer<float>& buffe
         else
             tp.numSteps = 8;
         tp.sync = safeGetParam(apvts, "tranceGateSync") > 0.5f;
-        tp.rate = safeGetParam(apvts, "tranceGateRate");
-        tp.attackMs = safeGetParam(apvts, "tranceGateAttack");
-        tp.releaseMs = safeGetParam(apvts, "tranceGateRelease");
-        tp.mix = safeGetParam(apvts, "tranceGateMix");
+        tp.rate = modParam(ep_tranceGateRate);
+        tp.attackMs = modParam(ep_tranceGateAttack);
+        tp.releaseMs = modParam(ep_tranceGateRelease);
+        tp.mix = modParam(ep_tranceGateMix);
         for (int s = 0; s < 16; ++s)
         {
             juce::String stepId = "tranceGateStep" + juce::String(s + 1);
@@ -2880,10 +2872,16 @@ void SpaceDustAudioProcessor::processTranceGate (juce::AudioBuffer<float>& buffe
 //==============================================================================
 void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer, int startSampleInBlock)
 {
+    // Where every knob in this chain sits for THIS piece of the block. Called
+    // once when the chain runs whole and once per 32-sample chunk when an
+    // effect knob is modulated. With nothing modulated it writes each knob's
+    // own value back, so the chain reads exactly what it read before.
+    refreshEffectModulatedValues (startSampleInBlock);
+
     //==============================================================================
     // -- Reverb Effect --
     bool reverbEnabled = safeGetParam(apvts, "reverbEnabled") > 0.5f;
-    float reverbDecayTime = safeGetParam(apvts, "reverbDecayTime");
+    float reverbDecayTime = modParam(ep_reverbDecayTime);
     if (reverbEnabled && buffer.getNumChannels() >= 2 && buffer.getNumSamples() > 0)
     {
         // Decay at minimum: flush reverb once and bypass (Void Verb still diffuses when decay_ == 0).
@@ -2894,7 +2892,7 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
         }
         else
         {
-            float reverbWetMix = safeGetParam(apvts, "reverbWetMix");
+            float reverbWetMix = modParam(ep_reverbWetMix);
             float reverbDrive = std::pow(10.0f, reverbWetMix * 3.0f / 20.0f);
             buffer.applyGain(0, 0, buffer.getNumSamples(), reverbDrive);
             buffer.applyGain(1, 0, buffer.getNumSamples(), reverbDrive);
@@ -2907,10 +2905,10 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
             rp.decayTime = reverbDecayTime;
             rp.filterOn = safeGetParam(apvts, "reverbFilterShow") > 0.5f;
             rp.filterWarmSaturation = safeGetParam(apvts, "reverbFilterWarmSaturation") > 0.5f;
-            rp.filterHPCutoff = safeGetParam(apvts, "reverbFilterHPCutoff");
-            rp.filterHPResonance = safeGetParam(apvts, "reverbFilterHPResonance");
-            rp.filterLPCutoff = safeGetParam(apvts, "reverbFilterLPCutoff");
-            rp.filterLPResonance = safeGetParam(apvts, "reverbFilterLPResonance");
+            rp.filterHPCutoff = modParam(ep_reverbFilterHPCutoff);
+            rp.filterHPResonance = modParam(ep_reverbFilterHPResonance);
+            rp.filterLPCutoff = modParam(ep_reverbFilterLPCutoff);
+            rp.filterLPResonance = modParam(ep_reverbFilterLPResonance);
             reverb_.setParameters(rp);
             reverb_.process(buffer);
         }
@@ -2926,29 +2924,29 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
     bool grainDelayEnabled = safeGetParam(apvts, "grainDelayEnabled") > 0.5f;
     if (grainDelayEnabled && buffer.getNumChannels() >= 2 && buffer.getNumSamples() > 0)
     {
-        float grainMix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "grainDelayMix") * 0.01f);
+        float grainMix = juce::jlimit(0.0f, 1.0f, modParam(ep_grainDelayMix) * 0.01f);
         float grainDrive = std::pow(10.0f, grainMix * 3.0f / 20.0f);
         buffer.applyGain(0, 0, buffer.getNumSamples(), grainDrive);
         buffer.applyGain(1, 0, buffer.getNumSamples(), grainDrive);
         SpaceDustGrainDelay::Parameters gp;
         gp.enabled = true;
-        gp.delayMs = juce::jlimit(20.0f, 2000.0f, safeGetParam(apvts, "grainDelayTime"));
-        gp.grainSizeMs = juce::jlimit(10.0f, 500.0f, safeGetParam(apvts, "grainDelaySize"));
-        gp.pitchSemitones = juce::jlimit(-12.0f, 12.0f, safeGetParam(apvts, "grainDelayPitch"));
+        gp.delayMs = juce::jlimit(20.0f, 2000.0f, modParam(ep_grainDelayTime));
+        gp.grainSizeMs = juce::jlimit(10.0f, 500.0f, modParam(ep_grainDelaySize));
+        gp.pitchSemitones = juce::jlimit(-12.0f, 12.0f, modParam(ep_grainDelayPitch));
         gp.mix = grainMix;
         // Decay is 0â€“150% in the APVTS; getRawParameterValue is normalized â€” must use get() for real percent.
         float grainDecayPct = 0.0f;
         if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("grainDelayDecay")))
             grainDecayPct = p->get();
         gp.decay = juce::jlimit(0.0f, 1.0f, grainDecayPct / 150.0f);
-        gp.density = juce::jlimit(1.0f, 8.0f, safeGetParam(apvts, "grainDelayDensity"));
-        gp.jitter = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "grainDelayJitter") * 0.01f);
+        gp.density = juce::jlimit(1.0f, 8.0f, modParam(ep_grainDelayDensity));
+        gp.jitter = juce::jlimit(0.0f, 1.0f, modParam(ep_grainDelayJitter) * 0.01f);
         gp.pingPong = safeGetParam(apvts, "grainDelayPingPong") > 0.5f;
         gp.filterOn = safeGetParam(apvts, "grainDelayFilterShow") > 0.5f;
-        gp.hpCutoffHz = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "grainDelayFilterHPCutoff"));
-        gp.lpCutoffHz = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "grainDelayFilterLPCutoff"));
-        gp.hpRes = safeGetParam(apvts, "grainDelayFilterHPResonance");
-        gp.lpRes = safeGetParam(apvts, "grainDelayFilterLPResonance");
+        gp.hpCutoffHz = juce::jlimit(20.0f, 20000.0f, modParam(ep_grainDelayFilterHPCutoff));
+        gp.lpCutoffHz = juce::jlimit(20.0f, 20000.0f, modParam(ep_grainDelayFilterLPCutoff));
+        gp.hpRes = modParam(ep_grainDelayFilterHPResonance);
+        gp.lpRes = modParam(ep_grainDelayFilterLPResonance);
         gp.warmSaturation = safeGetParam(apvts, "grainDelayFilterWarmSaturation") > 0.5f;
         grainDelay_.setParameters(gp);
         grainDelay_.process(buffer);
@@ -2959,23 +2957,23 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
     bool phaserEnabled = safeGetParam(apvts, "phaserEnabled") > 0.5f;
     if (phaserEnabled && buffer.getNumChannels() >= 2 && buffer.getNumSamples() > 0)
     {
-        float phaserMix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "phaserMix"));
+        float phaserMix = juce::jlimit(0.0f, 1.0f, modParam(ep_phaserMix));
         float phaserDrive = std::pow(10.0f, phaserMix * 3.0f / 20.0f);
         buffer.applyGain(0, 0, buffer.getNumSamples(), phaserDrive);
         buffer.applyGain(1, 0, buffer.getNumSamples(), phaserDrive);
         SpaceDustPhaser::Parameters pp;
         pp.enabled = true;
-        pp.rateHz = juce::jlimit(0.05f, 200.0f, safeGetParam(apvts, "phaserRate"));
-        pp.depth = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "phaserDepth"));
-        pp.feedback = juce::jlimit(-1.0f, 1.0f, safeGetParam(apvts, "phaserFeedback"));
+        pp.rateHz = juce::jlimit(0.05f, 200.0f, modParam(ep_phaserRate));
+        pp.depth = juce::jlimit(0.0f, 1.0f, modParam(ep_phaserDepth));
+        pp.feedback = juce::jlimit(-1.0f, 1.0f, modParam(ep_phaserFeedback));
         pp.scriptMode = safeGetParam(apvts, "phaserScriptMode") > 0.5f;
         pp.mix = phaserMix;
-        pp.centreHz = juce::jlimit(50.0f, 2000.0f, safeGetParam(apvts, "phaserCentre"));
+        pp.centreHz = juce::jlimit(50.0f, 2000.0f, modParam(ep_phaserCentre));
         if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"phaserStages", 1}.getParamID())))
             pp.numStages = (p->getIndex() == 0) ? 4 : 6;
         else
             pp.numStages = 4;
-        pp.stereoOffset = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "phaserStereoOffset"));
+        pp.stereoOffset = juce::jlimit(0.0f, 1.0f, modParam(ep_phaserStereoOffset));
         pp.vintageMode = safeGetParam(apvts, "phaserVintageMode") > 0.5f;
         phaser_.setParameters(pp);
         phaser_.process(buffer);
@@ -2986,16 +2984,16 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
     bool flangerEnabled = safeGetParam(apvts, "flangerEnabled") > 0.5f;
     if (flangerEnabled && buffer.getNumChannels() >= 1 && buffer.getNumSamples() > 0)
     {
-        float flangerMix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "flangerMix"));
+        float flangerMix = juce::jlimit(0.0f, 1.0f, modParam(ep_flangerMix));
         float flangerDrive = std::pow(10.0f, flangerMix * 3.0f / 20.0f);
         for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
             buffer.applyGain(ch, 0, buffer.getNumSamples(), flangerDrive);
         SpaceDustFlanger::Parameters fp;
         fp.enabled = true;
-        fp.rateHz = juce::jlimit(0.05f, 200.0f, safeGetParam(apvts, "flangerRate"));
-        fp.depth = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "flangerDepth"));
-        fp.feedback = juce::jlimit(-1.0f, 1.0f, safeGetParam(apvts, "flangerFeedback"));
-        fp.width = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "flangerWidth"));
+        fp.rateHz = juce::jlimit(0.05f, 200.0f, modParam(ep_flangerRate));
+        fp.depth = juce::jlimit(0.0f, 1.0f, modParam(ep_flangerDepth));
+        fp.feedback = juce::jlimit(-1.0f, 1.0f, modParam(ep_flangerFeedback));
+        fp.width = juce::jlimit(0.0f, 1.0f, modParam(ep_flangerWidth));
         fp.mix = flangerMix;
         flanger_.setParameters(fp);
         flanger_.process(buffer);
@@ -3011,11 +3009,11 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
             tp.enabled = true;
             if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"transientType", 1}.getParamID())))
                 tp.type = p->getIndex();
-            tp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientMix"));
+            tp.mix = juce::jlimit(0.0f, 1.0f, modParam(ep_transientMix));
             tp.postEffect = true;
-            tp.kaDonk = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientKaDonk"));
-            tp.coarse = juce::jlimit(-24.0f, 24.0f, safeGetParam(apvts, "transientCoarse"));
-            tp.length = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientLength"));
+            tp.kaDonk = juce::jlimit(0.0f, 1.0f, modParam(ep_transientKaDonk));
+            tp.coarse = juce::jlimit(-24.0f, 24.0f, modParam(ep_transientCoarse));
+            tp.length = juce::jlimit(0.0f, 1.0f, modParam(ep_transientLength));
             transient_.setParameters(tp);
             transient_.process(buffer);
         }
@@ -3046,12 +3044,12 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
             cp.type = p->getIndex();
         else
             cp.type = 0;
-        cp.thresholdDb = juce::jlimit(-60.0f, 0.0f, safeGetParam(apvts, "compressorThreshold"));
-        cp.ratio = juce::jlimit(1.0f, 20.0f, safeGetParam(apvts, "compressorRatio"));
-        cp.attackMs = juce::jlimit(0.1f, 80.0f, safeGetParam(apvts, "compressorAttack"));
-        cp.releaseMs = juce::jlimit(5.0f, 1200.0f, safeGetParam(apvts, "compressorRelease"));
-        cp.makeupGainDb = juce::jlimit(0.0f, 24.0f, safeGetParam(apvts, "compressorMakeup"));
-        cp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "compressorMix"));
+        cp.thresholdDb = juce::jlimit(-60.0f, 0.0f, modParam(ep_compressorThreshold));
+        cp.ratio = juce::jlimit(1.0f, 20.0f, modParam(ep_compressorRatio));
+        cp.attackMs = juce::jlimit(0.1f, 80.0f, modParam(ep_compressorAttack));
+        cp.releaseMs = juce::jlimit(5.0f, 1200.0f, modParam(ep_compressorRelease));
+        cp.makeupGainDb = juce::jlimit(0.0f, 24.0f, modParam(ep_compressorMakeup));
+        cp.mix = juce::jlimit(0.0f, 1.0f, modParam(ep_compressorMix));
         cp.autoRelease = safeGetParam(apvts, "compressorAutoRelease") > 0.5f;
         cp.softClip = safeGetParam(apvts, "compressorSoftClip") > 0.5f;
         compressor_.setParameters(cp);
@@ -3069,8 +3067,8 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
             sp.mode = p->getIndex();
         else
             sp.mode = 0;
-        sp.drive = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "softClipperDrive"));
-        sp.knee = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "softClipperKnee"));
+        sp.drive = juce::jlimit(0.0f, 1.0f, modParam(ep_softClipperDrive));
+        sp.knee = juce::jlimit(0.0f, 1.0f, modParam(ep_softClipperKnee));
         if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"softClipperOversample", 1}.getParamID())))
         {
             const int idx = p->getIndex();
@@ -3078,7 +3076,7 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
         }
         else
             sp.oversample = 2;
-        sp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "softClipperMix"));
+        sp.mix = juce::jlimit(0.0f, 1.0f, modParam(ep_softClipperMix));
         softClipper_.setParameters(sp);
         softClipper_.process(buffer);
     }
@@ -3090,7 +3088,7 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
     {
         SpaceDustLofi::Parameters lp;
         lp.enabled = true;
-        lp.amount = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "lofiAmount"));
+        lp.amount = juce::jlimit(0.0f, 1.0f, modParam(ep_lofiAmount));
         lofi_.setParameters(lp);
         lofi_.process(buffer);
     }
@@ -3116,9 +3114,14 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
             for (int i = 0; i < 5; ++i)
             {
                 juce::String n(i + 1);
-                fep.bands[i].freqHz = juce::jlimit(20.0f, 20000.0f, safeGetParam(apvts, "finalEQB" + n + "Freq", 1000.0f));
-                fep.bands[i].gainDb = juce::jlimit(-15.0f, 15.0f,    safeGetParam(apvts, "finalEQB" + n + "Gain"));
-                fep.bands[i].Q      = juce::jlimit(0.1f, 10.0f,      safeGetParam(apvts, "finalEQB" + n + "Q", 1.0f));
+                // Band i's three modulatable knobs sit together in the effect
+                // parameter list, in Freq / Gain / Q order -- see the
+                // static_assert beside that list. The Type is a choice, so it
+                // cannot be modulated and keeps its id-built read.
+                const int band = ep_finalEQB1Freq + i * finalEQParamsPerBand;
+                fep.bands[i].freqHz = juce::jlimit(20.0f, 20000.0f, modParam(band + 0, 1000.0f));
+                fep.bands[i].gainDb = juce::jlimit(-15.0f, 15.0f,    modParam(band + 1));
+                fep.bands[i].Q      = juce::jlimit(0.1f, 10.0f,      modParam(band + 2, 1.0f));
                 fep.bands[i].type   = SpaceDustFinalEQ::typeFromChoiceIndex(
                     static_cast<int>(safeGetParam(apvts, "finalEQB" + n + "Type",
                                                   static_cast<float>(defaultTypeIndex[i]))));
@@ -3131,10 +3134,228 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
 
 bool SpaceDustAudioProcessor::anyEffectParameterIsModulated() const noexcept
 {
-    // Task 4 replaces this BODY with a real check against the compiled routings.
-    // Declared in the header and defined here, never inline, so Task 4 has one
-    // definition to replace rather than two to reconcile.
+    return effectsAreModulated.load (std::memory_order_relaxed);
+}
+
+//==============================================================================
+// -- The modulation matrix, compiled and delivered --
+//==============================================================================
+
+bool SpaceDustAudioProcessor::isEffectParameter (const std::string& id) noexcept
+{
+    // The chain from runEffectsChain, by the prefix each stage's parameters use.
+    // A knob outside this list is a voice knob, which the per-sample voice loop
+    // already reaches without any chunking.
+    //
+    // "master" is deliberately NOT here. masterVolume is one of the six
+    // destinations the VOICE already applies per sample; listing it would chunk
+    // the whole effects chain for a knob that does not need it, and risks the
+    // same knob being applied twice.
+    static const char* const prefixes[] = {
+        "reverb", "delay", "grain", "phaser", "flanger", "transient",
+        "compressor", "softClipper", "lofi", "bitCrusher", "tranceGate",
+        "finalEQ"
+    };
+
+    for (const char* p : prefixes)
+        if (id.rfind (p, 0) == 0)
+            return true;
+
     return false;
+}
+
+void SpaceDustAudioProcessor::rebuildCompiledRoutings()
+{
+    // MESSAGE THREAD ONLY. Everything here allocates.
+    const int numDests = modDestinations.size();
+
+    // The destination table is built once, in the constructor, and never
+    // changes -- so these are sized on the FIRST call and left alone after it.
+    // Re-assigning them on every rebuild would write zeros into arrays the
+    // audio thread may be reading from at that very moment.
+    if ((int) destBases.size() != numDests)
+    {
+        destBases.assign ((size_t) numDests, 0.0f);
+        effectModulated.assign ((size_t) numDests, 0.0f);
+        destRanges.assign ((size_t) numDests, spacedust::DestRange { });
+        destRawValues.assign ((size_t) numDests, nullptr);
+
+        for (int i = 0; i < numDests; ++i)
+        {
+            destRanges[(size_t) i] = modDestinations.rangeAt (i);
+
+            // The very atomic the old safeGetParam() call found by name. Taking
+            // it here means an UNMODULATED destination reads bit-identically to
+            // the way it read before the matrix existed, and that no chunk has
+            // to hash a parameter id.
+            destRawValues[(size_t) i] =
+                apvts.getRawParameterValue (juce::String (modDestinations.idAt (i)));
+        }
+
+        // Where each knob the effects chain reads sits in that same table.
+        effectParamSlots.assign ((size_t) numEffectParams, -1);
+
+        for (int i = 0; i < numEffectParams; ++i)
+            effectParamSlots[(size_t) i] = modDestinations.slotFor (effectParamIds[i]);
+    }
+
+    // Fill the buffer that is not live, then publish it.
+    const int target = 1 - liveCompiled.load (std::memory_order_relaxed);
+    auto& out = compiledBuffers[target];
+
+    out.routings.clear();
+    out.voiceSlots.clear();
+    out.routings.reserve (modMatrix.routings().size());
+
+    bool touchesEffects = false;
+
+    for (const auto& r : modMatrix.routings())
+    {
+        const int slot = modDestinations.slotFor (r.destination);
+
+        // An old patch may name a parameter this build does not have. It is kept
+        // in modMatrix (see fromXml) but it can never reach audio, because this
+        // lookup gives -1 and the routing is skipped here.
+        if (slot < 0)
+            continue;
+
+        const auto range = modDestinations.rangeAt (slot);
+
+        out.routings.push_back (spacedust::CompiledRouting {
+            slot, r.lfoIndex, r.amount * range.halfRange() });
+
+        if (isEffectParameter (modDestinations.idAt (slot)))
+        {
+            touchesEffects = true;
+        }
+        else if (std::find (out.voiceSlots.begin(), out.voiceSlots.end(), slot)
+                     == out.voiceSlots.end())
+        {
+            // One row per DESTINATION, not per routing: four LFOs on the same
+            // knob still sum into one value.
+            out.voiceSlots.push_back (slot);
+        }
+    }
+
+    effectsAreModulated.store (touchesEffects, std::memory_order_relaxed);
+    liveCompiled.store (target, std::memory_order_release);
+}
+
+float SpaceDustAudioProcessor::modParam (int which, float fallback) noexcept
+{
+    if (which < 0 || which >= numEffectParams)
+        return fallback;
+
+    if (which < (int) effectParamSlots.size())
+    {
+        const int slot = effectParamSlots[(size_t) which];
+
+        if (slot >= 0 && slot < (int) effectModulated.size())
+            return effectModulated[(size_t) slot];
+    }
+
+    // Not a legal destination, or the tables are not built yet: read it the way
+    // the chain always did.
+    return safeGetParam (apvts, effectParamIds[which], fallback);
+}
+
+void SpaceDustAudioProcessor::refreshEffectModulatedValues (int startSampleInBlock) noexcept
+{
+    const int numDests = (int) destBases.size();
+
+    if (numDests <= 0 || (int) effectModulated.size() != numDests)
+        return;
+
+    // The LFO value at the FIRST sample of this piece stands for the whole
+    // piece. At 32 samples that is a control rate near 1400 Hz, which is what
+    // makes an assigned effect knob move smoothly rather than in steps.
+    for (int i = 0; i < spacedust::numLfos; ++i)
+    {
+        const auto& b = lfoBufferFor (i);
+        lfoValues[i] = (startSampleInBlock < b.getNumSamples())
+                           ? b.getSample (0, startSampleInBlock)
+                           : 0.0f;
+    }
+
+    for (int i = 0; i < numDests; ++i)
+    {
+        auto* raw = destRawValues[(size_t) i];
+        destBases[(size_t) i] = (raw != nullptr) ? raw->load (std::memory_order_relaxed) : 0.0f;
+    }
+
+    const auto& live = compiledBuffers[liveCompiled.load (std::memory_order_acquire)];
+
+    spacedust::ModMatrix::applyCompiled (live.routings.data(), (int) live.routings.size(),
+                                         destBases.data(), destRanges.data(), numDests,
+                                         lfoValues, effectModulated.data());
+}
+
+void SpaceDustAudioProcessor::fillVoiceModScratch (int numSamples) noexcept
+{
+    voiceModRowsFilled = 0;
+
+    if (voiceModRowSamples <= 0 || numSamples <= 0 || destBases.empty())
+        return;
+
+    const auto& live = compiledBuffers[liveCompiled.load (std::memory_order_acquire)];
+
+    if (live.voiceSlots.empty())
+        return;
+
+    const int columns = juce::jmin (numSamples, voiceModRowSamples);
+    const int rows     = juce::jmin ((int) live.voiceSlots.size(), maxVoiceModRows);
+
+    for (int row = 0; row < rows; ++row)
+    {
+        const int slot = live.voiceSlots[(size_t) row];
+
+        if (slot < 0 || slot >= (int) destBases.size())
+            continue;
+
+        // Gather this destination's LFOs once, then walk the samples. A
+        // destination can carry at most one routing per LFO, because setRouting
+        // replaces a pair rather than adding a second one.
+        const float* lfoRead[spacedust::numLfos] = { nullptr, nullptr, nullptr, nullptr };
+        float        lfoScale[spacedust::numLfos] = { 0.0f, 0.0f, 0.0f, 0.0f };
+        int          numContributions = 0;
+
+        for (const auto& c : live.routings)
+        {
+            if (c.destSlot != slot || numContributions >= spacedust::numLfos)
+                continue;
+
+            const auto& b = lfoBufferFor (c.lfoIndex);
+
+            if (b.getNumSamples() < columns)
+                continue;
+
+            lfoRead[numContributions]  = b.getReadPointer (0);
+            lfoScale[numContributions] = c.scale;
+            ++numContributions;
+        }
+
+        auto* rawValue = destRawValues[(size_t) slot];
+        const float base = (rawValue != nullptr) ? rawValue->load (std::memory_order_relaxed) : 0.0f;
+        const auto range = destRanges[(size_t) slot];
+
+        // The row this destination lands on, which is not `row` when an earlier
+        // slot was skipped above.
+        const int outRow = voiceModRowsFilled;
+        float* dest = voiceModScratch.data() + (size_t) outRow * (size_t) voiceModRowSamples;
+
+        for (int i = 0; i < columns; ++i)
+        {
+            float sum = base;
+
+            for (int c = 0; c < numContributions; ++c)
+                sum += lfoScale[c] * lfoRead[c][i];
+
+            dest[i] = juce::jlimit (range.start, range.end, sum);
+        }
+
+        voiceModRowSlots[outRow] = slot;
+        ++voiceModRowsFilled;
+    }
 }
 
 void SpaceDustAudioProcessor::readSpectrumSamples(float* dest, int numSamples) const
@@ -3410,6 +3631,11 @@ void SpaceDustAudioProcessor::setStateInformation(const void* data, int sizeInBy
             updateVoicesWithParameters();
         }
     }
+
+    // The routing list has just been replaced, so the audio thread's compiled
+    // copy of it is stale. Rebuild it here, on the message thread, rather than
+    // anywhere the audio thread could reach.
+    rebuildCompiledRoutings();
 
     // Successful completion â€” clear marker so next load attempts state restore normally.
     marker.deleteFile();

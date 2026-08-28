@@ -259,18 +259,18 @@ void SynthVoice::noteStarted()
     {
         try
         {
-            if (processor->lfo1Retrigger.load())
+            if (processor->lfoRetrigger[0].load())
             {
-                processor->lfo1CurrentPhase = 0.0;
+                processor->lfoCurrentPhase[0] = 0.0;
             }
         }
         catch (...) { /* ignore */ }
-        
+
         try
         {
-            if (processor->lfo2Retrigger.load())
+            if (processor->lfoRetrigger[1].load())
             {
-                processor->lfo2CurrentPhase = 0.0;
+                processor->lfoCurrentPhase[1] = 0.0;
             }
         }
         catch (...) { /* ignore */ }
@@ -1695,14 +1695,14 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         float osc1VolMod = 0.0f, osc2VolMod = 0.0f, noiseVolMod = 0.0f;  // Volume LFO modulation
         
         // Access LFO buffers per-sample (buffers are filled in processBlock for the entire block)
-        if (processor != nullptr && 
-            processor->lfo1Buffer.getNumSamples() > 0 && 
-            processor->lfo2Buffer.getNumSamples() > 0 &&
-            i < processor->lfo1Buffer.getNumSamples() && 
-            i < processor->lfo2Buffer.getNumSamples())
+        if (processor != nullptr &&
+            processor->lfoBufferFor(0).getNumSamples() > 0 &&
+            processor->lfoBufferFor(1).getNumSamples() > 0 &&
+            i < processor->lfoBufferFor(0).getNumSamples() &&
+            i < processor->lfoBufferFor(1).getNumSamples())
         {
-            float lfo1Val = processor->lfo1Buffer.getSample(0, i);
-            float lfo2Val = processor->lfo2Buffer.getSample(0, i);
+            float lfo1Val = processor->lfoBufferFor(0).getSample(0, i);
+            float lfo2Val = processor->lfoBufferFor(1).getSample(0, i);
             
             // Use cached LFO targets (set per-block in updateVoicesWithParameters - avoids per-sample APVTS reads)
             const int lfo1Target = lfo1TargetCached;
