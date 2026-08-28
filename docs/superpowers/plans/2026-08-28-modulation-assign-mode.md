@@ -941,15 +941,50 @@ int main()
     std::printf ("  samples differing: %zu\n", differing);
     std::printf ("  largest gap      : %.12f\n\n", worst);
 
-    if (differing == 0)
+    if (differing != 0)
     {
-        std::printf ("  chunked output is bit-identical to whole-block output.\n");
-        return 0;
+        // Never the string "error :" -- MSBuild reads that as a build failure.
+        std::printf ("  FAIL  chunking changed the audio. The chunking is wrong.\n");
+        return 1;
     }
 
-    // Never the string "error :" -- MSBuild reads that as a build failure.
-    std::printf ("  FAIL  chunking changed the audio. The chunking is wrong.\n");
-    return 1;
+    std::printf ("  chunked output is bit-identical to whole-block output.\n");
+
+    // -- the MODMATRIX round trip --
+    // Task 2 added saving and loading of the routing list but could not exercise
+    // it: this is the first harness in the plan that builds a real processor.
+    // The failure it guards against is silent -- a list that saves but does not
+    // come back leaves the patch sounding flat with no error anywhere.
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* sd = dynamic_cast<SpaceDustAudioProcessor*> (proc.get());
+
+        sd->modMatrix.setRouting (0, "reverbWetMix", 0.5f);
+        sd->modMatrix.setRouting (2, "filterCutoff", -0.75f);
+
+        juce::MemoryBlock saved;
+        sd->getStateInformation (saved);
+
+        sd->modMatrix.clear();
+        sd->setStateInformation (saved.getData(), (int) saved.getSize());
+
+        const bool ok = sd->modMatrix.routings().size() == 2
+                     && std::abs (sd->modMatrix.amountFor (0, "reverbWetMix") - 0.5f)  < 1.0e-6f
+                     && std::abs (sd->modMatrix.amountFor (2, "filterCutoff") + 0.75f) < 1.0e-6f;
+
+        std::printf ("\n  MODMATRIX round trip: %d routing(s) restored\n",
+                     (int) sd->modMatrix.routings().size());
+
+        if (! ok)
+        {
+            std::printf ("  FAIL  the routing list did not survive save and load.\n");
+            return 1;
+        }
+
+        std::printf ("  the routing list survives save and load.\n");
+    }
+
+    return 0;
 }
 ```
 
@@ -1192,7 +1227,7 @@ git commit -m "feat(fx): the effects chain can run in pieces without changing a 
 - Consumes: `spacedust::ModMatrix::applyCompiled`, `CompiledRouting`, `DestinationTable` (Tasks 1-2); `runEffectsChain` (Task 3).
 - Produces:
   - `SpaceDustAudioProcessor::rebuildCompiledRoutings()` — message thread, allocates
-  - `SpaceDustAudioProcessor::modulatedValue(int slot) const noexcept -> float`
+  - `SpaceDustAudioProcessor::effectModulatedValue(int slot) const noexcept -> float`
   - `SpaceDustAudioProcessor::lfoValues[numLfos]` filled per chunk
   - `SpaceDustAudioProcessor::anyEffectParameterIsModulated() const noexcept` — the real one
 
@@ -1210,11 +1245,28 @@ In `Source/PluginProcessor.h`:
     std::vector<spacedust::CompiledRouting> compiledBuffers[2];
     std::atomic<int>                        liveCompiled { 0 };
 
-    /** Base values and ranges, one per destination slot, refreshed once per
-        chunk from the parameters. */
+    /** Base values and ranges, one per destination slot.
+
+        effectModulated is filled per CHUNK inside runEffectsChain and serves the
+        effects only. The name says "effect" because the voices cannot use it:
+        they render at line 2314 and runEffectsChain does not run until 2725. */
     std::vector<float>                  destBases;
     std::vector<spacedust::DestRange>   destRanges;
-    std::vector<float>                  destModulated;
+    std::vector<float>                  effectModulated;
+
+    /** Per-sample modulated values for VOICE destinations, filled BEFORE the
+        voices render.
+
+        Only destinations that actually carry a routing get a row -- normally
+        none, sometimes a handful -- so this stays small. A row per destination
+        would be about 150 by 512 floats, 300 KB every block, for a patch that
+        usually modulates nothing.
+
+        Sized in prepareToPlay and never resized on the audio thread. */
+    std::vector<std::vector<float>> voiceModScratch;
+
+    /** Which destination slot each row of voiceModScratch belongs to. */
+    std::vector<int> voiceModSlots;
 
     /** Whether any live routing lands on a parameter the effects chain reads.
         Decides whether the chain is chunked at all. */
@@ -1271,7 +1323,7 @@ void SpaceDustAudioProcessor::rebuildCompiledRoutings()
     const int numDests = modDestinations.size();
 
     destBases.assign ((size_t) numDests, 0.0f);
-    destModulated.assign ((size_t) numDests, 0.0f);
+    effectModulated.assign ((size_t) numDests, 0.0f);
     destRanges.resize ((size_t) numDests);
 
     for (int i = 0; i < numDests; ++i)
@@ -1368,32 +1420,82 @@ The LFO buffers already exist (`lfo1Buffer`, `lfo2Buffer`, plus `lfo3Buffer` and
     spacedust::ModMatrix::applyCompiled (compiled.data(), (int) compiled.size(),
                                          destBases.data(), destRanges.data(),
                                          modDestinations.size(),
-                                         lfoValues, destModulated.data());
+                                         lfoValues, effectModulated.data());
 ```
 
-Then every effect parameter read inside `runEffectsChain` uses `modulatedValue(slot)` in place of `safeGetParam`. Add:
+Then every effect parameter read inside `runEffectsChain` uses `effectModulatedValue(slot)` in place of `safeGetParam`. Add:
 
 ```cpp
-    float modulatedValue (int slot) const noexcept
+    float effectModulatedValue (int slot) const noexcept
     {
-        return destModulated[(size_t) slot];
+        return effectModulated[(size_t) slot];
     }
 ```
 
 Cache each effect parameter's slot once in `prepareToPlay` rather than calling `slotFor` per chunk.
 
-- [ ] **Step 5: Leave the six voice destinations exactly as they are**
+- [ ] **Step 5: Fill the voice scratch BEFORE the voices render**
 
-Do **not** change `SynthVoice.cpp:1712-1747`. Pitch, filter cutoff, master volume, Osc 1, Osc 2 and noise volume keep their existing per-sample code. Extend that block only to read LFO 3 and 4 buffers as well, in Task 9.
+**Read this before writing anything.** The order inside `processBlock` is:
 
-For voice knobs that are NOT one of those six, add to the voice's per-sample loop:
+| Line | What happens |
+| --- | --- |
+| 1700 | the LFO buffers are filled |
+| 2307 | `updateVoicesWithParameters` pushes cached values into the voices |
+| 2314 | `synth.renderNextBlock` — the voices render |
+| 2725+ | the effects chain |
+
+The voices render **400 lines before** the effects chain. A voice that read
+`effectModulated` would read last block's numbers, or uninitialised ones. Neither
+test in this plan would catch it — the chunk-equality audit compares a patch with
+nothing modulated, and the destination sweep uses an effect knob — so a voice knob
+that silently never moves would pass everything.
+
+So the voice destinations get their own scratch, filled just before line 2314:
 
 ```cpp
-            // Voice knobs reached by the matrix. The six that predate the matrix
-            // keep their own paths above; this covers everything else the voice
-            // reads, so an assigned shaping or unison knob moves per sample too.
-            for (int i = 0; i < numVoiceModSlots; ++i)
-                voiceModValues[i] = processor->modulatedValue (voiceModSlots[i]);
+    // Voice destinations, one row per modulated slot, one column per sample.
+    // Filled here because renderNextBlock is next and the effects chain, where
+    // effectModulated is filled, does not run for another 400 lines.
+    const int liveIndex = liveCompiled.load (std::memory_order_acquire);
+    const auto& compiled = compiledBuffers[liveIndex];
+
+    for (size_t row = 0; row < voiceModSlots.size(); ++row)
+    {
+        const int slot = voiceModSlots[row];
+        const auto range = modDestinations.rangeAt (slot);
+        const float base = modDestinations.paramAt (slot)->convertFrom0to1 (
+                               modDestinations.paramAt (slot)->getValue());
+
+        float* dest = voiceModScratch[row].data();
+
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float sum = base;
+
+            for (const auto& c : compiled)
+                if (c.destSlot == slot)
+                    sum += c.scale * lfoBufferFor (c.lfoIndex).getSample (0, i);
+
+            dest[i] = juce::jlimit (range.start, range.end, sum);
+        }
+    }
+```
+
+`voiceModSlots` and the scratch rows are rebuilt in `rebuildCompiledRoutings`, on the
+message thread, so nothing here allocates.
+
+**Do not change `SynthVoice.cpp:1712-1747`.** Pitch, filter cutoff, master volume,
+Osc 1, Osc 2 and noise volume keep their existing per-sample code, so a patch that
+worked before sounds identical. Task 9 extends only that block, to read LFO 3 and 4.
+
+For voice knobs that are NOT one of those six, the voice reads its row by sample:
+
+```cpp
+            // Row, not slot: the scratch holds only the destinations that carry
+            // a routing, so the row index is the voice's own small handful.
+            for (int row = 0; row < numVoiceModRows; ++row)
+                voiceModValues[row] = processor->voiceModScratch[row][i];
 ```
 
 - [ ] **Step 6: Verify the chunk audit still passes**
