@@ -498,6 +498,9 @@ SpaceDustAudioProcessor::SpaceDustAudioProcessor()
     // Timer callbacks run on the message thread, which is where we are now.
     presetHotReload.start();
 
+    // After the parameters exist, because this walks them.
+    modDestinations.build (apvts);
+
     //==============================================================================
     DBG("Space Dust: Processor ctor END");
     logToFile("Processor constructed");
@@ -3259,6 +3262,11 @@ void SpaceDustAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
             if (auto waves = userWaveLibrary.createStateXml())
                 xml->addChildElement(waves.release());
 
+            // The routing list travels with the song. It is not in the parameter
+            // list, because one parameter per possible LFO-and-knob pair would be
+            // four LFOs times about 150 knobs.
+            xml->addChildElement(spacedust::toXml(modMatrix).release());
+
             copyXmlToBinary(*xml, destData);
         }
     }
@@ -3312,6 +3320,17 @@ void SpaceDustAudioProcessor::setStateInformation(const void* data, int sizeInBy
                 waves.reset(stored);
             }
 
+            // Lifted OUT before the XML becomes the parameter tree, exactly as
+            // USERWAVES is. Left in place it would become a child of the APVTS
+            // state, be written out again by the next save, and double on every
+            // round trip.
+            std::unique_ptr<juce::XmlElement> matrixXml;
+            if (auto* stored = xmlState->getChildByName("MODMATRIX"))
+            {
+                xmlState->removeChildElement(stored, false);
+                matrixXml.reset(stored);
+            }
+
             auto restored = juce::ValueTree::fromXml(*xmlState);
             const int savedVersion = xmlState->getIntAttribute("stateVersion", 1);
             migrateLfoRatesIfOld(restored, savedVersion);
@@ -3326,6 +3345,14 @@ void SpaceDustAudioProcessor::setStateInformation(const void* data, int sizeInBy
             // point at the slots this is about to fill.
             if (waves != nullptr)
                 userWaveLibrary.restoreFromStateXml(*waves);
+
+            // A patch with no MODMATRIX is one saved before routings existed.
+            // Clearing rather than leaving the last patch's routings in place is
+            // what stops one patch's movement leaking into the next.
+            if (matrixXml != nullptr)
+                spacedust::fromXml(*matrixXml, modMatrix);
+            else
+                modMatrix.clear();
 
             updateVoicesWithParameters();
         }

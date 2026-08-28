@@ -24,6 +24,7 @@
 #include "SpaceDustFinalEQ.h"
 #include "PresetHotReload.h"
 #include "ResampleCapture.h"
+#include "ModMatrixState.h"
 
 //==============================================================================
 /**
@@ -97,6 +98,13 @@ public:
         gets an immutable snapshot instead (see the note in UserWavetable.h). */
     UserWaveLibrary& getUserWaveLibrary() { return userWaveLibrary; }
 
+    /** The routing list, and the knobs it is allowed to reach.
+
+        Public because the editor edits the matrix directly in assign mode.
+        Edited on the message thread only; the audio thread reads the compiled
+        form that Task 4 publishes, never this. */
+    spacedust::ModMatrix        modMatrix;
+    spacedust::DestinationTable modDestinations;
 
     // LFO buffers for per-sample access from voices
     juce::AudioBuffer<float> lfo1Buffer;
