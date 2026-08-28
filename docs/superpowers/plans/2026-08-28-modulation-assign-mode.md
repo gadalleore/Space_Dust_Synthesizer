@@ -1082,17 +1082,26 @@ At the point in `processBlock` where the effects section used to begin:
     }
 ```
 
-For this task only, add the stub that Task 4 replaces:
+For this task only, add the stub that Task 4 replaces. **Declare** it in the header
+beside `runEffectsChain`:
+
+```cpp
+    /** Whether any live routing lands on a parameter the effects chain reads.
+        Task 3 stubs this to false; Task 4 gives it the real answer. */
+    bool anyEffectParameterIsModulated() const noexcept;
+```
+
+and **define** it in the .cpp:
 
 ```cpp
 bool SpaceDustAudioProcessor::anyEffectParameterIsModulated() const noexcept
 {
-    // Task 4 replaces this with a real check against the compiled routings.
+    // Task 4 replaces this BODY with a real check against the compiled routings.
+    // Declared in the header and defined here, never inline, so Task 4 has one
+    // definition to replace rather than two to reconcile.
     return false;
 }
 ```
-
-Declare it in the header beside `runEffectsChain`.
 
 - [ ] **Step 7: Run the audit to verify it passes**
 
@@ -1158,12 +1167,40 @@ In `Source/PluginProcessor.h`:
     /** Rebuild the compiled form from modMatrix. Message thread only --
         it allocates. Call after every change to the routing list. */
     void rebuildCompiledRoutings();
+```
 
-    bool anyEffectParameterIsModulated() const noexcept
+`anyEffectParameterIsModulated` is already declared in the header by Task 3. Do not
+add a second declaration. Replace its **body** in the .cpp:
+
+```cpp
+bool SpaceDustAudioProcessor::anyEffectParameterIsModulated() const noexcept
+{
+    return effectsAreModulated.load (std::memory_order_relaxed);
+}
+```
+
+### Step 0: bring the LFO buffers forward first
+
+Steps 4 and 7, and Task 7, all read four LFO buffers. Task 9 adds the LFO 3 and 4
+*parameters*, but the *buffers* are needed here. Do this first:
+
+Replace `lfo1Buffer` / `lfo2Buffer` with `juce::AudioBuffer<float> lfoBuffers[spacedust::numLfos]`,
+and the paired `lfo1ShState` / `lfo2ShState` and `lfo1SampleHoldValue` /
+`lfo2SampleHoldValue` with arrays of the same size. Add:
+
+```cpp
+    juce::AudioBuffer<float>& lfoBufferFor (int lfo) noexcept
     {
-        return effectsAreModulated.load (std::memory_order_relaxed);
+        return lfoBuffers[juce::jlimit (0, spacedust::numLfos - 1, lfo)];
     }
 ```
+
+Replace the two copies of the LFO fill code at `PluginProcessor.cpp:1714-1760` with one
+loop over all four.
+
+Buffers 2 and 3 stay **silent** until Task 9 adds their parameters: `safeGetParam`
+returns 0 for a parameter that does not exist, which gives a depth of 0 and a buffer of
+zeros. A zero buffer contributes nothing, so nothing changes audibly here.
 
 - [ ] **Step 2: Implement the rebuild**
 
@@ -1219,10 +1256,14 @@ bool SpaceDustAudioProcessor::isEffectParameter (const std::string& id) noexcept
     // The chain from runEffectsChain, by the prefix each stage's parameters use.
     // A knob outside this list is a voice knob, which the per-sample voice loop
     // already reaches without any chunking.
+    // "master" is deliberately NOT here. masterVolume is one of the six
+    // destinations the VOICE already applies per sample; listing it would chunk
+    // the whole effects chain for a knob that does not need it, and risks the
+    // same knob being applied twice.
     static const char* const prefixes[] = {
         "reverb", "delay", "grain", "phaser", "flanger", "transient",
         "compressor", "softClipper", "lofi", "bitCrusher", "tranceGate",
-        "finalEQ", "master"
+        "finalEQ"
     };
 
     for (const char* p : prefixes)
@@ -1878,8 +1919,11 @@ In the editor constructor, after all sliders and attachments are set up, add one
     wrapKnob (masterVolumeSlider,    "masterVolume");
     // ... one line per remaining assignable knob.
 
+    // Verified against createParameterLayout: osc1BendPlus, osc1BendMinus,
+    // osc1BendPlusMinus, osc1Spectrum, osc1Sync. wrapKnob skips an unknown id
+    // SILENTLY, so a wrong one here ships as a knob that never lights up.
     static const char* const shapingIds[numShapingKnobs] =
-        { "BendPlus", "BendMinus", "BendBoth", "Spectrum", "Sync" };
+        { "BendPlus", "BendMinus", "BendPlusMinus", "Spectrum", "Sync" };
 
     for (int i = 0; i < numShapingKnobs; ++i)
     {
@@ -2133,18 +2177,14 @@ lfo4TripletEnabled, lfo4TripletStraightToggle, lfo4Retrigger
 
 Copy the ranges and defaults from the `lfo1*` definitions at `PluginProcessor.cpp:3964-4029`.
 
-- [ ] **Step 2: Turn the four LFOs into an array**
+- [ ] **Step 2: Confirm the buffers already carry them**
 
-Replace `lfo1Buffer` / `lfo2Buffer` with `juce::AudioBuffer<float> lfoBuffers[spacedust::numLfos]`, and the paired `lfo1ShState` / `lfo2ShState` and `lfo1SampleHoldValue` / `lfo2SampleHoldValue` with arrays of the same size. Add:
+`lfoBuffers`, `lfoBufferFor` and the single LFO fill loop were brought forward into
+Task 4 step 0, because Tasks 4 and 7 both read four buffers. Nothing to refactor here.
 
-```cpp
-    juce::AudioBuffer<float>& lfoBufferFor (int lfo) noexcept
-    {
-        return lfoBuffers[juce::jlimit (0, spacedust::numLfos - 1, lfo)];
-    }
-```
-
-Replace the two copies of the LFO fill code at `PluginProcessor.cpp:1714-1760` with one loop over the four.
+Confirm only that buffers 2 and 3, silent until this task, now fill from the new
+`lfo3*` and `lfo4*` parameters: hold a note with LFO 3 enabled and check its buffer is
+no longer all zeros.
 
 - [ ] **Step 3: One panel layout for four LFOs**
 
