@@ -473,6 +473,25 @@ add_custom_target(unison-test
     COMMENT "Running unison spread tests")
 
 #==============================================================================
+# modmatrix-test — standalone check of the modulation matrix arithmetic.
+# Where a knob sits once one or more LFOs reach it: the rotation around the
+# knob's own value, the clamp to its legal range, and the rule that two LFOs on
+# one knob add before the clamp. No JUCE, so it builds and runs in seconds.
+# Usage: cmake --build build --config Release --target modmatrix-test
+#==============================================================================
+add_executable(mod_matrix_test
+    tools/modmatrixtest/mod_matrix_test.cpp
+    Source/ModMatrix.cpp)
+set_target_properties(mod_matrix_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/mod_matrix_test")
+target_compile_features(mod_matrix_test PRIVATE cxx_std_17)
+
+add_custom_target(modmatrix-test
+    COMMAND $<TARGET_FILE:mod_matrix_test>
+    DEPENDS mod_matrix_test
+    COMMENT "Running modulation matrix tests")
+
+#==============================================================================
 # lfo-test — measures LFO fold-back (aliasing) across the rate range.
 # Pass "legacy" to the exe to evaluate the pre-band-limiting edges for comparison.
 # Usage: cmake --build build --config Release --target lfo-test
