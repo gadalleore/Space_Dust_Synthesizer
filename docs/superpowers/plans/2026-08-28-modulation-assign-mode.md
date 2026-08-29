@@ -2505,9 +2505,21 @@ void SpaceDustAudioProcessor::migrateLfoTargetsIfOld (juce::ValueTree& state,
 
     // 0=Pitch, 1=Filter, 2=MasterVol, 3=Osc1, 4=Osc2, 5=Noise -- the order the
     // deleted lfo1Target and lfo2Target choice used.
-    static const char* const oldTargets[] = {
-        "osc1CoarseTune", "filterCutoff", "masterVolume",
-        "osc1Level", "osc2Level", "noiseLevel"
+    //
+    // Pitch is TWO destinations, not one. The old drop-down's "Pitch" moved the
+    // whole voice, so mapping it to osc1CoarseTune alone would migrate a patch
+    // into one oscillator wobbling while the other stands still -- audibly wrong,
+    // and wrong in a way that reads as a broken preset rather than a bad
+    // migration. Every other target is a single destination.
+    struct OldTarget { const char* a; const char* b; };
+
+    static const OldTarget oldTargets[] = {
+        { "osc1CoarseTune", "osc2CoarseTune" },   // 0 Pitch -- both
+        { "filterCutoff",   nullptr },            // 1 Filter
+        { "masterVolume",   nullptr },            // 2 Master Vol
+        { "osc1Level",      nullptr },            // 3 Osc 1 Vol
+        { "osc2Level",      nullptr },            // 4 Osc 2 Vol
+        { "noiseLevel",     nullptr }             // 5 Noise Vol
     };
 
     for (int lfo = 0; lfo < 2; ++lfo)
@@ -2526,7 +2538,15 @@ void SpaceDustAudioProcessor::migrateLfoTargetsIfOld (juce::ValueTree& state,
         // +1.0, NOT that LFO's Depth. Depth survives this migration untouched
         // and already scales the LFO output; taking the amount from it as well
         // would square the depth and halve the movement of every saved patch.
-        matrix.setRouting (lfo, oldTargets[target], 1.0f);
+        //
+        // Task 8 proved +1.0 is exactly right rather than assuming it: adding
+        // LFO 1 -> filterCutoff at +1.0 restored both audit sweep values to
+        // their pre-deletion figures BIT FOR BIT, which is what the deleted
+        // drop-down produced.
+        matrix.setRouting (lfo, oldTargets[target].a, 1.0f);
+
+        if (oldTargets[target].b != nullptr)
+            matrix.setRouting (lfo, oldTargets[target].b, 1.0f);
     }
 }
 ```
