@@ -2383,15 +2383,26 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         }
     }
 
-    // Voice params after mono/legato MIDI rewrite so coarse/detune retune uses currentPitch
-    // (see SynthVoice::setOsc* â€” must align with renderNextBlock base Hz, not stale MIDI note).
-    updateVoicesWithParameters(0.0f, 0.0f);
-
     // Per-sample modulated values for the VOICE destinations, filled HERE
     // because renderNextBlock is the next statement. The effects chain, where
     // effectModulated is filled, does not run for another 400 lines, so a voice
     // reading effectModulated would get the PREVIOUS block's numbers.
+    //
+    // MUST run BEFORE updateVoicesWithParameters: that call reads this scratch
+    // via voiceModulatedValue() to push modulated voice-knob values into the
+    // voices for this block. Filling it after would mean every voice
+    // destination read the PREVIOUS block's numbers instead -- a systematic
+    // one-block lag, and stale values on the very first block after any
+    // routing change. fillVoiceModScratch itself only needs
+    // latchCompiledRoutings() and the LFO buffers, both already done above,
+    // plus the raw parameter atomics -- nothing updateVoicesWithParameters
+    // produces -- so there is no dependency pulling it the other way. Do not
+    // reorder these two calls back.
     fillVoiceModScratch(numSamples);
+
+    // Voice params after mono/legato MIDI rewrite so coarse/detune retune uses currentPitch
+    // (see SynthVoice::setOsc* â€” must align with renderNextBlock base Hz, not stale MIDI note).
+    updateVoicesWithParameters(0.0f, 0.0f);
 
     //==============================================================================
     // -- Render the Synthesizer --
