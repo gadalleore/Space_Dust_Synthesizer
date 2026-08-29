@@ -534,7 +534,7 @@ int main()
             // getStateInformation already wrote the current stateVersion and a
             // MODMATRIX holding the one routing above -- both left alone. Only
             // the stale target field is added on top, deliberately, to prove
-            // the version check is what stops it, not its mere absence.
+            // MODMATRIX's presence is what stops it, not its mere absence.
             addIntParam (*xml, "lfo1Target", 1);   // Filter -- must NOT appear below.
 
             std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
@@ -556,6 +556,55 @@ int main()
             }
 
             std::printf ("  a current-format patch is not migrated again.\n");
+        }
+
+        // The guard above must hold even when stateVersion is BELOW current --
+        // this is the regression the version-gated design was prone to: the old
+        // lfo1Target/lfo2Target nodes are never deleted, so they are still
+        // sitting in a real player's patch that was saved, then re-opened and
+        // hand-adjusted, then saved again at whatever stateVersion was current
+        // at the time. If this migration re-entered on version alone, adjusting
+        // LFO 1 -> filterCutoff down to 0.35 and saving at an old stateVersion
+        // would come back reset to +1.0 the next time currentStateVersion moves
+        // for an unrelated reason. It must come back 0.35, untouched.
+        {
+            std::unique_ptr<juce::AudioProcessor> sourceProc (createPluginFilter());
+            auto* sourceSd = dynamic_cast<SpaceDustAudioProcessor*> (sourceProc.get());
+            sourceSd->modMatrix.setRouting (0, "filterCutoff", 0.35f);   // hand-adjusted, not the migrated +1.0
+
+            juce::MemoryBlock saved;
+            sourceSd->getStateInformation (saved);
+
+            std::unique_ptr<juce::XmlElement> xml (
+                juce::AudioProcessor::getXmlFromBinary (saved.getData(), (int) saved.getSize()));
+
+            // MODMATRIX and its one routing are left alone. stateVersion is
+            // pushed back below current, and a stray lfo1Target is added on
+            // top -- exactly the shape of a patch that survived from before the
+            // matrix existed, was migrated once, hand-adjusted, and saved again
+            // by an OLDER build that still wrote a lower stateVersion.
+            xml->setAttribute ("stateVersion", 4);
+            addIntParam (*xml, "lfo1Target", 1);   // Filter -- must NOT reset the amount below.
+
+            std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+            auto* sd = dynamic_cast<SpaceDustAudioProcessor*> (proc.get());
+            loadInto (*sd, *xml);
+
+            const auto& routings = sd->modMatrix.routings();
+            const float amount = sd->modMatrix.amountFor (0, "filterCutoff");
+            const bool unchanged = routings.size() == 1 && std::abs (amount - 0.35f) < 1.0e-6f;
+
+            std::printf ("\n  a patch already carrying MODMATRIX, stateVersion BELOW current: "
+                         "LFO 1 -> filterCutoff amount %.6f (expect 0.350000)\n", amount);
+
+            if (! unchanged)
+            {
+                std::printf ("  FAIL  a below-current stateVersion re-triggered the migration and\n");
+                std::printf ("        overwrote a hand-adjusted routing amount.\n");
+                return 1;
+            }
+
+            std::printf ("  a hand-adjusted routing survives even at a below-current stateVersion.\n");
         }
 
         // -- the PITCH CURVE migration --

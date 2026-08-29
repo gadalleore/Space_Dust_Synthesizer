@@ -1637,7 +1637,15 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         bool   pitchEnvShapingNow  = false;  // true while the curve is actively bending the pitch
 
         // A flat curve is skipped entirely, so a patch that draws nothing costs
-        // nothing and sounds exactly as it did.
+        // nothing and sounds exactly as it did. Note isFlat() is a STATIC,
+        // whole-object property (was any point ever nonzero) -- it only decides
+        // whether it is worth evaluating the curve at all, never whether to pin
+        // the pitch right now. That decision is pitchEnvShapingNow below, which
+        // is a per-instant reading of valueAt() and is what must gate the pin:
+        // gating on isFlat() instead pinned pitchForOscillators to targetPitch
+        // for the ENTIRE remaining life of any note with a non-flat curve, long
+        // after valueAt() had settled to zero -- silently defeating glide,
+        // portamento, and the mono anti-click auto-glide for that whole note.
         if (pitchCurve != nullptr && ! pitchCurve->isFlat()
             && pitchCurveTime >= 0.0001f && sampleRate > 0.0f)
         {
@@ -1645,14 +1653,23 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             const float t01 = elapsedSec / pitchCurveTime;
 
             const float semitones = juce::jlimit(-48.0f, 48.0f, pitchCurve->valueAt(t01));
-            const double ratio = std::pow(2.0, static_cast<double>(semitones) / 12.0);
-
-            // Anchored to the intended note (targetPitch), not the glide-tracking
-            // currentPitch, for the same reason the old ramp was: rapid notes whose
-            // glide has not finished would otherwise bend a meaningless mid-glide
-            // pitch.
-            pitchForOscillators = targetPitch * ratio;
             pitchEnvShapingNow = (semitones != 0.0f);
+
+            if (pitchEnvShapingNow)
+            {
+                const double ratio = std::pow(2.0, static_cast<double>(semitones) / 12.0);
+
+                // Anchored to the intended note (targetPitch), not the
+                // glide-tracking currentPitch, for the same reason the old ramp
+                // was: rapid notes whose glide has not finished would otherwise
+                // bend a meaningless mid-glide pitch.
+                pitchForOscillators = targetPitch * ratio;
+            }
+            // else: the curve is holding at exactly zero right now (settled, or
+            // simply passing through zero) -- pitchForOscillators keeps its
+            // currentPitch default above, handing control back to glide for as
+            // long as the curve stays at zero. If it later rises again,
+            // pitchEnvShapingNow goes true and the pin above resumes.
         }
         // Cap pitchEnvSamplesElapsed to avoid float precision loss on very long holds
         if (pitchEnvSamplesElapsed < 1e7f)

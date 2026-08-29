@@ -306,12 +306,19 @@ public:
         every saved patch. Task 8's audit proved +1.0 reproduces the deleted
         drop-down bit for bit.
 
+        Gated on whether THIS save carried a MODMATRIX, not on stateVersion:
+        the old lfo1Target/lfo2Target nodes are read but never deleted, so they
+        persist in every save forever, and a stateVersion-gated re-entry would
+        fire this again -- overwriting a routing amount the player has since
+        adjusted by hand -- the next time currentStateVersion moves for any
+        unrelated reason. Absence of MODMATRIX is a fact about this one save.
+
         Also carries pitchEnvAmount / pitchEnvTime / pitchEnvPitch into a
-        two-point pitch curve -- see the comment inside for why that half is
-        gated on whether THIS save carried a PITCHCURVE rather than on
-        stateVersion, unlike the LFO-target half above. */
-    static void migrateLfoTargetsIfOld(juce::ValueTree& state, int stateVersion,
+        two-point pitch curve, gated the identical way on whether THIS save
+        carried a PITCHCURVE -- see the comment inside. */
+    static void migrateLfoTargetsIfOld(juce::ValueTree& state,
                                         spacedust::ModMatrix& matrix,
+                                        bool hadSavedModMatrix,
                                         spacedust::PitchCurve& curve,
                                         bool hadSavedPitchCurve);
 

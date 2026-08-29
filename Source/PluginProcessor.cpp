@@ -3828,8 +3828,9 @@ void SpaceDustAudioProcessor::migrateLfoRatesIfOld(juce::ValueTree& state, int s
     }
 }
 
-void SpaceDustAudioProcessor::migrateLfoTargetsIfOld(juce::ValueTree& state, int stateVersion,
+void SpaceDustAudioProcessor::migrateLfoTargetsIfOld(juce::ValueTree& state,
                                                       spacedust::ModMatrix& matrix,
+                                                      bool hadSavedModMatrix,
                                                       spacedust::PitchCurve& curve,
                                                       bool hadSavedPitchCurve)
 {
@@ -3838,10 +3839,15 @@ void SpaceDustAudioProcessor::migrateLfoTargetsIfOld(juce::ValueTree& state, int
 
     // -- lfo1Target / lfo2Target -> the modulation matrix --
     //
-    // Patches saved at the new version already carry a MODMATRIX and have no
-    // lfo1Target / lfo2Target nodes to find -- the loop below is a no-op for
-    // them either way, but this guard says so up front.
-    if (stateVersion < currentStateVersion)
+    // Gated on whether THIS save carried a MODMATRIX, NOT on stateVersion. The
+    // old lfo1Target/lfo2Target nodes are read below but never deleted from the
+    // tree, and getStateInformation re-serialises apvts.copyState() verbatim, so
+    // they persist in every save forever. A stateVersion-gated guard would fire
+    // this again on an ALREADY-migrated patch -- overwriting a routing amount
+    // the player has since adjusted by hand back to +1.0 -- the next time
+    // currentStateVersion moves for any unrelated reason. Absence of MODMATRIX
+    // is a fact about this one save, not about the shared version counter.
+    if (! hadSavedModMatrix)
     {
         // 0=Pitch, 1=Filter, 2=MasterVol, 3=Osc1, 4=Osc2, 5=Noise -- the order the
         // deleted lfo1Target and lfo2Target choice used.
@@ -3892,16 +3898,15 @@ void SpaceDustAudioProcessor::migrateLfoTargetsIfOld(juce::ValueTree& state, int
 
     // -- pitchEnvAmount / pitchEnvTime / pitchEnvPitch -> the pitch curve --
     //
-    // Gated on whether THIS save carried a PITCHCURVE, NOT on stateVersion like
-    // the LFO-target half above. The three deleted knobs existed across every
-    // version the shared stateVersion counter has ever named, so tying this to
-    // "stateVersion < currentStateVersion" would make it fire again on an
-    // ALREADY-migrated patch the next time currentStateVersion moves for some
-    // unrelated reason, stomping whatever curve the player has since drawn with
-    // the orphaned old values that this build never clears out of the tree.
-    // Absence of PITCHCURVE is a fact about this one save, not about the shared
-    // version counter, so it stays correct no matter how many unrelated
-    // migrations are added after this one.
+    // Gated on whether THIS save carried a PITCHCURVE, the same shape of guard
+    // as MODMATRIX above and for the identical reason: the three deleted knobs
+    // are read below but never deleted from the tree, so a stateVersion-gated
+    // guard would fire this again on an ALREADY-migrated patch -- stomping
+    // whatever curve the player has since drawn -- the next time
+    // currentStateVersion moves for some unrelated reason. Absence of
+    // PITCHCURVE is a fact about this one save, not about the shared version
+    // counter, so it stays correct no matter how many unrelated migrations are
+    // added after this one.
     if (! hadSavedPitchCurve)
     {
         const auto readOld = [&state] (const char* id) -> float
@@ -4104,7 +4109,8 @@ void SpaceDustAudioProcessor::setStateInformation(const void* data, int sizeInBy
             // A patch with no MODMATRIX is one saved before routings existed.
             // Clearing rather than leaving the last patch's routings in place is
             // what stops one patch's movement leaking into the next.
-            if (matrixXml != nullptr)
+            const bool hadSavedModMatrix = (matrixXml != nullptr);
+            if (hadSavedModMatrix)
                 spacedust::fromXml(*matrixXml, modMatrix);
             else
                 modMatrix.clear();
@@ -4126,7 +4132,7 @@ void SpaceDustAudioProcessor::setStateInformation(const void* data, int sizeInBy
             // old values even though this build no longer has parameters for
             // them. Same for pitchEnvAmount/Time/Pitch, and same reason this
             // must run after pitchCurve.clear()/fromXml above, not before.
-            migrateLfoTargetsIfOld(restored, savedVersion, modMatrix, pitchCurve, hadSavedPitchCurve);
+            migrateLfoTargetsIfOld(restored, modMatrix, hadSavedModMatrix, pitchCurve, hadSavedPitchCurve);
 
             updateVoicesWithParameters();
         }
