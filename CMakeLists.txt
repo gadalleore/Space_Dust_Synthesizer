@@ -117,6 +117,7 @@ target_sources(SpaceDust PRIVATE
     Source/NoteLockGrid.h
     Source/ModMatrix.cpp
     Source/ModMatrixState.cpp
+    Source/ModulatableKnob.cpp
     Source/WaveAnalysis.cpp
     Source/WaveAnalysis.h
     Source/UserWavetable.cpp
