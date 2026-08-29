@@ -1583,6 +1583,121 @@ git commit -m "feat(mod): routings reach the audio, one sample at a time"
 
 ---
 
+## Task 4b: Voice destinations actually move
+
+Added 2026-08-28, after Task 4 revealed a gap in this plan. Task 4 fills
+`voiceModScratch` every block and **nothing reads it**. Without this task, assigning
+an LFO to any voice knob other than the six that predate the matrix compiles, gets a
+scratch row, is filled every block — and moves nothing at all. The editor in Task 6
+lights up every knob, so the failure would be silent and would look like a flaky
+plugin.
+
+**Files:**
+- Modify: `Source/PluginProcessor.cpp` — `updateVoicesWithParameters`, line 1138
+
+**Interfaces:**
+- Consumes: `voiceModScratch`, `voiceModRowSlots`, `voiceModRowsFilled`, `voiceModRow()` (Task 4); `DestinationTable::slotFor` (Task 2).
+- Produces: nothing new.
+
+### The rate, and why it is not per sample
+
+`updateVoicesWithParameters` has **60 voice setter calls** and runs once per block. The
+voice then reads those values as cached members throughout its own per-sample loop.
+
+Making every voice knob per-sample would mean overriding about 40 cached members from
+the scratch inside the voice's sample loop, per voice, per sample. That is a large
+change with real CPU cost on every note, for knobs where it does not matter: shaping,
+unison, pan, levels and envelope times are timbral, and 86 Hz is smooth for any LFO
+below roughly 20 Hz.
+
+**The six that need audio rate already have it** and are untouched: pitch, filter
+cutoff, master volume, Osc 1, Osc 2 and noise volume keep their existing per-sample
+paths in `SynthVoice.cpp:1712-1747`.
+
+So: voice knobs read **column 0 of their scratch row** — the value at the first sample
+of the block. The scratch stays per-sample, so escalating one specific knob to full
+audio rate later means reading all its columns instead of one, with no restructuring.
+
+- [ ] **Step 1: Add the lookup**
+
+```cpp
+    /** The modulated value of a voice destination at the START of this block.
+
+        Voice knobs are pushed into the voices once per block, so column 0 of the
+        scratch row is the value they get. The row holds all the columns, so a
+        knob that later needs full audio rate can read them without any of this
+        being restructured.
+
+        Returns the unmodulated value when the destination carries no routing. */
+    float voiceModulatedValue (const char* parameterId, float fallback) const noexcept;
+```
+
+```cpp
+float SpaceDustAudioProcessor::voiceModulatedValue (const char* parameterId,
+                                                    float fallback) const noexcept
+{
+    const int slot = modDestinations.slotFor (parameterId);
+
+    if (slot < 0)
+        return fallback;
+
+    const int row = voiceModRow (slot);
+
+    if (row < 0)
+        return fallback;
+
+    return voiceModScratch[(size_t) row * (size_t) voiceModRowSamples];
+}
+```
+
+`slotFor` takes a `std::string` and this runs once per block, not per sample, so the
+string construction here is acceptable. **Do not** call this from inside the voice's
+per-sample loop.
+
+- [ ] **Step 2: Substitute at the 60 call sites**
+
+In `updateVoicesWithParameters`, every value that comes from `safeGetParam` and is
+handed to a `voice->set...` call becomes:
+
+```cpp
+    // was: safeGetParam(apvts, "osc1Pan")
+    voiceModulatedValue ("osc1Pan", safeGetParam (apvts, "osc1Pan"))
+```
+
+**Do not touch** the six pre-existing destinations. `filterCutoff`, `masterVolume`,
+`osc1Level`, `osc2Level`, `noiseLevel` and pitch are applied per sample inside the
+voice; routing them here as well would apply the same modulation twice.
+
+- [ ] **Step 3: Prove a voice knob moves**
+
+Add to `tools/chunkaudit/chunk_audit_main.cpp`, beside the existing effect sweep, the
+same measurement against a **voice** destination — `osc1Pan` is a good choice, because
+it is unmistakable in a stereo comparison and is not one of the six.
+
+Expected: a largest difference well above `1.0e-6`, exactly as the effect sweep gives.
+If it comes back at zero, the scratch is still not being read and this task has not
+worked.
+
+- [ ] **Step 4: Build and commit**
+
+```bash
+cmake --build build --config Release --target SpaceDust
+cmake --build build --config Release --target SpaceDust_VST3
+cmake --build build --config Release --target SpaceDust_Standalone
+cmake --build build --config Release --target SpaceDustChunkAudit
+./build/SpaceDustChunkAudit_artefacts/Release/SpaceDustChunkAudit.exe
+```
+
+All checks must pass: `samples differing: 0`, the MODMATRIX round trip, the effect
+sweep, and the new voice sweep.
+
+```bash
+git add Source/PluginProcessor.cpp Source/PluginProcessor.h tools/chunkaudit/chunk_audit_main.cpp
+git commit -m "feat(mod): a voice knob moves when an LFO reaches it"
+```
+
+---
+
 ## Task 5: The modulatable knob
 
 **Files:**
