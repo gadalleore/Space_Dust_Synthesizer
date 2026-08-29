@@ -35,12 +35,33 @@ void PresetManager::savePreset(const juce::String& presetName)
     // Add preset name as an attribute on the root element
     xml->setAttribute("presetName", presetName);
 
-    // The imported waveforms go in with it, audio and all. A preset that named a
-    // parameter for a user slot but did not carry the slot was a preset that
-    // sounded different on the next machine, or after the user tidied up.
+    // Marks which meaning the stored values carry, exactly as getStateInformation
+    // does. Missing, it read back as version 1 on every load -- so every preset,
+    // however recently saved, had the LFO-rate and waveform migrations run over
+    // it each time it was opened, renumbering waveforms that were already right.
+    xml->setAttribute("stateVersion", SpaceDustAudioProcessor::currentStateVersion);
+
+    // A preset carries the SOUND. Everything getStateInformation writes that the
+    // sound depends on is written here too; the two attributes it writes that the
+    // sound does not depend on -- cheezeGuyActivated and lastActiveTabIndex --
+    // are deliberately left out. They are per-session window state, and a preset
+    // that moved the player's open tab when they auditioned it would be a bug.
     if (auto* spaceDust = dynamic_cast<SpaceDustAudioProcessor*>(&valueTreeState.processor))
+    {
+        // The imported waveforms go in with it, audio and all. A preset that named a
+        // parameter for a user slot but did not carry the slot was a preset that
+        // sounded different on the next machine, or after the user tidied up.
         if (auto waves = spaceDust->getUserWaveLibrary().createStateXml())
             xml->addChildElement(waves.release());
+
+        // The routing list and the drawn pitch shape travel with the preset for
+        // the same reason they travel with the song: neither is in the parameter
+        // list, so copyState() above does not contain them. Without these two
+        // lines a preset silently discarded every routing and the whole curve --
+        // it saved and reloaded as a patch whose LFOs went nowhere.
+        xml->addChildElement(spacedust::toXml(spaceDust->modMatrix).release());
+        xml->addChildElement(spacedust::pitchCurveToXml(spaceDust->pitchCurve).release());
+    }
 
     auto presetFile = presetFolder.getChildFile(presetName + presetExtension);
     xml->writeTo(presetFile);
@@ -66,6 +87,12 @@ void PresetManager::loadPreset(const juce::File& presetFile)
     auto name = xml->getStringAttribute("presetName",
                     presetFile.getFileNameWithoutExtension());
 
+    // This whole function mirrors SpaceDustAudioProcessor::setStateInformation.
+    // A preset and a song carry the same sound, so they must be restored the same
+    // way; the two paths having drifted apart is exactly how presets came to lose
+    // their routings and their curve. Where this differs, the difference is
+    // deliberate and said so at the point it happens.
+
     // Lift the waveforms OUT before the rest becomes the parameter tree. Left in
     // place they would become a child of the APVTS state and be written out again
     // by the next save, doubling in size on every round trip.
@@ -76,6 +103,23 @@ void PresetManager::loadPreset(const juce::File& presetFile)
         // The false says "do not delete it" - ownership passes to us here.
         xml->removeChildElement(stored, false);
         waves.reset(stored);
+    }
+
+    // Lifted OUT for the same reason and in the same way as USERWAVES above.
+    std::unique_ptr<juce::XmlElement> matrixXml;
+
+    if (auto* stored = xml->getChildByName("MODMATRIX"))
+    {
+        xml->removeChildElement(stored, false);
+        matrixXml.reset(stored);
+    }
+
+    std::unique_ptr<juce::XmlElement> curveXml;
+
+    if (auto* stored = xml->getChildByName("PITCHCURVE"))
+    {
+        xml->removeChildElement(stored, false);
+        curveXml.reset(stored);
     }
 
     // Presets saved before the LFO free-rate range was widened to 2000 Hz store a knob
@@ -92,12 +136,53 @@ void PresetManager::loadPreset(const juce::File& presetFile)
 
     valueTreeState.replaceState(restored);
 
-    // After the parameters, so the waveform choices they restored already point at
-    // the slots this is about to fill. A preset from before waveforms travelled
-    // has no block here at all, and leaves the user's slots exactly as they were.
-    if (waves != nullptr)
-        if (auto* spaceDust = dynamic_cast<SpaceDustAudioProcessor*>(&valueTreeState.processor))
+    if (auto* spaceDust = dynamic_cast<SpaceDustAudioProcessor*>(&valueTreeState.processor))
+    {
+        // After the parameters, so the waveform choices they restored already point at
+        // the slots this is about to fill. A preset from before waveforms travelled
+        // has no block here at all, and leaves the user's slots exactly as they were.
+        if (waves != nullptr)
             spaceDust->getUserWaveLibrary().restoreFromStateXml(*waves);
+
+        // A preset with no MODMATRIX is one saved before routings existed.
+        // Clearing rather than leaving the last preset's routings in place is
+        // what stops one preset's movement leaking into the next -- and stepping
+        // down a preset list is where that leak shows up hardest.
+        const bool hadSavedModMatrix = (matrixXml != nullptr);
+
+        if (hadSavedModMatrix)
+            spacedust::fromXml(*matrixXml, spaceDust->modMatrix);
+        else
+            spaceDust->modMatrix.clear();
+
+        // Same reasoning as MODMATRIX just above.
+        const bool hadSavedPitchCurve = (curveXml != nullptr);
+
+        if (hadSavedPitchCurve)
+            spacedust::pitchCurveFromXml(*curveXml, spaceDust->pitchCurve);
+        else
+            spaceDust->pitchCurve.clear();
+
+        // After the clear/fromXml above, not before, for the reason set out in
+        // full inside migrateLfoTargetsIfOld. `restored` is a plain ValueTree
+        // that still holds lfo1Target/lfo2Target and pitchEnvAmount/Time/Pitch,
+        // which this build has no parameters for. Without this call every
+        // preset in the player's existing library loaded with its LFOs routed
+        // nowhere and no pitch envelope at all.
+        SpaceDustAudioProcessor::migrateLfoTargetsIfOld(restored,
+                                                        spaceDust->modMatrix,
+                                                        hadSavedModMatrix,
+                                                        spaceDust->pitchCurve,
+                                                        hadSavedPitchCurve);
+
+        spaceDust->updateVoicesWithParameters();
+
+        // The routing list has just been replaced, so the audio thread's compiled
+        // copy of it is stale. This is the message thread -- loadPreset is only
+        // ever reached from the editor's preset box -- which is the only place
+        // this may be called from, because it allocates.
+        spaceDust->rebuildCompiledRoutings();
+    }
 
     currentPresetName = name;
 }

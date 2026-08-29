@@ -821,5 +821,104 @@ int main()
         }
     }
 
+    // -- the PRESET round trip --
+    //
+    // A preset carries the same sound as a song, so PresetManager has to do
+    // everything setStateInformation does. It did not: it wrote no stateVersion,
+    // no MODMATRIX and no PITCHCURVE, so saving a preset threw away every
+    // routing and the drawn curve, and loading one ran the waveform migration
+    // over an already-current preset. Nothing above reaches PresetManager at
+    // all -- every test so far goes through get/setStateInformation -- so this
+    // is the only thing standing between the two paths drifting apart again.
+    {
+        // setPresetFolder writes the chosen folder into the player's own
+        // config.xml. Guarded the same way liveState guards current.sdpreset,
+        // and put back explicitly below as well, so this harness cannot leave
+        // the player pointed at a temporary directory.
+        const auto configFile = PresetManager::appDataFolder().getChildFile ("config.xml");
+        const LiveStateGuard configGuard (configFile);
+
+        // The guard only puts back a file that was already there. A player who
+        // has never changed their preset folder has no config.xml at all, and
+        // this harness must not be the thing that creates one.
+        const bool hadConfig = configFile.existsAsFile();
+
+        auto tempFolder = juce::File::getSpecialLocation (juce::File::tempDirectory)
+                              .getChildFile ("SpaceDustChunkAuditPresets");
+        tempFolder.createDirectory();
+
+        const juce::String presetName { "ChunkAuditRoundTrip" };
+
+        std::unique_ptr<juce::AudioProcessor> sourceProc (createPluginFilter());
+        auto* sourceSd = dynamic_cast<SpaceDustAudioProcessor*> (sourceProc.get());
+
+        PresetManager saver (sourceSd->getValueTreeState());
+        const auto originalFolder = saver.getPresetFolder();
+        saver.setPresetFolder (tempFolder);
+
+        sourceSd->modMatrix.setRouting (1, "filterCutoff", -0.6f);
+        sourceSd->pitchCurve.addPoint (0.25f, 7.0f);
+
+        // Not a User slot, so it is only carried correctly if the preset says
+        // which numbering it speaks. Without a stateVersion attribute the load
+        // reads version 1 and shifts this to 27.
+        if (auto* p = sourceSd->getValueTreeState().getParameter ("osc1Waveform"))
+            p->setValueNotifyingHost (p->convertTo0to1 (10.0f));
+
+        saver.savePreset (presetName);
+
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* sd = dynamic_cast<SpaceDustAudioProcessor*> (proc.get());
+
+        // Left over from "the preset before this one". It must not survive the
+        // load: leaking one preset's movement into the next is what the
+        // clear-or-restore branches exist to stop.
+        sd->modMatrix.setRouting (3, "reverbWetMix", 0.9f);
+
+        PresetManager loader (sd->getValueTreeState());
+        loader.loadPreset (tempFolder.getChildFile (presetName + PresetManager::presetExtension));
+
+        const float amount = sd->modMatrix.amountFor (1, "filterCutoff");
+        const int   shape  = (int) std::lround (sd->getValueTreeState()
+                                                    .getRawParameterValue ("osc1Waveform")->load());
+        const auto& curve  = sd->pitchCurve;
+
+        const bool routingCarried = sd->modMatrix.routings().size() == 1
+                                 && std::abs (amount + 0.6f) < 1.0e-6f;
+        const bool curveCarried   = curve.pointCount() == 1
+                                 && std::abs (curve.pointAt (0).t01 - 0.25f) < 1.0e-6f
+                                 && std::abs (curve.pointAt (0).semitones - 7.0f) < 1.0e-4f;
+        const bool shapeCarried   = shape == 10;
+
+        std::printf ("\n  PRESET round trip: save then load through PresetManager\n");
+        std::printf ("  routings after load: %d (expect 1 -- the preset's, not the last patch's)\n",
+                     (int) sd->modMatrix.routings().size());
+        std::printf ("  LFO 2 -> filterCutoff amount %.6f (expect -0.600000)\n", amount);
+        std::printf ("  pitch curve points: %d (expect 1)\n", curve.pointCount());
+        if (curve.pointCount() == 1)
+            std::printf ("  point 0: t=%.6f semitones=%.6f (expect 0.250000, 7.000000)\n",
+                         curve.pointAt (0).t01, curve.pointAt (0).semitones);
+        std::printf ("  osc1Waveform after load: %d (expect 10)\n", shape);
+
+        // Tidy up before any early return below, so a failure does not leave the
+        // player's preset folder setting pointing at the temp directory.
+        tempFolder.getChildFile (presetName + PresetManager::presetExtension).deleteFile();
+        saver.setPresetFolder (originalFolder);
+        tempFolder.deleteRecursively();
+
+        if (! hadConfig)
+            configFile.deleteFile();
+
+        if (! (routingCarried && curveCarried && shapeCarried))
+        {
+            std::printf ("  FAIL  a preset did not carry its routings, its pitch curve\n");
+            std::printf ("        and its waveform through save and load.\n");
+            return 1;
+        }
+
+        std::printf ("  a preset carries its routings, its curve and its waveform,\n");
+        std::printf ("  and the previous patch's routing does not leak into it.\n");
+    }
+
     return 0;
 }

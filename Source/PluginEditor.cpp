@@ -3690,7 +3690,10 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         {
             presetManager->loadPreset(presets[idx]);
             audioProcessor.currentPresetName = presetManager->getCurrentPresetName();
-            audioProcessor.updateVoicesWithParameters();
+            // No updateVoicesWithParameters() here any more: loadPreset now does
+            // it itself, along with rebuilding the compiled routings, so that the
+            // preset path restores a patch exactly the way setStateInformation
+            // does. Calling it again from here would only repeat the work.
         }
     };
     addAndMakeVisible(presetCombo);
