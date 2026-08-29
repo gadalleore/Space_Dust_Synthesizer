@@ -55,6 +55,12 @@ private:
 
     juce::Rectangle<int> barArea() const;
 
+    /** The one true partition of the bar into lanes. paint() and lfoLaneAt()
+        both call this rather than each computing lane geometry on its own --
+        two independent computations of the same pixels is how they end up
+        disagreeing at lane counts that do not divide evenly. */
+    juce::Rectangle<float> laneBoundsFor (int laneIndex, int laneCount) const;
+
     /** Which LFO owns the bar lane under this point, or -1. */
     int lfoLaneAt (juce::Point<int> position) const;
 

@@ -1,5 +1,8 @@
 #include "ModulatableKnob.h"
 
+#include <cmath>
+#include <vector>
+
 namespace
 {
     /** A full-height drag sets the amount from one end to the other. 150 pixels
@@ -17,7 +20,6 @@ ModulatableKnob::ModulatableKnob (juce::Slider& knobToWrap,
       mode (modeState),
       routingChanged (std::move (onRoutingChanged))
 {
-    setInterceptsMouseClicks (false, false);
     mode.addChangeListener (this);
 }
 
@@ -28,10 +30,10 @@ ModulatableKnob::~ModulatableKnob()
 
 void ModulatableKnob::changeListenerCallback (juce::ChangeBroadcaster*)
 {
-    // While assign mode is on this layer takes the mouse; while it is off the
-    // slider underneath gets it and behaves exactly as it always did.
-    const bool assigning = mode.activeLfo() >= 0;
-    setInterceptsMouseClicks (assigning, assigning);
+    // Nothing to toggle here: hitTest() below reads mode.activeLfo() on every
+    // call, so JUCE re-derives whether this layer or the slider underneath
+    // gets the mouse each time, with no flag to keep in sync. A mode change
+    // only needs a repaint, for the ring and the bar's assign-mode styling.
     repaint();
 }
 
@@ -42,12 +44,37 @@ juce::Rectangle<int> ModulatableKnob::barArea() const
 
 bool ModulatableKnob::hitTest (int x, int y)
 {
+    // This is the actual mechanism that makes the component transparent to the
+    // mouse while assign mode is off: returning false means JUCE never
+    // delivers the click to this layer, so it falls through to the slider
+    // underneath, which behaves exactly as it always did. There is no
+    // setInterceptsMouseClicks flag involved -- overriding hitTest bypasses
+    // that mechanism entirely.
+
     // The bar is clickable even outside assign mode, so an amount can be edited
     // without entering the mode at all. Everything else falls through.
     if (barArea().contains (x, y) && matrix.hasAnyRouting (destination))
         return true;
 
     return mode.activeLfo() >= 0;
+}
+
+juce::Rectangle<float> ModulatableKnob::laneBoundsFor (int laneIndex, int laneCount) const
+{
+    auto bar = barArea().toFloat();
+
+    if (laneCount <= 0)
+        return bar;
+
+    // Float division throughout: at lane counts that do not divide barWidth
+    // evenly (four lanes in a 6px bar, for one), an integer version of this
+    // would give a different partition than this one, and paint() and
+    // lfoLaneAt() would silently disagree about which pixel belongs to which
+    // lane. Both call this same function so there is only one partition to
+    // get right.
+    const float laneWidth = bar.getWidth() / (float) laneCount;
+
+    return bar.withWidth (laneWidth).withX (bar.getX() + laneWidth * (float) laneIndex);
 }
 
 int ModulatableKnob::lfoLaneAt (juce::Point<int> position) const
@@ -67,20 +94,29 @@ int ModulatableKnob::lfoLaneAt (juce::Point<int> position) const
     if (lanes.empty())
         return -1;
 
-    const int laneWidth = juce::jmax (1, bar.getWidth() / (int) lanes.size());
-    const int index = juce::jlimit (0, (int) lanes.size() - 1,
-                                    (position.x - bar.getX()) / laneWidth);
+    const auto point = position.toFloat();
 
-    return lanes[(size_t) index];
+    for (size_t i = 0; i < lanes.size(); ++i)
+        if (laneBoundsFor ((int) i, (int) lanes.size()).contains (point))
+            return lanes[i];
+
+    // Floating-point rounding can leave the rightmost pixel column just
+    // outside every lane's bounds; treat it as the last lane rather than miss
+    // the click, since bar.contains() above already confirmed it is on the bar.
+    return lanes.back();
 }
 
 void ModulatableKnob::mouseDown (const juce::MouseEvent& event)
 {
-    dragLfo = lfoLaneAt (event.getPosition());
-
-    // A press away from the bar in assign mode assigns the LFO being assigned.
-    if (dragLfo < 0)
+    // In assign mode the active LFO always wins, even on the bar's own lanes:
+    // the player's press means "assign this LFO", and letting a narrow strip
+    // silently redirect the gesture to whichever LFO already owns that pixel
+    // would be a trap. Editing an existing lane by pressing the bar directly
+    // is only what happens when assign mode is off.
+    if (mode.activeLfo() >= 0)
         dragLfo = mode.activeLfo();
+    else
+        dragLfo = lfoLaneAt (event.getPosition());
 
     if (dragLfo < 0)
         return;
@@ -158,16 +194,13 @@ void ModulatableKnob::paint (juce::Graphics& g)
 
     if (! lanes.empty())
     {
-        auto bar = barArea().toFloat();
-        const float laneWidth = bar.getWidth() / (float) lanes.size();
-
         for (size_t i = 0; i < lanes.size(); ++i)
         {
             const int lfo = lanes[i];
             const float amount = matrix.amountFor (lfo, destination);
             const auto colour = spacedust::AssignModeState::colourFor (lfo);
 
-            auto lane = bar.withWidth (laneWidth).withX (bar.getX() + laneWidth * (float) i);
+            auto lane = laneBoundsFor ((int) i, (int) lanes.size());
 
             g.setColour (colour.withAlpha (0.20f));
             g.fillRect (lane);
