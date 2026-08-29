@@ -164,12 +164,27 @@ public:
         return (row >= 0 && row < voiceModRowsFilled) ? voiceModRowSlots[row] : -1;
     }
 
+    /** How many samples of THIS block the rows actually cover.
+
+        Normally the whole block. It is smaller only when a host hands over a
+        block bigger than the 8192-sample headroom the rows were built with,
+        because nothing grows them on the audio thread -- a heap allocation
+        inside processBlock would be a worse fault than covering less of a rare
+        oversized block.
+
+        A reader MUST clamp to this. Reading a row at an index at or past it
+        walks off the end of that row and into the next one. Holding the last
+        covered value is the right behaviour for the samples beyond it. */
+    int numVoiceModSamples() const noexcept { return voiceModValidSamples; }
+
     /** One row of per-sample values, or nullptr when there is no such row.
         Row, not slot: the scratch holds only the destinations that carry a
-        routing, so the row index is the voice's own small handful. */
+        routing, so the row index is the voice's own small handful.
+        Valid for numVoiceModSamples() samples, which is not always the whole
+        block -- see there. */
     const float* voiceModRow (int row) const noexcept
     {
-        if (row < 0 || row >= voiceModRowsFilled || voiceModRowSamples <= 0)
+        if (row < 0 || row >= voiceModRowsFilled || voiceModValidSamples <= 0)
             return nullptr;
 
         return voiceModScratch.data() + (size_t) row * (size_t) voiceModRowSamples;
@@ -544,10 +559,24 @@ private:
         caller -- and becomes the common case the moment the editor rebuilds on
         every drag of an assign gesture.
 
-        With three, the writer skips BOTH the buffer it published last
-        (liveCompiled) and the buffer the audio thread announced it is walking
-        (readerInUse), and a third is therefore always free. Two forbidden
-        indices out of three leaves exactly one.
+        WHAT THIS GUARANTEES. The writer skips both the buffer it published last
+        (liveCompiled) and the buffer the audio thread last announced
+        (readerInUse), so with three buffers it always has one to build into,
+        and it cannot touch the announced buffer. For a reader that has
+        completed latchCompiledRoutings(), that closes the race: two, three, any
+        number of consecutive rebuilds during the block leave the announced
+        buffer alone.
+
+        WHAT IT DOES NOT. The latch is a load then a separate store, not one
+        atomic step. If the audio thread is pre-empted between them and TWO
+        complete rebuilds finish inside that window, the second can choose the
+        buffer the reader has already latched but not yet announced. The window
+        is a few instructions wide and needs two full rebuilds inside it.
+
+        This is left open ON PURPOSE. Closing it means publish-then-verify with
+        a retry loop, which costs the audio thread its wait-freedom -- a
+        guaranteed unbounded wait in exchange for a window this narrow is the
+        wrong trade in a real-time thread. Do not "fix" it with a spin.
 
         The audio thread latches its index ONCE per block, in
         latchCompiledRoutings(), so every consumer in that block sees one
@@ -615,14 +644,20 @@ private:
     float lfoValues[spacedust::numLfos] { 0.0f, 0.0f, 0.0f, 0.0f };
 
     /** Voice scratch: maxVoiceModRows rows of voiceModRowSamples floats, one
-        flat block allocated in prepareToPlay and never resized afterwards.
-        A patch that routes more than maxVoiceModRows DISTINCT voice knobs
-        loses the ones past the cap; sixteen is far past "a handful". */
+        flat block allocated in prepareToPlay and NEVER resized afterwards --
+        nothing on the audio thread grows it, so filling it cannot allocate.
+
+        A patch that routes more than maxVoiceModRows DISTINCT voice knobs has
+        the ones past the cap REFUSED when the routing is compiled, on the
+        message thread, and logged -- see rebuildCompiledRoutings. They are not
+        accepted and then quietly dropped here. Sixteen is far past "a
+        handful". */
     static constexpr int maxVoiceModRows = 16;
 
     std::vector<float> voiceModScratch;
     int                voiceModRowSamples = 0;   // columns per row
     int                voiceModRowsFilled = 0;   // audio thread only
+    int                voiceModValidSamples = 0; // audio thread only
     int                voiceModRowSlots[maxVoiceModRows] { };   // audio thread only
 
     //==============================================================================

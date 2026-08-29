@@ -397,6 +397,9 @@ namespace
 
     static_assert (ec_finalEQB2Type - ec_finalEQB1Type == 1,
                    "the final EQ Type choices must stay one apart and in band order");
+    static_assert (ec_finalEQB5Type + 1 == numEffectChoices,
+                   "the final EQ Type choices must stay last, so the ec_finalEQB1Type + i "
+                   "indexing cannot run into a choice inserted after them");
 
     const char* const effectChoiceIds[] = {
         #define SPACEDUST_EC_ID(name) #name,
@@ -968,12 +971,18 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         }
 
         // The voice modulation scratch, allocated ONCE here where the audio is
-        // stopped, so filling it every block never allocates. Same 8192 headroom
-        // as the LFO buffers, and for the same reason: some hosts hand
-        // processBlock a bigger block than they declared.
+        // stopped. This is the ONLY place it is ever sized: nothing on the
+        // audio thread grows it, so filling it every block cannot allocate.
+        //
+        // The 8192 headroom is the same figure the LFO buffers use, because
+        // some hosts hand processBlock a bigger block than they declared. Where
+        // the LFO buffers must grow to meet such a block -- writing past them
+        // corrupts the heap -- the scratch does not: fillVoiceModScratch clamps
+        // instead and publishes how far it got in numVoiceModSamples().
         voiceModRowSamples = juce::jmax(samplesPerBlock, 8192);
         voiceModScratch.assign((size_t) maxVoiceModRows * (size_t) voiceModRowSamples, 0.0f);
         voiceModRowsFilled = 0;
+        voiceModValidSamples = 0;
 
         // Initialize delay lines
         juce::dsp::ProcessSpec delaySpec;
@@ -1898,17 +1907,6 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
         if (lfoBuffers[lfo].getNumSamples() < numSamples)
             lfoBuffers[lfo].setSize(1, numSamples, false, false, true);
 
-    // The voice modulation scratch needs the same guard, and for the same
-    // reason: without it an oversized block short-fills every row and the tail
-    // of the block reads whatever the previous block left there. Stale, not
-    // corrupt -- but the LFO buffers beside it do not accept stale either.
-    // Allocates only on growth (rare), then stays grown.
-    if (voiceModRowSamples < numSamples)
-    {
-        voiceModRowSamples = numSamples;
-        voiceModScratch.assign ((size_t) maxVoiceModRows * (size_t) voiceModRowSamples, 0.0f);
-    }
-
     // LFO waveform generation lives in Source/LfoWaveform.cpp so its fold-back can be
     // measured directly (tools/lfotest). It takes the per-sample phase advance so the
     // eased edges cannot collapse into steps once cycles get short at audio rates.
@@ -2337,10 +2335,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
 
                 SpaceDustTransient::Parameters tp;
                 tp.enabled = true;
-                if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"transientType", 1}.getParamID())))
-                    tp.type = p->getIndex();
-                else
-                    tp.type = 0;
+                tp.type = effectChoiceIndex(ec_transientType, 0);
                 tp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientMix"));
                 tp.postEffect = transientPostEffect;
                 tp.kaDonk = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientKaDonk"));
@@ -2416,8 +2411,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     {
         SpaceDustTransient::Parameters tp;
         tp.enabled = true;
-        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"transientType", 1}.getParamID())))
-            tp.type = p->getIndex();
+        tp.type = effectChoiceIndex(ec_transientType, tp.type);
         tp.mix = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientMix"));
         tp.postEffect = false;
         tp.kaDonk = juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "transientKaDonk"));
@@ -3408,7 +3402,8 @@ void SpaceDustAudioProcessor::refreshEffectModulatedValues (int startSampleInBlo
 
 void SpaceDustAudioProcessor::fillVoiceModScratch (int numSamples) noexcept
 {
-    voiceModRowsFilled = 0;
+    voiceModRowsFilled   = 0;
+    voiceModValidSamples = 0;
 
     if (voiceModRowSamples <= 0 || numSamples <= 0 || destBases.empty())
         return;
@@ -3418,6 +3413,13 @@ void SpaceDustAudioProcessor::fillVoiceModScratch (int numSamples) noexcept
     if (live.voiceSlots.empty())
         return;
 
+    // How much of this block the rows actually cover. Normally the whole of it:
+    // the rows are sized in prepareToPlay with the same 8192-sample headroom the
+    // LFO buffers use, so only a host handing over a block bigger than THAT
+    // clamps here. Nothing is grown to meet it -- growing would mean a heap
+    // allocation inside processBlock, which is worse than covering less of a
+    // rare oversized block. numVoiceModSamples() publishes the figure so a
+    // reader cannot walk off the end of a row; see the note there.
     const int columns = juce::jmin (numSamples, voiceModRowSamples);
 
     // Every slot in the list has a row: rebuildCompiledRoutings refused any
@@ -3476,6 +3478,9 @@ void SpaceDustAudioProcessor::fillVoiceModScratch (int numSamples) noexcept
         voiceModRowSlots[outRow] = slot;
         ++voiceModRowsFilled;
     }
+
+    // Published last, so it is only non-zero once the rows behind it are filled.
+    voiceModValidSamples = columns;
 }
 
 void SpaceDustAudioProcessor::readSpectrumSamples(float* dest, int numSamples) const
