@@ -190,6 +190,16 @@ public:
         return voiceModScratch.data() + (size_t) row * (size_t) voiceModRowSamples;
     }
 
+    /** The modulated value of a voice destination at the START of this block.
+
+        Voice knobs are pushed into the voices once per block, so column 0 of the
+        scratch row is the value they get. The row holds all the columns, so a
+        knob that later needs full audio rate can read them without any of this
+        being restructured.
+
+        Returns the unmodulated value when the destination carries no routing. */
+    float voiceModulatedValue (const char* parameterId, float fallback) const noexcept;
+
     // LFO buffers for per-sample access from voices. One per LFO, indexed 0..3.
     //
     // There are four buffers but only two LFOs have parameters today. The other

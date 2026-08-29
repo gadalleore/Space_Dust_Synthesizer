@@ -238,5 +238,69 @@ int main()
         std::printf ("  an assigned routing moves the sound.\n");
     }
 
+    // -- the VOICE destination sweep --
+    // Task 4 fills voiceModScratch every block; nothing read it until Task 4b's
+    // voiceModulatedValue() wired it into updateVoicesWithParameters. Everything
+    // above this point would pass whether or not that wiring exists -- the
+    // effect sweep only proves the EFFECTS chain reads the matrix. This proves
+    // a VOICE knob does too.
+    //
+    // osc1Pan: unmistakable in a stereo comparison (it moves Osc 1 between the
+    // channels), and not one of the six protected destinations, so a nonzero
+    // result here cannot come from the pre-existing per-sample path.
+    {
+        auto configure = [] (SpaceDustAudioProcessor& sd)
+        {
+            auto set = [&] (const char* id, float value)
+            {
+                if (auto* p = sd.getValueTreeState().getParameter (id))
+                    p->setValueNotifyingHost (p->convertTo0to1 (value));
+            };
+
+            // Osc 1 alone, dead centre, so its pan is the only thing that can
+            // move the balance between channels.
+            set ("osc1Level", 1.0f);
+            set ("osc2Level", 0.0f);
+            set ("noiseLevel", 0.0f);
+            set ("subOscOn", 0.0f);
+            set ("osc1Pan", 0.0f);
+            set ("lfo1Enabled", 1.0f);
+            set ("lfo1Depth", 100.0f);
+            set ("lfo1Sync", 0.0f);
+            set ("lfo1Rate", 6.0f);
+        };
+
+        std::unique_ptr<juce::AudioProcessor> flatProc (createPluginFilter());
+        auto* flatSd = dynamic_cast<SpaceDustAudioProcessor*> (flatProc.get());
+        configure (*flatSd);
+        const auto flat = renderWith (*flatSd);
+
+        std::unique_ptr<juce::AudioProcessor> movedProc (createPluginFilter());
+        auto* movedSd = dynamic_cast<SpaceDustAudioProcessor*> (movedProc.get());
+        configure (*movedSd);
+
+        movedSd->modMatrix.setRouting (0, "osc1Pan", 1.0f);
+        movedSd->rebuildCompiledRoutings();
+
+        const auto moved = renderWith (*movedSd);
+
+        double biggest = 0.0;
+        for (size_t i = 0; i < flat.size() && i < moved.size(); ++i)
+            biggest = juce::jmax (biggest, std::abs ((double) flat[i] - (double) moved[i]));
+
+        std::printf ("\n  VOICE destination sweep, LFO 1 -> osc1Pan\n");
+        std::printf ("  largest difference: %.9f\n", biggest);
+
+        if (biggest < 1.0e-6)
+        {
+            // Never the string "error :" -- MSBuild reads that as a build failure.
+            std::printf ("  FAIL  an assigned voice routing changed nothing -- the\n");
+            std::printf ("        scratch is filled but still not being read.\n");
+            return 1;
+        }
+
+        std::printf ("  an assigned voice routing moves the sound.\n");
+    }
+
     return 0;
 }
