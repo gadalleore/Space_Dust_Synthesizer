@@ -3833,6 +3833,62 @@ void SpaceDustAudioProcessor::migrateLfoRatesIfOld(juce::ValueTree& state, int s
     }
 }
 
+void SpaceDustAudioProcessor::migrateLfoTargetsIfOld(juce::ValueTree& state, int stateVersion,
+                                                      spacedust::ModMatrix& matrix)
+{
+    // Patches saved at the new version already carry a MODMATRIX and have no
+    // lfo1Target / lfo2Target nodes to find -- the loop below is a no-op for
+    // them either way, but this guard says so up front.
+    if (stateVersion >= currentStateVersion || !state.isValid())
+        return;
+
+    // 0=Pitch, 1=Filter, 2=MasterVol, 3=Osc1, 4=Osc2, 5=Noise -- the order the
+    // deleted lfo1Target and lfo2Target choice used.
+    //
+    // Pitch is TWO destinations, not one. The old drop-down's "Pitch" moved the
+    // whole voice, so mapping it to osc1CoarseTune alone would migrate a patch
+    // into one oscillator wobbling while the other stands still -- audibly wrong,
+    // and wrong in a way that reads as a broken preset rather than a bad
+    // migration. Every other target is a single destination.
+    struct OldTarget { const char* a; const char* b; };
+
+    static const OldTarget oldTargets[] = {
+        { "osc1CoarseTune", "osc2CoarseTune" },   // 0 Pitch -- both
+        { "filterCutoff",   nullptr },            // 1 Filter
+        { "masterVolume",   nullptr },            // 2 Master Vol
+        { "osc1Level",      nullptr },            // 3 Osc 1 Vol
+        { "osc2Level",      nullptr },            // 4 Osc 2 Vol
+        { "noiseLevel",     nullptr }             // 5 Noise Vol
+    };
+
+    for (int lfo = 0; lfo < 2; ++lfo)
+    {
+        const auto id = juce::String ("lfo") + juce::String (lfo + 1) + "Target";
+        auto node = state.getChildWithProperty ("id", id);
+
+        if (! node.isValid())
+            continue;
+
+        const int target = (int) node.getProperty ("value", -1);
+
+        if (target < 0 || target >= (int) std::size (oldTargets))
+            continue;
+
+        // +1.0, NOT that LFO's Depth. Depth survives this migration untouched
+        // and already scales the LFO output; taking the amount from it as well
+        // would square the depth and halve the movement of every saved patch.
+        //
+        // Task 8 proved +1.0 is exactly right rather than assuming it: adding
+        // LFO 1 -> filterCutoff at +1.0 restored both audit sweep values to
+        // their pre-deletion figures BIT FOR BIT, which is what the deleted
+        // drop-down produced.
+        matrix.setRouting (lfo, oldTargets[target].a, 1.0f);
+
+        if (oldTargets[target].b != nullptr)
+            matrix.setRouting (lfo, oldTargets[target].b, 1.0f);
+    }
+}
+
 void SpaceDustAudioProcessor::migrateWaveformChoicesIfOld(juce::ValueTree& state, int stateVersion)
 {
     // Version 4 onwards already speaks the new numbering. Anything older -- and a
@@ -3992,6 +4048,15 @@ void SpaceDustAudioProcessor::setStateInformation(const void* data, int sizeInBy
                 spacedust::fromXml(*matrixXml, modMatrix);
             else
                 modMatrix.clear();
+
+            // After the clear/fromXml above, not before: an old patch has no
+            // MODMATRIX, so the branch above clears the matrix, and doing this
+            // migration first would just have its routings erased again. It
+            // reads lfo1Target/lfo2Target out of `restored` -- a plain
+            // ValueTree, untouched by replaceState -- which still holds their
+            // old values even though this build no longer has parameters for
+            // them.
+            migrateLfoTargetsIfOld(restored, savedVersion, modMatrix);
 
             updateVoicesWithParameters();
         }

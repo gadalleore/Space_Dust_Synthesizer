@@ -400,5 +400,153 @@ int main()
         }
     }
 
+    // -- the LFO TARGET migration --
+    //
+    // lfo1Target / lfo2Target chose one of six fixed destinations and were
+    // deleted in favour of the matrix. Every patch saved before that still has
+    // the old values sitting in its XML -- apvts.getParameter can no longer
+    // find them, so migrateLfoTargetsIfOld reads the ValueTree directly, the
+    // same way migrateLfoRatesIfOld already does for LFO rate. Without this,
+    // an old patch loads with its LFO enabled, at the right rate and depth,
+    // routed nowhere: silent, and it reads as a corrupted preset rather than
+    // an un-migrated one.
+    //
+    // Each synthetic state below starts from a REAL processor's own saved XML
+    // -- so every other parameter and the root tag are exactly what
+    // setStateInformation expects -- with only the fields under test edited
+    // by hand: MODMATRIX removed, stateVersion pushed back below current, and
+    // lfo1Target / lfo2Target added as raw PARAM elements, which is the only
+    // way to put them there at all now that this build has no parameters by
+    // those names.
+    {
+        auto addIntParam = [] (juce::XmlElement& xml, const char* id, int value)
+        {
+            auto* el = new juce::XmlElement ("PARAM");
+            el->setAttribute ("id", id);
+            el->setAttribute ("value", value);
+            xml.addChildElement (el);
+        };
+
+        auto loadInto = [] (SpaceDustAudioProcessor& sd, juce::XmlElement& xml)
+        {
+            juce::MemoryBlock block;
+            juce::AudioProcessor::copyXmlToBinary (xml, block);
+            sd.setStateInformation (block.getData(), (int) block.getSize());
+        };
+
+        // lfo1Target = 1 (Filter), lfo2Target = 0 (Pitch), no MODMATRIX,
+        // stateVersion pushed back below current.
+        {
+            std::unique_ptr<juce::AudioProcessor> sourceProc (createPluginFilter());
+            auto* sourceSd = dynamic_cast<SpaceDustAudioProcessor*> (sourceProc.get());
+
+            auto setParam = [&] (const char* id, float value)
+            {
+                if (auto* p = sourceSd->getValueTreeState().getParameter (id))
+                    p->setValueNotifyingHost (p->convertTo0to1 (value));
+            };
+
+            // Known Depth values, so the migration's most dangerous failure --
+            // folding Depth into the routing amount, squaring it -- has
+            // something concrete to be caught changing.
+            setParam ("lfo1Depth", 42.0f);
+            setParam ("lfo2Depth", 73.0f);
+
+            juce::MemoryBlock saved;
+            sourceSd->getStateInformation (saved);
+
+            std::unique_ptr<juce::XmlElement> xml (
+                juce::AudioProcessor::getXmlFromBinary (saved.getData(), (int) saved.getSize()));
+
+            if (auto* matrixEl = xml->getChildByName ("MODMATRIX"))
+                xml->removeChildElement (matrixEl, true);
+
+            xml->setAttribute ("stateVersion", 4);
+
+            addIntParam (*xml, "lfo1Target", 1);   // Filter
+            addIntParam (*xml, "lfo2Target", 0);   // Pitch -- both oscillators
+
+            std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+            auto* sd = dynamic_cast<SpaceDustAudioProcessor*> (proc.get());
+            loadInto (*sd, *xml);
+
+            const auto& routings = sd->modMatrix.routings();
+
+            const bool lfo1ToFilter =
+                std::abs (sd->modMatrix.amountFor (0, "filterCutoff") - 1.0f) < 1.0e-6f;
+            const bool lfo2ToBothOsc =
+                std::abs (sd->modMatrix.amountFor (1, "osc1CoarseTune") - 1.0f) < 1.0e-6f
+             && std::abs (sd->modMatrix.amountFor (1, "osc2CoarseTune") - 1.0f) < 1.0e-6f;
+            const bool exactlyThree = routings.size() == 3;
+
+            const float depth1 = sd->getValueTreeState().getRawParameterValue ("lfo1Depth")->load();
+            const float depth2 = sd->getValueTreeState().getRawParameterValue ("lfo2Depth")->load();
+            const bool depthUnchanged = std::abs (depth1 - 42.0f) < 1.0e-3f
+                                      && std::abs (depth2 - 73.0f) < 1.0e-3f;
+
+            std::printf ("\n  LFO TARGET migration: old lfo1Target=1 (Filter), lfo2Target=0 (Pitch)\n");
+            std::printf ("  routings after load: %d (expect 3)\n", (int) routings.size());
+            std::printf ("  LFO 1 -> filterCutoff   amount %.6f (expect 1.000000)\n",
+                         sd->modMatrix.amountFor (0, "filterCutoff"));
+            std::printf ("  LFO 2 -> osc1CoarseTune amount %.6f (expect 1.000000)\n",
+                         sd->modMatrix.amountFor (1, "osc1CoarseTune"));
+            std::printf ("  LFO 2 -> osc2CoarseTune amount %.6f (expect 1.000000)\n",
+                         sd->modMatrix.amountFor (1, "osc2CoarseTune"));
+            std::printf ("  lfo1Depth after migration: %.3f (was 42.000)\n", depth1);
+            std::printf ("  lfo2Depth after migration: %.3f (was 73.000)\n", depth2);
+
+            if (! (lfo1ToFilter && lfo2ToBothOsc && exactlyThree && depthUnchanged))
+            {
+                std::printf ("  FAIL  lfo1Target/lfo2Target did not migrate into the\n");
+                std::printf ("        matrix correctly, or Depth moved when it should not have.\n");
+                return 1;
+            }
+
+            std::printf ("  Filter (one routing) and Pitch (both oscillators) migrated;\n");
+            std::printf ("  Depth is untouched.\n");
+        }
+
+        // A patch that already carries a MODMATRIX -- current stateVersion --
+        // must not be migrated a second time, even if a stray lfo1Target
+        // happened to still be sitting in its XML.
+        {
+            std::unique_ptr<juce::AudioProcessor> sourceProc (createPluginFilter());
+            auto* sourceSd = dynamic_cast<SpaceDustAudioProcessor*> (sourceProc.get());
+            sourceSd->modMatrix.setRouting (0, "noiseLevel", 0.4f);
+
+            juce::MemoryBlock saved;
+            sourceSd->getStateInformation (saved);
+
+            std::unique_ptr<juce::XmlElement> xml (
+                juce::AudioProcessor::getXmlFromBinary (saved.getData(), (int) saved.getSize()));
+
+            // getStateInformation already wrote the current stateVersion and a
+            // MODMATRIX holding the one routing above -- both left alone. Only
+            // the stale target field is added on top, deliberately, to prove
+            // the version check is what stops it, not its mere absence.
+            addIntParam (*xml, "lfo1Target", 1);   // Filter -- must NOT appear below.
+
+            std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+            auto* sd = dynamic_cast<SpaceDustAudioProcessor*> (proc.get());
+            loadInto (*sd, *xml);
+
+            const auto& routings = sd->modMatrix.routings();
+            const bool onlyOriginal = routings.size() == 1
+                                   && std::abs (sd->modMatrix.amountFor (0, "noiseLevel") - 0.4f) < 1.0e-6f
+                                   && ! sd->modMatrix.hasAnyRouting ("filterCutoff");
+
+            std::printf ("\n  a patch already carrying MODMATRIX: %d routing(s) after load (expect 1)\n",
+                         (int) routings.size());
+
+            if (! onlyOriginal)
+            {
+                std::printf ("  FAIL  a current-format patch was migrated a second time.\n");
+                return 1;
+            }
+
+            std::printf ("  a current-format patch is not migrated again.\n");
+        }
+    }
+
     return 0;
 }

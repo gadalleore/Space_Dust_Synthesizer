@@ -282,11 +282,31 @@ public:
         are safe; automation is not, and cannot be made so. */
     static void migrateWaveformChoicesIfOld(juce::ValueTree& state, int stateVersion);
 
+    /** Carries lfo1Target / lfo2Target into the modulation matrix.
+
+        Those parameters chose one of six fixed destinations and were deleted
+        when the matrix could point an LFO at any knob. Their old values are
+        still sitting in the XML of every patch saved before this version --
+        apvts.getParameter can no longer find them, so this reads the
+        ValueTree directly, the same way migrateLfoRatesIfOld does.
+
+        Pitch (old index 0) moved the whole voice, so it becomes TWO routings:
+        osc1CoarseTune and osc2CoarseTune. Every other target is one routing.
+        Every routing this produces is amount +1.0 -- NOT that LFO's Depth,
+        which survives untouched and already scales the LFO output. Depth
+        multiplied by amount would square the depth and halve the movement of
+        every saved patch. Task 8's audit proved +1.0 reproduces the deleted
+        drop-down bit for bit. */
+    static void migrateLfoTargetsIfOld(juce::ValueTree& state, int stateVersion,
+                                        spacedust::ModMatrix& matrix);
+
     /** Bumped whenever a stored value changes meaning.
         1 (or absent) = 200 Hz LFO top. 2 = 2 kHz top. 3 = 200 Hz again. */
     /** 4: the built-in oscillator shapes grew from four to twenty-one, moving
         every User slot up the list. See migrateWaveformChoicesIfOld. */
-    static constexpr int currentStateVersion = 4;
+    /** 5: lfo1Target / lfo2Target were deleted in favour of the modulation
+        matrix. See migrateLfoTargetsIfOld. */
+    static constexpr int currentStateVersion = 5;
 
     /** Built-in shapes there were up to stateVersion 3: Sine, Triangle, Saw,
         Square. Frozen as a number on purpose -- it is a fact about old files, so
