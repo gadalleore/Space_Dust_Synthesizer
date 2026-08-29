@@ -479,18 +479,14 @@ private:
         the pages exist so each slider has a parent. */
     void wrapAssignableKnobs();
 
-    /** Name every assignable destination that ended up with no knob wrapped,
-        then the totals. This is what turns "did I get them all?" into a printed
-        list -- see the note in the implementation. */
+    /** Print the coverage: how many destinations have a wrapper CONSTRUCTED,
+        how many are REACHABLE (parented, so laid out and hit-tested), and the
+        two lists that make up the difference. The reachable figure moves at
+        runtime -- see the note in the implementation. */
     void logModCoverage();
 
     /** Push the LFO phases into every wrapper. Driven by the editor's timer. */
     void refreshModIndicators();
-
-    /** Hide the highlighting while the Modulation page is showing, without
-        leaving the mode. Driven by the mode change AND by the timer, because
-        the tab can change without the mode changing. */
-    void syncAssignSuppression();
 
     // Flag to prevent timerCallback from accessing components during destruction
     std::atomic<bool> isBeingDestroyed{false};

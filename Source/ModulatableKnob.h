@@ -34,7 +34,8 @@ public:
     const std::string& getDestination() const noexcept { return destination; }
 
     /** The slider's own rectangle, in the parent's coordinates. The wrapper sits
-        here plus the bar strip on the right. */
+        exactly here -- the indicator bar is drawn inside this rectangle, not
+        beside it, so the wrapper can never reach over a neighbouring knob. */
     juce::Rectangle<int> getWrappedBounds() const { return knob.getBounds(); }
 
     /** Add this wrapper to the slider's parent, then follow that slider for good.
@@ -47,17 +48,11 @@ public:
         that which cannot be out of date: the wrapper is told when the knob
         moves, resizes, is hidden or is disabled, and matches it every time.
 
-        Call once, after the slider has a parent. Safe if it has none: the
-        wrapper simply stays unparented and draws nothing. */
+        Safe to call with the slider parented or not, and called AGAIN from
+        componentParentHierarchyChanged whenever the slider moves house -- the
+        shaping and unison knobs have no parent until the Waveforms panel
+        borrows them, which is long after the editor is built. */
     void attachToKnobParent();
-
-    /** Hold every wrapper off the screen whatever its knob is doing.
-
-        Assign mode stays ON while the Modulation page is showing -- switching
-        away and back carries on where it left off -- but nothing is highlighted
-        there, so the editor suppresses the wrappers rather than leaving the
-        mode. A suppressed wrapper is invisible and takes no mouse. */
-    void setSuppressed (bool shouldBeSuppressed);
 
     /** Where the LFOs are in their cycles, 0..1, for the bar's marker.
         Pushed in by the editor's repaint timer rather than pulled, so one timer
@@ -73,7 +68,8 @@ public:
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
 
-    /** The strip to the right of the knob that holds the indicator bar. */
+    /** The strip inside the knob's right edge that holds the indicator bar,
+        and how far it is held off that edge. */
     static constexpr int barWidth = 6;
     static constexpr int barGap   = 3;
 
@@ -85,7 +81,12 @@ private:
     void componentVisibilityChanged (juce::Component&) override          { followVisibility(); }
     void componentEnablementChanged (juce::Component&) override          { followVisibility(); }
 
-    /** Sit over the knob, widened by the strip the indicator bar lives in. */
+    /** The knob can be RE-PARENTED long after the wrapper was made: the shaping
+        and unison knobs have no parent at all until the Waveforms panel borrows
+        them, and get given back when it is pointed at another oscillator. */
+    void componentParentHierarchyChanged (juce::Component&) override      { attachToKnobParent(); }
+
+    /** Sit exactly over the knob. Never wider -- see the implementation. */
     void followKnob();
 
     /** A ring around a control that is not there is a ring around nothing.
@@ -111,9 +112,6 @@ private:
     std::string destination;
 
     float phases[spacedust::numLfos] { 0.0f, 0.0f, 0.0f, 0.0f };
-
-    /** Set by the editor while the Modulation page is showing. See setSuppressed. */
-    bool suppressed = false;
 
     /** Set while a drag is running, so the percentage reads out only then. */
     bool  dragging = false;

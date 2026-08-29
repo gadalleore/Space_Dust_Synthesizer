@@ -7736,8 +7736,14 @@ void SpaceDustAudioProcessorEditor::wrapAssignableKnobs()
     }
 
     // Every wrapper joins the parent its knob already has, and follows that knob
-    // from then on. Done in one sweep at the end rather than inside wrapKnob so
-    // the list above does not have to care whether a page exists yet.
+    // from then on -- including out of one parent and into another, because
+    // attachToKnobParent runs again on every re-parent. That is what the
+    // shaping and unison knobs need: they have NO parent at this point and only
+    // get one when the Waveforms panel borrows them, so a one-shot attach here
+    // would leave twenty-seven wrappers built and unreachable for good.
+    //
+    // One sweep at the end rather than inside wrapKnob, so the list above does
+    // not have to care whether a page exists yet.
     for (auto* wrapper : modKnobs)
         wrapper->attachToKnobParent();
 }
@@ -7748,36 +7754,69 @@ void SpaceDustAudioProcessorEditor::logModCoverage()
     //
     // wrapKnob passes over an illegal destination in silence, and the list above
     // is about 150 lines long. "Did I get them all?" is not a question care can
-    // answer at that count -- so the answer is printed instead. Every assignable
-    // destination with no knob wrapped is named, then the totals.
+    // answer at that count -- so the answer is printed instead.
     //
-    // A large gap means a whole group was missed. A small one names exactly
-    // which parameters, and every entry should have a reason.
-    std::unordered_set<std::string> wrapped;
+    // TWO numbers, deliberately, because they are not the same and confusing
+    // them is how this check lied once already. A wrapper that has been
+    // CONSTRUCTED is an object in modKnobs; that is all. A wrapper that is
+    // REACHABLE has a parent, so it is laid out, painted and hit-tested and the
+    // player can actually point at that knob. An earlier version counted only
+    // the first and reported full coverage while twenty-seven knobs -- every
+    // Bend, Spectrum, Sync, Unison Detune, Width and Random Phase -- had no
+    // parent at all and could not be assigned to. A reassuring number in place
+    // of a missing knob is worse than no check.
+    //
+    // The reachable figure legitimately MOVES at runtime, and is expected to be
+    // lower here than later on: the shaping and unison knobs have no parent
+    // until the Waveforms panel borrows them, so they join the moment it is
+    // first opened. This line is the count at editor-open. Anything in the
+    // "no wrapper at all" list, by contrast, is a real gap and should have a
+    // reason.
+    std::unordered_set<std::string> constructed;
+    std::unordered_set<std::string> reachable;
 
     for (auto* wrapper : modKnobs)
-        wrapped.insert(wrapper->getDestination());
+    {
+        constructed.insert(wrapper->getDestination());
+
+        if (wrapper->getParentComponent() != nullptr)
+            reachable.insert(wrapper->getDestination());
+    }
 
     const int total = audioProcessor.modDestinations.size();
-    juce::StringArray missing;
+
+    juce::StringArray noWrapper;      // nothing was ever built for these
+    juce::StringArray notYetParented; // built, but off-screen for now
 
     for (int slot = 0; slot < total; ++slot)
     {
         const auto& id = audioProcessor.modDestinations.idAt(slot);
 
-        if (wrapped.find(id) == wrapped.end())
-            missing.add(juce::String(id));
+        if (constructed.find(id) == constructed.end())
+            noWrapper.add(juce::String(id));
+        else if (reachable.find(id) == reachable.end())
+            notYetParented.add(juce::String(id));
     }
 
     #if JUCE_DEBUG
-    for (const auto& id : missing)
-        DBG("Space Dust: mod coverage - NO KNOB WRAPPED for destination: " + id);
+    for (const auto& id : noWrapper)
+        DBG("Space Dust: mod coverage - NO WRAPPER AT ALL for destination: " + id);
+
+    for (const auto& id : notYetParented)
+        DBG("Space Dust: mod coverage - wrapper built but NOT PARENTED YET: " + id);
     #endif
 
-    DBG("Space Dust: mod coverage - wrapped "
-        + juce::String((int) wrapped.size()) + " of " + juce::String(total)
-        + " assignable destinations ("
-        + juce::String(missing.size()) + " with no knob: " + missing.joinIntoString(", ") + ")");
+    const auto summary =
+        juce::String("Space Dust: mod coverage - constructed ")
+        + juce::String((int) constructed.size()) + " of " + juce::String(total)
+        + ", reachable now " + juce::String((int) reachable.size()) + " of " + juce::String(total)
+        + "; no wrapper at all (" + juce::String(noWrapper.size()) + "): "
+        + (noWrapper.isEmpty() ? juce::String("none") : noWrapper.joinIntoString(", "))
+        + "; built but not parented yet (" + juce::String(notYetParented.size())
+        + ", these join when the Waveforms panel is first opened): "
+        + (notYetParented.isEmpty() ? juce::String("none") : notYetParented.joinIntoString(", "));
+
+    DBG(summary);
 
     // Also to the debug log file the rest of this editor writes, so the list can
     // be read after the fact rather than only in a debugger.
@@ -7790,10 +7829,7 @@ void SpaceDustAudioProcessorEditor::logModCoverage()
         if (out.openedOk())
         {
             out.setPosition(out.getPosition());
-            out.writeText("Space Dust: mod coverage - wrapped "
-                          + juce::String((int) wrapped.size()) + " of " + juce::String(total)
-                          + "; no knob for: " + missing.joinIntoString(", ") + "\n",
-                          false, false, nullptr);
+            out.writeText(summary + "\n", false, false, nullptr);
             out.flush();
         }
     }
@@ -7817,27 +7853,6 @@ void SpaceDustAudioProcessorEditor::refreshModIndicators()
         wrapper->setLfoPhases(phases);
 }
 
-void SpaceDustAudioProcessorEditor::syncAssignSuppression()
-{
-    // Nothing is highlighted on the Modulation page: no LFO control may be a
-    // modulation destination, so there is nothing there to point at. The MODE
-    // stays on, so switching to another tab and back carries on where it left
-    // off rather than making the player press Assign again.
-    //
-    // Called from the timer as well as from the mode change, because the TAB can
-    // change without assignMode changing at all -- and leaving the suppression
-    // set after switching away from the Modulation page would put the mode's
-    // whole highlight out on every other page. setSuppressed returns at once
-    // when nothing moved, so the sweep costs a comparison per knob.
-    constexpr int modulationTabIndex = 1;   // the order the tabs are added in, above
-
-    const bool suppress = assignMode.activeLfo() >= 0
-                          && tabbedComponent.getCurrentTabIndex() == modulationTabIndex;
-
-    for (auto* wrapper : modKnobs)
-        wrapper->setSuppressed(suppress);
-}
-
 void SpaceDustAudioProcessorEditor::changeListenerCallback(juce::ChangeBroadcaster* source)
 {
     if (source != &assignMode || isBeingDestroyed.load())
@@ -7845,7 +7860,19 @@ void SpaceDustAudioProcessorEditor::changeListenerCallback(juce::ChangeBroadcast
 
     const bool assigning = assignMode.activeLfo() >= 0;
 
-    syncAssignSuppression();
+    // NOTHING is hidden on any page while the mode is on.
+    //
+    // The rule this feature actually has is "an LFO may not modulate an LFO
+    // control", and it is enforced where it belongs: isLegalDestination refuses
+    // every id beginning with "lfo", so wrapKnob never builds a wrapper for one
+    // and there is nothing on the Modulation page to hide.
+    //
+    // An earlier version suppressed every wrapper while that page was showing.
+    // That is a cheap approximation of the rule and it is wrong: it also swept
+    // up the two mod filters' cutoff and resonance and the three MPE depths,
+    // which are ordinary float destinations, and left those seven with no way
+    // to be given a first routing at all -- the indicator bar only takes a
+    // click once a routing exists, so there was no other path in.
 
     for (int lfo = 0; lfo < lfoAssignButtons.size(); ++lfo)
         lfoAssignButtons[lfo]->setToggleState(assignMode.activeLfo() == lfo,
@@ -8156,11 +8183,9 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     if (tabbedComponent.getNumTabs() > 0)
         audioProcessor.lastActiveTabIndex = tabbedComponent.getCurrentTabIndex();
 
-    // Assign mode: where each LFO is in its cycle, and whether the highlighting
-    // belongs on the page now showing. Both are cheap and both must keep running
-    // through the pitch-bend branch's early return below, so they go first.
+    // Assign mode: where each LFO is in its cycle, for the marker on the
+    // indicator bars. Ahead of the pitch-bend branch below, which returns early.
     refreshModIndicators();
-    syncAssignSuppression();
 
     // Pitch bend snap-back: sync display with processor ramp, then set to 0 when complete
     if (pitchBendSnapActive)

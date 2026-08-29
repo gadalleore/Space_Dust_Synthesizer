@@ -35,10 +35,33 @@ ModulatableKnob::~ModulatableKnob()
 
 void ModulatableKnob::attachToKnobParent()
 {
-    // addChildComponent, not addAndMakeVisible: whether the wrapper shows is
-    // decided by followVisibility, from the knob it belongs to.
-    if (auto* parent = knob.getParentComponent())
-        parent->addChildComponent (this);
+    // Follows the knob WHEREVER it goes, and is called again from
+    // componentParentHierarchyChanged every time the knob is re-parented.
+    //
+    // That matters more than it looks. The fifteen shaping knobs and the
+    // sixteen unison knobs are plain members of the editor with NO parent at
+    // all until the Waveforms panel borrows them, which happens the first time
+    // the panel is opened -- long after the editor is built. A version of this
+    // that only ran once, at construction, left twenty-seven wrappers built but
+    // never parented: never laid out, never painted, never hit-tested, and so
+    // twenty-seven knobs that could not be assigned to at all, in silence.
+    //
+    // The panel also GIVES the knobs back (removeChildComponent) when it is
+    // pointed at another oscillator, which leaves the knob with no parent
+    // again -- so the wrapper has to be able to leave a parent as well as join
+    // one, or it would be left behind in the panel beside nothing.
+    auto* wanted = knob.getParentComponent();
+
+    if (getParentComponent() != wanted)
+    {
+        if (auto* current = getParentComponent())
+            current->removeChildComponent (this);
+
+        // addChildComponent, not addAndMakeVisible: whether the wrapper shows
+        // is decided by followVisibility, from the knob it belongs to.
+        if (wanted != nullptr)
+            wanted->addChildComponent (this);
+    }
 
     followKnob();
     followVisibility();
@@ -46,27 +69,35 @@ void ModulatableKnob::attachToKnobParent()
 
 void ModulatableKnob::followKnob()
 {
-    // The knob's own rectangle, plus the strip on the right that the indicator
-    // bar is drawn in. Nothing around the knob moves to make room -- the strip
-    // is drawn over whatever gap is already beside it.
-    const auto b = getWrappedBounds();
+    if (getParentComponent() == nullptr)
+        return;
 
-    setBounds (b.withWidth (b.getWidth() + barWidth + barGap));
+    // EXACTLY the knob's own rectangle, and not one pixel wider.
+    //
+    // This used to widen by barWidth + barGap so the indicator bar could sit
+    // BESIDE the knob rather than on it. On a tightly packed row that put nine
+    // pixels of a click-taking, always-in-front layer over the next knob along:
+    // in assign mode it swallowed that knob's clicks, and outside assign mode a
+    // routed knob kept a live six-pixel strip over its neighbour. A gesture
+    // landing on a different control from the one under the pointer is the same
+    // fault the bar's own lane geometry was fixed for.
+    //
+    // No measurement of the neighbours would have been safe either: a page lays
+    // its knobs out one at a time, so a knob asked "how much room is to my
+    // right?" while its neighbour has not been placed yet would get last
+    // frame's answer. Staying inside the knob's own bounds is correct at every
+    // window size, in every layout, in any order.
+    //
+    // So the bar is drawn just inside the knob's right edge instead -- see
+    // barArea(). That edge is the corner of the square a round knob is drawn
+    // in, which is empty space on every knob in the plugin.
+    setBounds (getWrappedBounds());
     toFront (false);
 }
 
 void ModulatableKnob::followVisibility()
 {
-    setVisible (! suppressed && knob.isVisible() && knob.isEnabled());
-}
-
-void ModulatableKnob::setSuppressed (bool shouldBeSuppressed)
-{
-    if (suppressed == shouldBeSuppressed)
-        return;
-
-    suppressed = shouldBeSuppressed;
-    followVisibility();
+    setVisible (knob.isVisible() && knob.isEnabled());
 }
 
 void ModulatableKnob::changeListenerCallback (juce::ChangeBroadcaster*)
@@ -80,7 +111,11 @@ void ModulatableKnob::changeListenerCallback (juce::ChangeBroadcaster*)
 
 juce::Rectangle<int> ModulatableKnob::barArea() const
 {
-    return getLocalBounds().removeFromRight (barWidth);
+    // Just INSIDE the knob's right edge, held off it by barGap so the ring
+    // drawn round the whole cell in assign mode is not sat on. The wrapper is
+    // exactly the knob's rectangle -- see followKnob for why it may not be a
+    // pixel wider -- so this is the one place the bar's geometry is decided.
+    return getLocalBounds().withTrimmedRight (barGap).removeFromRight (barWidth);
 }
 
 bool ModulatableKnob::hitTest (int x, int y)
@@ -222,7 +257,10 @@ void ModulatableKnob::paint (juce::Graphics& g)
     // -- the ring, while assign mode is on --
     if (assigning >= 0)
     {
-        auto ring = getLocalBounds().withTrimmedRight (barWidth + barGap).toFloat().reduced (1.0f);
+        // The whole cell, because the bar now lives INSIDE this rectangle
+        // rather than beside it -- trimming the ring back by the bar's width
+        // would cut it across the round knob it is meant to enclose.
+        auto ring = getLocalBounds().toFloat().reduced (1.0f);
         g.setColour (spacedust::AssignModeState::colourFor (assigning).withAlpha (0.85f));
         g.drawRoundedRectangle (ring, 4.0f, 2.0f);
     }
