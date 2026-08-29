@@ -450,7 +450,6 @@ namespace
         X (envAttack)          X (envDecay) \
         X (envSustain)         X (envRelease) \
         X (glideTime) \
-        X (pitchEnvAmount)     X (pitchEnvTime)      X (pitchEnvPitch) \
         X (pitchBendAmount) \
         X (analogDrift) \
         X (osc1BendPlus)       X (osc1BendMinus)     X (osc1BendPlusMinus) \
@@ -1386,14 +1385,11 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     float glideTime = voiceModulatedValue(vp_glideTime, juce::jlimit(0.0f, 5.0f, safeGetParam(apvts, "glideTime")));
     bool legatoGlide = safeGetParam(apvts, "legatoGlide") > 0.5f;
 
-    // Pitch envelope parameters (use get() for actual value - separate from pitch bend)
-    float pitchEnvAmount = 0.0f, pitchEnvTime = 0.0f, pitchEnvPitch = 0.0f;
-    if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("pitchEnvAmount")))
-        pitchEnvAmount = voiceModulatedValue(vp_pitchEnvAmount, p->get());
-    if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("pitchEnvTime")))
-        pitchEnvTime = voiceModulatedValue(vp_pitchEnvTime, p->get());
-    if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("pitchEnvPitch")))
-        pitchEnvPitch = voiceModulatedValue(vp_pitchEnvPitch, p->get());
+    // Pitch curve time: how long the drawn shape plays over, from note-on.
+    // Not a modulation-matrix destination (not in SPACEDUST_VOICE_PARAMS) -- the
+    // curve's own shape is what task 12's editor draws, and stretching it via an
+    // LFO on top is a separate feature this task does not add.
+    const float pitchCurveTimeValue = juce::jlimit(0.0f, 10.0f, safeGetParam(apvts, "pitchCurveTime"));
 
     // Pitch bend parameters (use get() for actual value - separate from pitch envelope).
     // pitchBend itself (the -1..1 wheel position) is NOT routed: it is host-driven
@@ -1549,9 +1545,8 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setEnvRelease(envRelease);
             voice->setGlideTime(glideTime);
             voice->setLegatoGlide(legatoGlide);
-            voice->setPitchEnvAmount(pitchEnvAmount);
-            voice->setPitchEnvTime(pitchEnvTime);
-            voice->setPitchEnvPitch(pitchEnvPitch);
+            voice->setPitchCurve(&pitchCurve);
+            voice->setPitchCurveTime(pitchCurveTimeValue);
             voice->setSubOscOn(safeGetParam(apvts, "subOscOn") > 0.5f);
             voice->setSubOscWaveform(static_cast<int>(safeGetParam(apvts, "subOscWaveform")));
             voice->setSubOscLevel(subOscLevel);
@@ -3834,58 +3829,109 @@ void SpaceDustAudioProcessor::migrateLfoRatesIfOld(juce::ValueTree& state, int s
 }
 
 void SpaceDustAudioProcessor::migrateLfoTargetsIfOld(juce::ValueTree& state, int stateVersion,
-                                                      spacedust::ModMatrix& matrix)
+                                                      spacedust::ModMatrix& matrix,
+                                                      spacedust::PitchCurve& curve,
+                                                      bool hadSavedPitchCurve)
 {
+    if (! state.isValid())
+        return;
+
+    // -- lfo1Target / lfo2Target -> the modulation matrix --
+    //
     // Patches saved at the new version already carry a MODMATRIX and have no
     // lfo1Target / lfo2Target nodes to find -- the loop below is a no-op for
     // them either way, but this guard says so up front.
-    if (stateVersion >= currentStateVersion || !state.isValid())
-        return;
-
-    // 0=Pitch, 1=Filter, 2=MasterVol, 3=Osc1, 4=Osc2, 5=Noise -- the order the
-    // deleted lfo1Target and lfo2Target choice used.
-    //
-    // Pitch is TWO destinations, not one. The old drop-down's "Pitch" moved the
-    // whole voice, so mapping it to osc1CoarseTune alone would migrate a patch
-    // into one oscillator wobbling while the other stands still -- audibly wrong,
-    // and wrong in a way that reads as a broken preset rather than a bad
-    // migration. Every other target is a single destination.
-    struct OldTarget { const char* a; const char* b; };
-
-    static const OldTarget oldTargets[] = {
-        { "osc1CoarseTune", "osc2CoarseTune" },   // 0 Pitch -- both
-        { "filterCutoff",   nullptr },            // 1 Filter
-        { "masterVolume",   nullptr },            // 2 Master Vol
-        { "osc1Level",      nullptr },            // 3 Osc 1 Vol
-        { "osc2Level",      nullptr },            // 4 Osc 2 Vol
-        { "noiseLevel",     nullptr }             // 5 Noise Vol
-    };
-
-    for (int lfo = 0; lfo < 2; ++lfo)
+    if (stateVersion < currentStateVersion)
     {
-        const auto id = juce::String ("lfo") + juce::String (lfo + 1) + "Target";
-        auto node = state.getChildWithProperty ("id", id);
-
-        if (! node.isValid())
-            continue;
-
-        const int target = (int) node.getProperty ("value", -1);
-
-        if (target < 0 || target >= (int) std::size (oldTargets))
-            continue;
-
-        // +1.0, NOT that LFO's Depth. Depth survives this migration untouched
-        // and already scales the LFO output; taking the amount from it as well
-        // would square the depth and halve the movement of every saved patch.
+        // 0=Pitch, 1=Filter, 2=MasterVol, 3=Osc1, 4=Osc2, 5=Noise -- the order the
+        // deleted lfo1Target and lfo2Target choice used.
         //
-        // Task 8 proved +1.0 is exactly right rather than assuming it: adding
-        // LFO 1 -> filterCutoff at +1.0 restored both audit sweep values to
-        // their pre-deletion figures BIT FOR BIT, which is what the deleted
-        // drop-down produced.
-        matrix.setRouting (lfo, oldTargets[target].a, 1.0f);
+        // Pitch is TWO destinations, not one. The old drop-down's "Pitch" moved the
+        // whole voice, so mapping it to osc1CoarseTune alone would migrate a patch
+        // into one oscillator wobbling while the other stands still -- audibly wrong,
+        // and wrong in a way that reads as a broken preset rather than a bad
+        // migration. Every other target is a single destination.
+        struct OldTarget { const char* a; const char* b; };
 
-        if (oldTargets[target].b != nullptr)
-            matrix.setRouting (lfo, oldTargets[target].b, 1.0f);
+        static const OldTarget oldTargets[] = {
+            { "osc1CoarseTune", "osc2CoarseTune" },   // 0 Pitch -- both
+            { "filterCutoff",   nullptr },            // 1 Filter
+            { "masterVolume",   nullptr },            // 2 Master Vol
+            { "osc1Level",      nullptr },            // 3 Osc 1 Vol
+            { "osc2Level",      nullptr },            // 4 Osc 2 Vol
+            { "noiseLevel",     nullptr }             // 5 Noise Vol
+        };
+
+        for (int lfo = 0; lfo < 2; ++lfo)
+        {
+            const auto id = juce::String ("lfo") + juce::String (lfo + 1) + "Target";
+            auto node = state.getChildWithProperty ("id", id);
+
+            if (! node.isValid())
+                continue;
+
+            const int target = (int) node.getProperty ("value", -1);
+
+            if (target < 0 || target >= (int) std::size (oldTargets))
+                continue;
+
+            // +1.0, NOT that LFO's Depth. Depth survives this migration untouched
+            // and already scales the LFO output; taking the amount from it as well
+            // would square the depth and halve the movement of every saved patch.
+            //
+            // Task 8 proved +1.0 is exactly right rather than assuming it: adding
+            // LFO 1 -> filterCutoff at +1.0 restored both audit sweep values to
+            // their pre-deletion figures BIT FOR BIT, which is what the deleted
+            // drop-down produced.
+            matrix.setRouting (lfo, oldTargets[target].a, 1.0f);
+
+            if (oldTargets[target].b != nullptr)
+                matrix.setRouting (lfo, oldTargets[target].b, 1.0f);
+        }
+    }
+
+    // -- pitchEnvAmount / pitchEnvTime / pitchEnvPitch -> the pitch curve --
+    //
+    // Gated on whether THIS save carried a PITCHCURVE, NOT on stateVersion like
+    // the LFO-target half above. The three deleted knobs existed across every
+    // version the shared stateVersion counter has ever named, so tying this to
+    // "stateVersion < currentStateVersion" would make it fire again on an
+    // ALREADY-migrated patch the next time currentStateVersion moves for some
+    // unrelated reason, stomping whatever curve the player has since drawn with
+    // the orphaned old values that this build never clears out of the tree.
+    // Absence of PITCHCURVE is a fact about this one save, not about the shared
+    // version counter, so it stays correct no matter how many unrelated
+    // migrations are added after this one.
+    if (! hadSavedPitchCurve)
+    {
+        const auto readOld = [&state] (const char* id) -> float
+        {
+            auto node = state.getChildWithProperty ("id", id);
+            return node.isValid() ? (float) (double) node.getProperty ("value", 0.0) : 0.0f;
+        };
+
+        // The old three knobs made one straight fall from amount/100 * pitch
+        // semitones to zero over time. Two points say the same thing.
+        const float oldAmount = readOld ("pitchEnvAmount");
+        const float oldPitch  = readOld ("pitchEnvPitch");
+        const float oldTime   = readOld ("pitchEnvTime");
+
+        if (oldAmount != 0.0f && oldPitch != 0.0f && oldTime > 0.0f)
+        {
+            curve.clear();
+            curve.addPoint (0.0f, oldAmount / 100.0f * oldPitch);
+            curve.addPoint (1.0f, 0.0f);
+
+            // `state` is `restored` from setStateInformation, which by this point
+            // in the load IS apvts.state -- replaceState aliased them, the same
+            // fact this function's own header comment already relies on to read
+            // the orphaned old ids above. Setting this property here therefore
+            // fires APVTS's own ValueTree listener and live-updates the real
+            // pitchCurveTime parameter, exactly as though the host had moved it.
+            auto timeNode = state.getChildWithProperty ("id", "pitchCurveTime");
+            if (timeNode.isValid())
+                timeNode.setProperty ("value", (double) juce::jlimit (0.0f, 10.0f, oldTime), nullptr);
+        }
     }
 }
 
@@ -3962,6 +4008,10 @@ void SpaceDustAudioProcessor::getStateInformation(juce::MemoryBlock& destData)
             // four LFOs times about 150 knobs.
             xml->addChildElement(spacedust::toXml(modMatrix).release());
 
+            // The drawn pitch shape travels with the song too, for the same
+            // reason: it is arbitrarily many points, not one knob.
+            xml->addChildElement(spacedust::pitchCurveToXml(pitchCurve).release());
+
             copyXmlToBinary(*xml, destData);
         }
     }
@@ -4026,6 +4076,16 @@ void SpaceDustAudioProcessor::setStateInformation(const void* data, int sizeInBy
                 matrixXml.reset(stored);
             }
 
+            // Same reason, same pattern: PITCHCURVE is arbitrarily many points,
+            // not a parameter, so it is lifted out before fromXml and restored
+            // after replaceState, exactly like MODMATRIX above.
+            std::unique_ptr<juce::XmlElement> curveXml;
+            if (auto* stored = xmlState->getChildByName("PITCHCURVE"))
+            {
+                xmlState->removeChildElement(stored, false);
+                curveXml.reset(stored);
+            }
+
             auto restored = juce::ValueTree::fromXml(*xmlState);
             const int savedVersion = xmlState->getIntAttribute("stateVersion", 1);
             migrateLfoRatesIfOld(restored, savedVersion);
@@ -4049,14 +4109,24 @@ void SpaceDustAudioProcessor::setStateInformation(const void* data, int sizeInBy
             else
                 modMatrix.clear();
 
+            // Same reasoning as MODMATRIX just above: a patch with no
+            // PITCHCURVE predates the drawn curve, so the last patch's shape
+            // must not leak into this one.
+            const bool hadSavedPitchCurve = (curveXml != nullptr);
+            if (hadSavedPitchCurve)
+                spacedust::pitchCurveFromXml(*curveXml, pitchCurve);
+            else
+                pitchCurve.clear();
+
             // After the clear/fromXml above, not before: an old patch has no
             // MODMATRIX, so the branch above clears the matrix, and doing this
             // migration first would just have its routings erased again. It
             // reads lfo1Target/lfo2Target out of `restored` -- a plain
             // ValueTree, untouched by replaceState -- which still holds their
             // old values even though this build no longer has parameters for
-            // them.
-            migrateLfoTargetsIfOld(restored, savedVersion, modMatrix);
+            // them. Same for pitchEnvAmount/Time/Pitch, and same reason this
+            // must run after pitchCurve.clear()/fromXml above, not before.
+            migrateLfoTargetsIfOld(restored, savedVersion, modMatrix, pitchCurve, hadSavedPitchCurve);
 
             updateVoicesWithParameters();
         }
@@ -4577,31 +4647,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"envRelease", 1}, "Env Release",
             releaseRange, 0.2f),
         "envRelease");
-    
-    //==============================================================================
-    // -- Pitch Envelope --
-    // Amount: -100% to 100% (12 o'clock = 0), scales the pitch envelope depth
-    // Time: 0-10 seconds, length of the pitch ramp from note-on
-    // Pitch: 0-24 semitones, maximum pitch change
-    ADD_PARAM_WITH_LOG(params,
-        std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{"pitchEnvAmount", 1}, "Pitch Env Amount",
-            juce::NormalisableRange<float>(-100.0f, 100.0f, 0.1f), 0.0f),
-        "pitchEnvAmount");
-    // Pitch ramp length: 0 to 10s, skewed (midpoint at 2.0s) so short pitch blips
-    // stay easy to dial. Fine 0.0001s step (4 decimals) like the ADSR time knobs.
-    juce::NormalisableRange<float> pitchEnvTimeRange(0.0f, 10.0f, 0.0001f);
-    pitchEnvTimeRange.setSkewForCentre(2.0f);
-    ADD_PARAM_WITH_LOG(params,
-        std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{"pitchEnvTime", 1}, "Pitch Env Time",
-            pitchEnvTimeRange, 0.0f),
-        "pitchEnvTime");
-    ADD_PARAM_WITH_LOG(params,
-        std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{"pitchEnvPitch", 1}, "Pitch Env Pitch",
-            juce::NormalisableRange<float>(0.0f, 24.0f, 0.1f), 0.0f),
-        "pitchEnvPitch");
     
     // Sub oscillator (one octave down, in Amp Envelope section)
     addParameterWithLogging(params,
@@ -5845,6 +5890,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         std::make_unique<juce::AudioParameterBool>(
             juce::ParameterID{"lfo4Retrigger", 1}, "LFO4 Retrigger", true),
         "lfo4Retrigger");
+
+    //==============================================================================
+    // -- Pitch Curve Time --
+    // Replaces the old Pitch Env Amount / Time / Pitch knobs: the shape itself is
+    // a spacedust::PitchCurve, drawn by hand and saved as a PITCHCURVE child of
+    // the state (see get/setStateInformation), not as a parameter. Only the time
+    // it plays over is a parameter, and it is appended HERE, at the very end of
+    // the layout, because a VST3 parameter's automation index is a contract with
+    // every host that has already automated this plugin -- inserting anywhere
+    // else would renumber parameters that come after it.
+    juce::NormalisableRange<float> pitchCurveTimeRange(0.0f, 10.0f, 0.0001f);
+    pitchCurveTimeRange.setSkewForCentre(2.0f);
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"pitchCurveTime", 1}, "Pitch Curve Time",
+            pitchCurveTimeRange, 0.0f),
+        "pitchCurveTime");
 
     //==============================================================================
     // -- DEBUG: createParameterLayout End --

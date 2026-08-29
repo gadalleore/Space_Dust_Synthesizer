@@ -1629,33 +1629,35 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // sample one glide step sharp/flat vs the requested transition (audible in mono/legato).
 
         //==============================================================================
-        // -- PITCH ENVELOPE (separate from pitch bend) --
-        // Computes base frequency from currentPitch + envelope. Independent of pitch bend.
-        // Time is in seconds (0-5 from parameter). Linear ramp hits note at indicated time.
+        // -- PITCH CURVE (separate from pitch bend) --
+        // A shape drawn by hand, in place of the old three-knob straight fall.
+        // Time is in seconds (0-10 from the Time parameter); the curve's own 0..1
+        // axis maps across that duration.
         double pitchForOscillators = currentPitch;
-        bool   pitchEnvShapingNow  = false;  // true while the pitch env is actively bending the pitch
-        if (pitchEnvTime >= 0.0001f && sampleRate > 0.0f && pitchEnvAmount != 0.0f && pitchEnvPitch != 0.0f)
+        bool   pitchEnvShapingNow  = false;  // true while the curve is actively bending the pitch
+
+        // A flat curve is skipped entirely, so a patch that draws nothing costs
+        // nothing and sounds exactly as it did.
+        if (pitchCurve != nullptr && ! pitchCurve->isFlat()
+            && pitchCurveTime >= 0.0001f && sampleRate > 0.0f)
         {
-            float elapsedSec = pitchEnvSamplesElapsed / static_cast<float>(sampleRate);
-            float T = pitchEnvTime;  // Seconds from parameter (0-10)
-            float frac = juce::jmin(1.0f, elapsedSec / T);  // 0..1 over duration
-            float curve = 1.0f - frac;  // Linear: 1 at start, 0 at end (hits note at indicated time)
-            float pitchModSemitones = juce::jlimit(-48.0f, 48.0f, curve * (pitchEnvAmount / 100.0f) * pitchEnvPitch);
-            double pitchEnvRatio = std::pow(2.0, static_cast<double>(pitchModSemitones) / 12.0);
-            // Anchor pitch env to the intended note (targetPitch), not the glide-tracking
-            // currentPitch. Rapid notes whose glide hasn't completed would otherwise produce
-            // a meaningless attack of (mid-glide) Ã— envRatio. Crossfade in Hz from the
-            // env-shifted target back to currentPitch as the curve decays, so glide takes
-            // over naturally once the env attack is past.
-            const double envedTargetHz = targetPitch * pitchEnvRatio;
-            const double curveD = static_cast<double>(curve);
-            pitchForOscillators = envedTargetHz * curveD + currentPitch * (1.0 - curveD);
-            pitchEnvShapingNow = (curve > 0.0f);  // curve==0 â†’ env settled, pitchForOscillators==currentPitch
+            const float elapsedSec = pitchEnvSamplesElapsed / static_cast<float>(sampleRate);
+            const float t01 = elapsedSec / pitchCurveTime;
+
+            const float semitones = juce::jlimit(-48.0f, 48.0f, pitchCurve->valueAt(t01));
+            const double ratio = std::pow(2.0, static_cast<double>(semitones) / 12.0);
+
+            // Anchored to the intended note (targetPitch), not the glide-tracking
+            // currentPitch, for the same reason the old ramp was: rapid notes whose
+            // glide has not finished would otherwise bend a meaningless mid-glide
+            // pitch.
+            pitchForOscillators = targetPitch * ratio;
+            pitchEnvShapingNow = (semitones != 0.0f);
         }
         // Cap pitchEnvSamplesElapsed to avoid float precision loss on very long holds
         if (pitchEnvSamplesElapsed < 1e7f)
             pitchEnvSamplesElapsed += 1.0f;
-        
+
         //==============================================================================
         // -- PITCH BEND (MPE-aware, separate from pitch envelope) --
         //
@@ -3214,19 +3216,9 @@ void SynthVoice::setLegatoGlide(bool enabled)
     legatoGlideEnabled = enabled;
 }
 
-void SynthVoice::setPitchEnvAmount(float amount)
+void SynthVoice::setPitchCurveTime(float seconds)
 {
-    pitchEnvAmount = juce::jlimit(-100.0f, 100.0f, amount);
-}
-
-void SynthVoice::setPitchEnvTime(float seconds)
-{
-    pitchEnvTime = juce::jlimit(0.0f, 10.0f, seconds);
-}
-
-void SynthVoice::setPitchEnvPitch(float semitones)
-{
-    pitchEnvPitch = juce::jlimit(0.0f, 24.0f, semitones);
+    pitchCurveTime = juce::jlimit(0.0f, 10.0f, seconds);
 }
 
 void SynthVoice::setPitchBendAmount(float semitones)

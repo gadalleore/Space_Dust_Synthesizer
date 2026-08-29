@@ -5,6 +5,7 @@
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
 #include "ModMatrix.h"    // numLfos, and which destinations are applied per sample
+#include "PitchCurve.h"   // The drawn pitch shape, in place of the old three-knob ramp
 #include "NonlinearSVF.h" // Self-oscillating state-variable filter
 #include "OversampledStage.h" // Per-sample oversampling wrapper for the nonlinear master filter
 #include "RetargetableADSR.h" // juce::ADSR-faithful envelope + live release retargeting
@@ -273,11 +274,13 @@ public:
     void setGlideTime(float seconds);      // 0.0 to 5.0 seconds
     void setLegatoGlide(bool enabled);    // Enable/disable fingered (legato-only) glide behaviour
     
-    // Pitch envelope (ramp from 0 to pitch over time, scaled by amount)
-    void setPitchEnvAmount(float amount);   // -100 to 100 %
-    void setPitchEnvTime(float seconds);    // 0-10 s
-    void setPitchEnvPitch(float semitones); // 0-24 st
-    
+    // Pitch curve: a shape drawn by hand, in place of the old three-knob ramp.
+    // The curve itself is owned by the processor -- every voice points at the
+    // SAME one, the way setLfoModAmounts points every voice at the same
+    // compiled routings, so drawing a new shape reaches a held note immediately.
+    void setPitchCurve(const spacedust::PitchCurve* curveToUse) noexcept { pitchCurve = curveToUse; }
+    void setPitchCurveTime(float seconds);  // 0-10 s
+
     // Pitch bend (scaled by pitchBendAmount: 0-24 semitones) - separate from pitch envelope
     void setPitchBendAmount(float semitones);  // Range for pitch bend (0-24)
     void setPitchBend(float value);           // Manual pitch bend (-1 to 1)
@@ -905,11 +908,10 @@ private:
     bool legatoGlideEnabled = true;
     float glideTimeSeconds = 0.0f;     // Glide time in seconds (0.0 = instant, no glide)
     
-    // Pitch envelope (ramp over time from note-on)
-    float pitchEnvAmount = 0.0f;       // -100 to 100 %
-    float pitchEnvTime = 0.0f;         // 0-5 s
-    float pitchEnvPitch = 0.0f;        // 0-24 semitones
-    float pitchEnvSamplesElapsed = 0.0f;  // Samples since note-on (for ramp)
+    // Pitch curve (drawn shape, played over time from note-on)
+    const spacedust::PitchCurve* pitchCurve = nullptr;  // Owned by the processor; not owned here
+    float pitchCurveTime = 0.0f;          // 0-10 s
+    float pitchEnvSamplesElapsed = 0.0f;  // Samples since note-on (for the curve's timebase)
     
     /** How far each LFO moves each per-sample destination, copied from the
         processor once a block by setLfoModAmounts(). Destination-major, so

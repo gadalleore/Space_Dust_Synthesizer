@@ -117,6 +117,10 @@ target_sources(SpaceDust PRIVATE
     Source/NoteLockGrid.h
     Source/ModMatrix.cpp
     Source/ModMatrixState.cpp
+    Source/PitchCurve.cpp
+    Source/PitchCurve.h
+    Source/PitchCurveState.cpp
+    Source/PitchCurveState.h
     Source/ModulatableKnob.cpp
     Source/WaveAnalysis.cpp
     Source/WaveAnalysis.h
@@ -484,7 +488,8 @@ add_custom_target(unison-test
 #==============================================================================
 add_executable(mod_matrix_test
     tools/modmatrixtest/mod_matrix_test.cpp
-    Source/ModMatrix.cpp)
+    Source/ModMatrix.cpp
+    Source/PitchCurve.cpp)
 set_target_properties(mod_matrix_test PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/mod_matrix_test")
 target_compile_features(mod_matrix_test PRIVATE cxx_std_17)

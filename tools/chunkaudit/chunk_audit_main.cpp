@@ -427,6 +427,17 @@ int main()
             xml.addChildElement (el);
         };
 
+        // Same shape, but a double attribute -- pitchEnvAmount/Time/Pitch are
+        // AudioParameterFloat, and writing them as an int attribute would round
+        // 0.5 semitones away before the migration ever saw it.
+        auto addFloatParam = [] (juce::XmlElement& xml, const char* id, double value)
+        {
+            auto* el = new juce::XmlElement ("PARAM");
+            el->setAttribute ("id", id);
+            el->setAttribute ("value", value);
+            xml.addChildElement (el);
+        };
+
         auto loadInto = [] (SpaceDustAudioProcessor& sd, juce::XmlElement& xml)
         {
             juce::MemoryBlock block;
@@ -545,6 +556,120 @@ int main()
             }
 
             std::printf ("  a current-format patch is not migrated again.\n");
+        }
+
+        // -- the PITCH CURVE migration --
+        //
+        // pitchEnvAmount / pitchEnvTime / pitchEnvPitch made one straight fall
+        // from amount/100 * pitch semitones to zero over time, and were deleted
+        // in favour of a drawn spacedust::PitchCurve. Every patch saved before
+        // that still has the old values sitting in its XML -- apvts.getParameter
+        // can no longer find them, so migrateLfoTargetsIfOld reads the ValueTree
+        // directly for these too, the same way it already does for
+        // lfo1Target/lfo2Target above. Unlike that half, this one is gated on
+        // whether the save carried a PITCHCURVE, not on stateVersion -- see the
+        // comment inside migrateLfoTargetsIfOld -- so this state is left at
+        // whatever stateVersion getStateInformation wrote (current), which is
+        // itself part of what this test proves.
+        {
+            // amount=50%, pitch=12st, time=2s -> one point at (0, 6.0) falling to
+            // (1, 0.0), over a Pitch Curve Time of 2s.
+            std::unique_ptr<juce::AudioProcessor> sourceProc (createPluginFilter());
+            auto* sourceSd = dynamic_cast<SpaceDustAudioProcessor*> (sourceProc.get());
+
+            juce::MemoryBlock saved;
+            sourceSd->getStateInformation (saved);
+
+            std::unique_ptr<juce::XmlElement> xml (
+                juce::AudioProcessor::getXmlFromBinary (saved.getData(), (int) saved.getSize()));
+
+            // No PITCHCURVE element at all -- what an old, pre-curve patch looks
+            // like. Only the three raw PARAM values below carry the old ramp.
+            if (auto* curveEl = xml->getChildByName ("PITCHCURVE"))
+                xml->removeChildElement (curveEl, true);
+
+            addFloatParam (*xml, "pitchEnvAmount", 50.0);
+            addFloatParam (*xml, "pitchEnvPitch", 12.0);
+            addFloatParam (*xml, "pitchEnvTime", 2.0);
+
+            std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+            auto* sd = dynamic_cast<SpaceDustAudioProcessor*> (proc.get());
+            loadInto (*sd, *xml);
+
+            const auto& curve = sd->pitchCurve;
+            const bool twoPoints = curve.pointCount() == 2;
+            const bool startsRight = twoPoints
+                                   && std::abs (curve.pointAt (0).t01 - 0.0f) < 1.0e-6f
+                                   && std::abs (curve.pointAt (0).semitones - 6.0f) < 1.0e-4f;
+            const bool endsRight = twoPoints
+                                 && std::abs (curve.pointAt (1).t01 - 1.0f) < 1.0e-6f
+                                 && std::abs (curve.pointAt (1).semitones - 0.0f) < 1.0e-6f;
+
+            const float curveTime = sd->getValueTreeState().getRawParameterValue ("pitchCurveTime")->load();
+            const bool timeRight = std::abs (curveTime - 2.0f) < 1.0e-3f;
+
+            std::printf ("\n  PITCH CURVE migration: old amount=50%%, pitch=12st, time=2s\n");
+            std::printf ("  points after load: %d (expect 2)\n", curve.pointCount());
+            if (twoPoints)
+            {
+                std::printf ("  point 0: t=%.6f semitones=%.6f (expect 0.000000, 6.000000)\n",
+                             curve.pointAt (0).t01, curve.pointAt (0).semitones);
+                std::printf ("  point 1: t=%.6f semitones=%.6f (expect 1.000000, 0.000000)\n",
+                             curve.pointAt (1).t01, curve.pointAt (1).semitones);
+            }
+            std::printf ("  pitchCurveTime after migration: %.3f (expect 2.000)\n", curveTime);
+
+            if (! (twoPoints && startsRight && endsRight && timeRight))
+            {
+                std::printf ("  FAIL  pitchEnvAmount/Time/Pitch did not migrate into\n");
+                std::printf ("        the pitch curve correctly.\n");
+                return 1;
+            }
+
+            std::printf ("  the old ramp became a two-point curve, and Pitch Curve Time carries the old Time.\n");
+        }
+
+        // A patch that already carries a PITCHCURVE -- current format -- must
+        // not be migrated a second time, even if a stray pitchEnvAmount
+        // happened to still be sitting in its XML.
+        {
+            std::unique_ptr<juce::AudioProcessor> sourceProc (createPluginFilter());
+            auto* sourceSd = dynamic_cast<SpaceDustAudioProcessor*> (sourceProc.get());
+            sourceSd->pitchCurve.addPoint (0.3f, 9.0f);
+
+            juce::MemoryBlock saved;
+            sourceSd->getStateInformation (saved);
+
+            std::unique_ptr<juce::XmlElement> xml (
+                juce::AudioProcessor::getXmlFromBinary (saved.getData(), (int) saved.getSize()));
+
+            // getStateInformation already wrote a PITCHCURVE holding the one
+            // point above -- left alone. Only the stale old fields are added on
+            // top, deliberately, to prove PITCHCURVE's presence is what stops
+            // migration, not merely the old fields' absence.
+            addFloatParam (*xml, "pitchEnvAmount", 50.0);
+            addFloatParam (*xml, "pitchEnvPitch", 12.0);
+            addFloatParam (*xml, "pitchEnvTime", 2.0);
+
+            std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+            auto* sd = dynamic_cast<SpaceDustAudioProcessor*> (proc.get());
+            loadInto (*sd, *xml);
+
+            const auto& curve = sd->pitchCurve;
+            const bool onlyOriginal = curve.pointCount() == 1
+                                   && std::abs (curve.pointAt (0).t01 - 0.3f) < 1.0e-6f
+                                   && std::abs (curve.pointAt (0).semitones - 9.0f) < 1.0e-4f;
+
+            std::printf ("\n  a patch already carrying PITCHCURVE: %d point(s) after load (expect 1)\n",
+                         curve.pointCount());
+
+            if (! onlyOriginal)
+            {
+                std::printf ("  FAIL  a current-format pitch curve was migrated a second time.\n");
+                return 1;
+            }
+
+            std::printf ("  a current-format pitch curve is not migrated again.\n");
         }
     }
 

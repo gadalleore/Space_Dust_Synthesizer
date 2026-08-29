@@ -9,6 +9,7 @@
 //      ./build/mod_matrix_test/Release/mod_matrix_test.exe
 // =====================================================================
 #include "../../Source/ModMatrix.h"
+#include "../../Source/PitchCurve.h"
 
 #include <cmath>
 #include <cstdio>
@@ -152,6 +153,42 @@ int main()
         const float peak[numLfos] = { 1.0f, 0.0f, 0.0f, 0.0f };
         checkNear(m.applyByName("filterCutoff", 1000.0f, hz, peak), 10990.0, 1e-3,
                   "the amount scales with the knob's own range");
+    }
+
+    // -- the pitch curve --
+    {
+        PitchCurve c;
+
+        // Flat and silent by default, which is what keeps a patch with no drawn
+        // curve sounding exactly as it did.
+        check(c.isFlat(), "a new curve is flat");
+        checkNear(c.valueAt(0.0f), 0.0, 1e-6, "a flat curve bends nothing at the start");
+        checkNear(c.valueAt(1.0f), 0.0, 1e-6, "a flat curve bends nothing at the end");
+
+        // A fall from +12 semitones to 0, which is what the old ramp did.
+        c.clear();
+        c.addPoint(0.0f, 12.0f);
+        c.addPoint(1.0f, 0.0f);
+
+        check(!c.isFlat(), "a drawn curve is not flat");
+        checkNear(c.valueAt(0.0f),  12.0, 1e-5, "the curve starts where it was drawn");
+        checkNear(c.valueAt(0.5f),   6.0, 1e-5, "and runs straight between points");
+        checkNear(c.valueAt(1.0f),   0.0, 1e-5, "and ends where it was drawn");
+
+        // Past the end the last value is HELD, which is what makes a curve drawn
+        // back to zero behave exactly as the old ramp did.
+        checkNear(c.valueAt(2.0f), 0.0, 1e-5, "past the end the last value holds");
+
+        // Before the first point the first value holds.
+        c.clear();
+        c.addPoint(0.5f, 6.0f);
+        checkNear(c.valueAt(0.0f), 6.0, 1e-5, "before the first point the first value holds");
+
+        // Points added out of order are sorted, so drawing right to left works.
+        c.clear();
+        c.addPoint(1.0f, 0.0f);
+        c.addPoint(0.0f, 12.0f);
+        checkNear(c.valueAt(0.25f), 9.0, 1e-5, "points are sorted by time");
     }
 
     if (failures == 0)

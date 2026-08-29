@@ -25,6 +25,7 @@
 #include "PresetHotReload.h"
 #include "ResampleCapture.h"
 #include "ModMatrixState.h"
+#include "PitchCurveState.h"
 
 //==============================================================================
 /**
@@ -123,6 +124,13 @@ public:
         form that Task 4 publishes, never this. */
     spacedust::ModMatrix        modMatrix;
     spacedust::DestinationTable modDestinations;
+
+    /** The drawn pitch shape, in place of the old three-knob ramp.
+
+        Public for the same reason modMatrix is: the editor (task 12) draws into
+        it directly. Every voice points at this SAME object via
+        SynthVoice::setPitchCurve, so a redraw reaches a held note at once. */
+    spacedust::PitchCurve pitchCurve;
 
     /** Rebuild the compiled form from modMatrix.
 
@@ -296,9 +304,16 @@ public:
         which survives untouched and already scales the LFO output. Depth
         multiplied by amount would square the depth and halve the movement of
         every saved patch. Task 8's audit proved +1.0 reproduces the deleted
-        drop-down bit for bit. */
+        drop-down bit for bit.
+
+        Also carries pitchEnvAmount / pitchEnvTime / pitchEnvPitch into a
+        two-point pitch curve -- see the comment inside for why that half is
+        gated on whether THIS save carried a PITCHCURVE rather than on
+        stateVersion, unlike the LFO-target half above. */
     static void migrateLfoTargetsIfOld(juce::ValueTree& state, int stateVersion,
-                                        spacedust::ModMatrix& matrix);
+                                        spacedust::ModMatrix& matrix,
+                                        spacedust::PitchCurve& curve,
+                                        bool hadSavedPitchCurve);
 
     /** Bumped whenever a stored value changes meaning.
         1 (or absent) = 200 Hz LFO top. 2 = 2 kHz top. 3 = 200 Hz again. */

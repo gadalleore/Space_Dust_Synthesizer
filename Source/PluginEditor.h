@@ -893,14 +893,12 @@ private:
     juce::Label envSustainLabel;
     juce::Label envReleaseLabel;
     
-    // Pitch envelope (below Amp Envelope)
-    juce::Slider pitchEnvAmountSlider;
-    juce::Slider pitchEnvTimeSlider;
-    juce::Slider pitchEnvPitchSlider;
-    juce::Label pitchEnvAmountLabel;
-    juce::Label pitchEnvTimeLabel;
-    juce::Label pitchEnvPitchLabel;
-    
+    // Pitch curve (below Amp Envelope). Only the Time knob lives here for now --
+    // the drawn shape itself gets its own box and editor panel in task 12; this
+    // one knob is a placeholder for that box, not the finished feature.
+    juce::Slider pitchCurveTimeSlider;
+    juce::Label pitchCurveTimeLabel;
+
     // Sub oscillator (expandable when toggle is on)
     juce::ToggleButton subOscToggleButton;
     juce::ComboBox subOscWaveformCombo;
@@ -1360,9 +1358,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> envDecayAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> envSustainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> envReleaseAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pitchEnvAmountAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pitchEnvTimeAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pitchEnvPitchAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pitchCurveTimeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> subOscToggleAttachment;
     std::unique_ptr<WaveformChoiceAttachment> subOscWaveformAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> subOscLevelAttachment;
