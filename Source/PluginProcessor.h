@@ -197,8 +197,14 @@ public:
         knob that later needs full audio rate can read them without any of this
         being restructured.
 
+        Takes one of the vp_xxx constants from SPACEDUST_VOICE_PARAMS (defined
+        in PluginProcessor.cpp), not a parameter id string: voiceParamSlots
+        resolves the id to a destination slot ONCE, on the message thread, in
+        rebuildCompiledRoutings, so this call is an array read on the audio
+        thread rather than a std::string construction and a hash lookup.
+
         Returns the unmodulated value when the destination carries no routing. */
-    float voiceModulatedValue (const char* parameterId, float fallback) const noexcept;
+    float voiceModulatedValue (int voiceParamIndex, float fallback) const noexcept;
 
     // LFO buffers for per-sample access from voices. One per LFO, indexed 0..3.
     //
@@ -625,6 +631,14 @@ private:
         -- a bool or a choice -- which then reads raw exactly as it did before.
         Indexed by the effect-parameter list in the .cpp. */
     std::vector<int> effectParamSlots;
+
+    /** Destination slot for each voice-knob parameter updateVoicesWithParameters
+        reads through voiceModulatedValue(), resolved once on the message
+        thread. -1 for a parameter that carries no routing this block.
+        Indexed by the voice-parameter list (SPACEDUST_VOICE_PARAMS) in the
+        .cpp -- see voiceModulatedValue() for why this exists instead of a
+        per-call slotFor() lookup. */
+    std::vector<int> voiceParamSlots;
 
     /** The chain's CHOICE parameters and the trance gate's sixteen step
         switches, resolved to pointers once on the message thread.

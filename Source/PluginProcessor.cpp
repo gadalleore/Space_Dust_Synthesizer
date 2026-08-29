@@ -420,6 +420,75 @@ namespace
     };
 
     //==========================================================================
+    // -- Every knob updateVoicesWithParameters reads that an LFO may reach --
+    //
+    // Same shape and same reason as SPACEDUST_EFFECT_PARAMS above: ONE list
+    // gives both a compile-time index (vp_xxx) and the id string, the id is
+    // looked up ONCE on the message thread in rebuildCompiledRoutings, and
+    // voiceModulatedValue() takes the index, not the string -- so the audio
+    // thread never builds a std::string to find a destination slot.
+    //
+    // This one was first written taking a `const char*` and calling
+    // DestinationTable::slotFor() directly, once per call site, ~48-51 times a
+    // block. Short ids fit inside std::string's small-string buffer, but ids
+    // like modFilter1Resonance (19 chars) and subOscUnisonDetune (18) do not,
+    // so a meaningful fraction of those calls heap-allocated on the audio
+    // thread every block -- the same defect class as the effects chain's
+    // choice lookups above, just smaller (~48-51 instead of ~340-860). Fixed
+    // the same way: resolved once, read by index.
+    //
+    // The six destinations already modulated per sample inside SynthVoice
+    // (filterCutoff, masterVolume, osc1Level, osc2Level, noiseLevel, pitch) are
+    // deliberately NOT in this list -- see updateVoicesWithParameters.
+    #define SPACEDUST_VOICE_PARAMS(X) \
+        X (osc1CoarseTune)     X (osc1Detune) \
+        X (osc2CoarseTune)     X (osc2Detune) \
+        X (filterResonance) \
+        X (modFilter1Cutoff)   X (modFilter1Resonance) \
+        X (modFilter2Cutoff)   X (modFilter2Resonance) \
+        X (filterEnvAttack)    X (filterEnvDecay) \
+        X (filterEnvRelease)   X (filterEnvAmount) \
+        X (envAttack)          X (envDecay) \
+        X (envSustain)         X (envRelease) \
+        X (glideTime) \
+        X (pitchEnvAmount)     X (pitchEnvTime)      X (pitchEnvPitch) \
+        X (pitchBendAmount) \
+        X (analogDrift) \
+        X (osc1BendPlus)       X (osc1BendMinus)     X (osc1BendPlusMinus) \
+        X (osc1Spectrum)       X (osc1Sync) \
+        X (osc2BendPlus)       X (osc2BendMinus)     X (osc2BendPlusMinus) \
+        X (osc2Spectrum)       X (osc2Sync) \
+        X (subOscBendPlus)     X (subOscBendMinus)   X (subOscBendPlusMinus) \
+        X (subOscSpectrum)     X (subOscSync) \
+        X (osc1UnisonDetune)   X (osc1UnisonWidth) \
+        X (osc2UnisonDetune)   X (osc2UnisonWidth) \
+        X (subOscUnisonDetune) X (subOscUnisonWidth) \
+        X (noiseUnisonDetune)  X (noiseUnisonWidth) \
+        X (osc1UnisonPhase)    X (osc2UnisonPhase) \
+        X (subOscUnisonPhase)  X (noiseUnisonPhase) \
+        X (osc1Pan)            X (osc2Pan) \
+        X (lowShelfAmount)     X (highShelfAmount) \
+        X (subOscLevel)        X (subOscCoarse) \
+        X (mpePressureDepth)   X (mpeTimbreDepth)    X (velocityAmount)
+
+    enum VoiceParam
+    {
+        #define SPACEDUST_VP_ENUM(name) vp_##name,
+        SPACEDUST_VOICE_PARAMS (SPACEDUST_VP_ENUM)
+        #undef SPACEDUST_VP_ENUM
+        numVoiceParams
+    };
+
+    const char* const voiceParamIds[] = {
+        #define SPACEDUST_VP_ID(name) #name,
+        SPACEDUST_VOICE_PARAMS (SPACEDUST_VP_ID)
+        #undef SPACEDUST_VP_ID
+    };
+
+    static_assert (sizeof (voiceParamIds) / sizeof (voiceParamIds[0]) == numVoiceParams,
+                   "the voice param id table and the voice param enum come from the same list");
+
+    //==========================================================================
     // -- Crash-safety marker for state restoration --
     // setStateInformation() writes this marker on entry and deletes it on
     // successful completion. If the marker is still present on the next entry,
@@ -1205,10 +1274,10 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     int osc2Wave = (int)safeGetParam(apvts, "osc2Waveform");
 
     // Oscillator tuning parameters (simple, intuitive system)
-    float osc1CoarseTune = voiceModulatedValue("osc1CoarseTune", safeGetParam(apvts, "osc1CoarseTune"));
-    float osc1Detune = voiceModulatedValue("osc1Detune", safeGetParam(apvts, "osc1Detune"));
-    float osc2CoarseTune = voiceModulatedValue("osc2CoarseTune", safeGetParam(apvts, "osc2CoarseTune"));
-    float osc2Detune = voiceModulatedValue("osc2Detune", safeGetParam(apvts, "osc2Detune"));
+    float osc1CoarseTune = voiceModulatedValue(vp_osc1CoarseTune, safeGetParam(apvts, "osc1CoarseTune"));
+    float osc1Detune = voiceModulatedValue(vp_osc1Detune, safeGetParam(apvts, "osc1Detune"));
+    float osc2CoarseTune = voiceModulatedValue(vp_osc2CoarseTune, safeGetParam(apvts, "osc2CoarseTune"));
+    float osc2Detune = voiceModulatedValue(vp_osc2Detune, safeGetParam(apvts, "osc2Detune"));
 
     // LFO modulation is now applied per-sample in renderNextBlock via LFO buffers
     // lfo1Modulation and lfo2Modulation parameters are ignored (kept for API compatibility)
@@ -1231,7 +1300,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
         filterCutoffHz = juce::jlimit(20.0f, 20000.0f, p->get());
     // LFO filter modulation is applied per-sample in renderNextBlock
 
-    float filterResonance = voiceModulatedValue("filterResonance", safeGetParam(apvts, "filterResonance"));
+    float filterResonance = voiceModulatedValue(vp_filterResonance, safeGetParam(apvts, "filterResonance"));
     
     // LFO targets (cache per-block to avoid per-sample APVTS reads in voice - major CPU win)
     int lfo1Target = static_cast<int>(safeGetParam(apvts, "lfo1Target"));
@@ -1256,17 +1325,17 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     // destination, so it goes through voiceModulatedValue.
     int modFilter1Mode = modFilter1Link ? filterMode : (int)safeGetParam(apvts, "modFilter1Mode");
     float modFilter1Cutoff = modFilter1Link ? filterCutoffHz
-        : voiceModulatedValue("modFilter1Cutoff", safeGetParam(apvts, "modFilter1Cutoff"));
+        : voiceModulatedValue(vp_modFilter1Cutoff, safeGetParam(apvts, "modFilter1Cutoff"));
     float modFilter1Resonance = modFilter1Link ? filterResonance
-        : voiceModulatedValue("modFilter1Resonance", safeGetParam(apvts, "modFilter1Resonance"));
+        : voiceModulatedValue(vp_modFilter1Resonance, safeGetParam(apvts, "modFilter1Resonance"));
     bool warmSaturationMod1 = modFilter1Link ? warmSaturationMaster : safeGetParam(apvts, "warmSaturationMod1") > 0.5f;
     bool modFilter1KeyTrack = modFilter1Link ? filterKeyTrack : safeGetParam(apvts, "modFilter1KeyTrack") > 0.5f;
 
     int modFilter2Mode = modFilter2Link ? filterMode : (int)safeGetParam(apvts, "modFilter2Mode");
     float modFilter2Cutoff = modFilter2Link ? filterCutoffHz
-        : voiceModulatedValue("modFilter2Cutoff", safeGetParam(apvts, "modFilter2Cutoff"));
+        : voiceModulatedValue(vp_modFilter2Cutoff, safeGetParam(apvts, "modFilter2Cutoff"));
     float modFilter2Resonance = modFilter2Link ? filterResonance
-        : voiceModulatedValue("modFilter2Resonance", safeGetParam(apvts, "modFilter2Resonance"));
+        : voiceModulatedValue(vp_modFilter2Resonance, safeGetParam(apvts, "modFilter2Resonance"));
     bool warmSaturationMod2 = modFilter2Link ? warmSaturationMaster : safeGetParam(apvts, "warmSaturationMod2") > 0.5f;
     bool modFilter2KeyTrack = modFilter2Link ? filterKeyTrack : safeGetParam(apvts, "modFilter2KeyTrack") > 0.5f;
 
@@ -1274,14 +1343,14 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     // Uses plain param ID strings to match SliderAttachment; p->get() returns exact displayed value
     float filterEnvAttack = 0.01f, filterEnvDecay = 0.8f, filterEnvRelease = 3.0f;
     if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("filterEnvAttack")))
-        filterEnvAttack = voiceModulatedValue("filterEnvAttack", juce::jlimit(0.01f, 20.0f, p->get()));
+        filterEnvAttack = voiceModulatedValue(vp_filterEnvAttack, juce::jlimit(0.01f, 20.0f, p->get()));
     if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("filterEnvDecay")))
-        filterEnvDecay = voiceModulatedValue("filterEnvDecay", juce::jlimit(0.01f, 20.0f, p->get()));
+        filterEnvDecay = voiceModulatedValue(vp_filterEnvDecay, juce::jlimit(0.01f, 20.0f, p->get()));
     if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("filterEnvRelease")))
-        filterEnvRelease = voiceModulatedValue("filterEnvRelease", juce::jlimit(0.01f, 20.0f, p->get()));
+        filterEnvRelease = voiceModulatedValue(vp_filterEnvRelease, juce::jlimit(0.01f, 20.0f, p->get()));
     float filterEnvAmount = 0.0f;
     if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("filterEnvAmount")))
-        filterEnvAmount = voiceModulatedValue("filterEnvAmount", juce::jlimit(-100.0f, 100.0f, p->get()));
+        filterEnvAmount = voiceModulatedValue(vp_filterEnvAmount, juce::jlimit(-100.0f, 100.0f, p->get()));
     // Sustain level tracks the cutoff knob on the full 20 Hz..20 kHz log span so the decay/hold
     // stage matches the filter frequency when the envelope uses the full range (see SynthVoice).
     float filterEnvSustain = 0.7f;
@@ -1294,10 +1363,10 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     
     // ADSR parameters: Use atomic values (already converted from normalized to seconds/level)
     // This ensures real-time safe, lock-free access from the audio thread
-    float envAttack = voiceModulatedValue("envAttack", currentAttackTime.load());
-    float envDecay = voiceModulatedValue("envDecay", currentDecayTime.load());
-    float envSustain = voiceModulatedValue("envSustain", currentSustainLevel.load());
-    float envRelease = voiceModulatedValue("envRelease", currentReleaseTime.load());
+    float envAttack = voiceModulatedValue(vp_envAttack, currentAttackTime.load());
+    float envDecay = voiceModulatedValue(vp_envDecay, currentDecayTime.load());
+    float envSustain = voiceModulatedValue(vp_envSustain, currentSustainLevel.load());
+    float envRelease = voiceModulatedValue(vp_envRelease, currentReleaseTime.load());
     
     // Voice mode and glide. safeGetParam returns the DENORMALISED (actual) value via
     // APVTS::getRawParameterValue -> getRawDenormalisedValue, so this is already in
@@ -1305,17 +1374,17 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     // as a 0-1 normalised value and produced ~0.000338s â€” which then got snapped to 0
     // by the parameter's 0.001 interval, silently disabling user glide and forcing
     // the 3ms anti-click branch on every note in mono/legato.
-    float glideTime = voiceModulatedValue("glideTime", juce::jlimit(0.0f, 5.0f, safeGetParam(apvts, "glideTime")));
+    float glideTime = voiceModulatedValue(vp_glideTime, juce::jlimit(0.0f, 5.0f, safeGetParam(apvts, "glideTime")));
     bool legatoGlide = safeGetParam(apvts, "legatoGlide") > 0.5f;
 
     // Pitch envelope parameters (use get() for actual value - separate from pitch bend)
     float pitchEnvAmount = 0.0f, pitchEnvTime = 0.0f, pitchEnvPitch = 0.0f;
     if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("pitchEnvAmount")))
-        pitchEnvAmount = voiceModulatedValue("pitchEnvAmount", p->get());
+        pitchEnvAmount = voiceModulatedValue(vp_pitchEnvAmount, p->get());
     if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("pitchEnvTime")))
-        pitchEnvTime = voiceModulatedValue("pitchEnvTime", p->get());
+        pitchEnvTime = voiceModulatedValue(vp_pitchEnvTime, p->get());
     if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("pitchEnvPitch")))
-        pitchEnvPitch = voiceModulatedValue("pitchEnvPitch", p->get());
+        pitchEnvPitch = voiceModulatedValue(vp_pitchEnvPitch, p->get());
 
     // Pitch bend parameters (use get() for actual value - separate from pitch envelope).
     // pitchBend itself (the -1..1 wheel position) is NOT routed: it is host-driven
@@ -1323,7 +1392,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     // own snap-back state machine below, so it is left exactly as it was.
     float pitchBendAmount = 0.0f;
     if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("pitchBendAmount")))
-        pitchBendAmount = voiceModulatedValue("pitchBendAmount", juce::jlimit(0.0f, 24.0f, p->get()));
+        pitchBendAmount = voiceModulatedValue(vp_pitchBendAmount, juce::jlimit(0.0f, 24.0f, p->get()));
     float pitchBend;
     if (pitchBendSnapActive.load())
     {
@@ -1339,30 +1408,46 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     }
 
     // Analog Drift lives in the Lo-Fi UI group; only apply when Lo-Fi is enabled
-    float analogDrift = voiceModulatedValue("analogDrift", juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "analogDrift")));
+    float analogDrift = voiceModulatedValue(vp_analogDrift, juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "analogDrift")));
     if (safeGetParam(apvts, "lofiEnabled") <= 0.5f)
         analogDrift = 0.0f;
 
     // Bend, Spectrum and Sync. Read once here rather than per voice: they are the
     // same ten numbers for every voice, and safeGetParam is not free.
-    const auto readShaping = [this](const char* bp, const char* bm, const char* bpm,
-                                    const char* sp, const char* sy)
+    //
+    // Each field carries its parameter id AND its vp_xxx index together, in one
+    // struct, so the pairing between "which string" and "which resolved slot"
+    // cannot drift apart at a call site -- exactly the kind of shifted-mapping
+    // mistake a bare index would not catch.
+    struct ShapeParam { const char* id; int vp; };
+
+    const auto readShaping = [this](ShapeParam bp, ShapeParam bm, ShapeParam bpm,
+                                    ShapeParam sp, ShapeParam sy)
     {
         PhaseShaper::Amounts a;
-        a.bendPlus      = voiceModulatedValue(bp,  juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, bp)));
-        a.bendMinus     = voiceModulatedValue(bm,  juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, bm)));
-        a.bendPlusMinus = voiceModulatedValue(bpm, juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, bpm)));
-        a.spectrum      = voiceModulatedValue(sp,  juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, sp)));
-        a.sync          = voiceModulatedValue(sy,  juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, sy)));
+        a.bendPlus      = voiceModulatedValue(bp.vp,  juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, bp.id)));
+        a.bendMinus     = voiceModulatedValue(bm.vp,  juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, bm.id)));
+        a.bendPlusMinus = voiceModulatedValue(bpm.vp, juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, bpm.id)));
+        a.spectrum      = voiceModulatedValue(sp.vp,  juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, sp.id)));
+        a.sync          = voiceModulatedValue(sy.vp,  juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, sy.id)));
         return a;
     };
 
-    const auto osc1Shaping = readShaping("osc1BendPlus", "osc1BendMinus",
-                                         "osc1BendPlusMinus", "osc1Spectrum", "osc1Sync");
-    const auto osc2Shaping = readShaping("osc2BendPlus", "osc2BendMinus",
-                                         "osc2BendPlusMinus", "osc2Spectrum", "osc2Sync");
-    const auto subOscShaping = readShaping("subOscBendPlus", "subOscBendMinus",
-                                           "subOscBendPlusMinus", "subOscSpectrum", "subOscSync");
+    const auto osc1Shaping = readShaping({"osc1BendPlus", vp_osc1BendPlus},
+                                         {"osc1BendMinus", vp_osc1BendMinus},
+                                         {"osc1BendPlusMinus", vp_osc1BendPlusMinus},
+                                         {"osc1Spectrum", vp_osc1Spectrum},
+                                         {"osc1Sync", vp_osc1Sync});
+    const auto osc2Shaping = readShaping({"osc2BendPlus", vp_osc2BendPlus},
+                                         {"osc2BendMinus", vp_osc2BendMinus},
+                                         {"osc2BendPlusMinus", vp_osc2BendPlusMinus},
+                                         {"osc2Spectrum", vp_osc2Spectrum},
+                                         {"osc2Sync", vp_osc2Sync});
+    const auto subOscShaping = readShaping({"subOscBendPlus", vp_subOscBendPlus},
+                                           {"subOscBendMinus", vp_subOscBendMinus},
+                                           {"subOscBendPlusMinus", vp_subOscBendPlusMinus},
+                                           {"subOscSpectrum", vp_subOscSpectrum},
+                                           {"subOscSync", vp_subOscSync});
 
     // Unison, read once for the same reason as the shaping above.
     const int osc1UnisonVoices = juce::jlimit(1, Unison::maxVoices,
@@ -1372,42 +1457,42 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     // Voice counts stay un-modulated on purpose: they are AudioParameterInt (see
     // their registration), which DestinationTable::isLegalDestination refuses
     // outright, so there is no routing to read here.
-    const float osc1UnisonDetune = voiceModulatedValue("osc1UnisonDetune", juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc1UnisonDetune")));
-    const float osc2UnisonDetune = voiceModulatedValue("osc2UnisonDetune", juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc2UnisonDetune")));
-    const float osc1UnisonWidth = voiceModulatedValue("osc1UnisonWidth", juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc1UnisonWidth")));
-    const float osc2UnisonWidth = voiceModulatedValue("osc2UnisonWidth", juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc2UnisonWidth")));
+    const float osc1UnisonDetune = voiceModulatedValue(vp_osc1UnisonDetune, juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc1UnisonDetune")));
+    const float osc2UnisonDetune = voiceModulatedValue(vp_osc2UnisonDetune, juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc2UnisonDetune")));
+    const float osc1UnisonWidth = voiceModulatedValue(vp_osc1UnisonWidth, juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc1UnisonWidth")));
+    const float osc2UnisonWidth = voiceModulatedValue(vp_osc2UnisonWidth, juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc2UnisonWidth")));
 
     const int subOscUnisonVoices = juce::jlimit(1, Unison::maxVoices,
                                                 (int) std::lround(safeGetParam(apvts, "subOscUnisonVoices")));
-    const float subOscUnisonDetune = voiceModulatedValue("subOscUnisonDetune", juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "subOscUnisonDetune")));
-    const float subOscUnisonWidth = voiceModulatedValue("subOscUnisonWidth", juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "subOscUnisonWidth")));
+    const float subOscUnisonDetune = voiceModulatedValue(vp_subOscUnisonDetune, juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "subOscUnisonDetune")));
+    const float subOscUnisonWidth = voiceModulatedValue(vp_subOscUnisonWidth, juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "subOscUnisonWidth")));
 
     const int noiseUnisonVoices = juce::jlimit(1, Unison::maxVoices,
                                                (int) std::lround(safeGetParam(apvts, "noiseUnisonVoices")));
-    const float noiseUnisonDetune = voiceModulatedValue("noiseUnisonDetune", juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "noiseUnisonDetune")));
-    const float noiseUnisonWidth = voiceModulatedValue("noiseUnisonWidth", juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "noiseUnisonWidth")));
+    const float noiseUnisonDetune = voiceModulatedValue(vp_noiseUnisonDetune, juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "noiseUnisonDetune")));
+    const float noiseUnisonWidth = voiceModulatedValue(vp_noiseUnisonWidth, juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "noiseUnisonWidth")));
 
     // How far apart the copies START in the cycle. Read here with the rest of the
     // unison numbers because it is set with them, once per block, for every voice.
-    const float osc1UnisonPhase = voiceModulatedValue("osc1UnisonPhase", juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc1UnisonPhase")));
-    const float osc2UnisonPhase = voiceModulatedValue("osc2UnisonPhase", juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc2UnisonPhase")));
-    const float subOscUnisonPhase = voiceModulatedValue("subOscUnisonPhase", juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "subOscUnisonPhase")));
-    const float noiseUnisonPhase = voiceModulatedValue("noiseUnisonPhase", juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "noiseUnisonPhase")));
+    const float osc1UnisonPhase = voiceModulatedValue(vp_osc1UnisonPhase, juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc1UnisonPhase")));
+    const float osc2UnisonPhase = voiceModulatedValue(vp_osc2UnisonPhase, juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "osc2UnisonPhase")));
+    const float subOscUnisonPhase = voiceModulatedValue(vp_subOscUnisonPhase, juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "subOscUnisonPhase")));
+    const float noiseUnisonPhase = voiceModulatedValue(vp_noiseUnisonPhase, juce::jlimit(0.0f, 1.0f, safeGetParam(apvts, "noiseUnisonPhase")));
 
     // Knobs the original code read fresh inside the per-voice loop below. Hoisted
-    // here so voiceModulatedValue's slotFor lookup constructs its std::string
-    // once per BLOCK, not once per voice -- the audio-thread allocation rule the
-    // task brief calls out applies just as much to "once per voice" as it does
-    // to "once per sample".
-    const float osc1Pan = voiceModulatedValue("osc1Pan", safeGetParam(apvts, "osc1Pan"));
-    const float osc2Pan = voiceModulatedValue("osc2Pan", safeGetParam(apvts, "osc2Pan"));
-    const float lowShelfAmount = voiceModulatedValue("lowShelfAmount", safeGetParam(apvts, "lowShelfAmount"));
-    const float highShelfAmount = voiceModulatedValue("highShelfAmount", safeGetParam(apvts, "highShelfAmount"));
-    const float subOscLevel = voiceModulatedValue("subOscLevel", safeGetParam(apvts, "subOscLevel"));
-    const float subOscCoarse = voiceModulatedValue("subOscCoarse", safeGetParam(apvts, "subOscCoarse"));
-    const float mpePressureDepth = voiceModulatedValue("mpePressureDepth", safeGetParam(apvts, "mpePressureDepth")) / 100.0f;
-    const float mpeTimbreDepth = voiceModulatedValue("mpeTimbreDepth", safeGetParam(apvts, "mpeTimbreDepth")) / 100.0f;
-    const float velocityAmount = voiceModulatedValue("velocityAmount", safeGetParam(apvts, "velocityAmount")) / 100.0f;
+    // here so voiceModulatedValue's slot lookup happens once per BLOCK, not once
+    // per voice -- the audio-thread cost rule applies just as much to "once per
+    // voice" as it does to "once per sample" (now an array read either way, but
+    // no reason to repeat even that for every voice).
+    const float osc1Pan = voiceModulatedValue(vp_osc1Pan, safeGetParam(apvts, "osc1Pan"));
+    const float osc2Pan = voiceModulatedValue(vp_osc2Pan, safeGetParam(apvts, "osc2Pan"));
+    const float lowShelfAmount = voiceModulatedValue(vp_lowShelfAmount, safeGetParam(apvts, "lowShelfAmount"));
+    const float highShelfAmount = voiceModulatedValue(vp_highShelfAmount, safeGetParam(apvts, "highShelfAmount"));
+    const float subOscLevel = voiceModulatedValue(vp_subOscLevel, safeGetParam(apvts, "subOscLevel"));
+    const float subOscCoarse = voiceModulatedValue(vp_subOscCoarse, safeGetParam(apvts, "subOscCoarse"));
+    const float mpePressureDepth = voiceModulatedValue(vp_mpePressureDepth, safeGetParam(apvts, "mpePressureDepth")) / 100.0f;
+    const float mpeTimbreDepth = voiceModulatedValue(vp_mpeTimbreDepth, safeGetParam(apvts, "mpeTimbreDepth")) / 100.0f;
+    const float velocityAmount = voiceModulatedValue(vp_velocityAmount, safeGetParam(apvts, "velocityAmount")) / 100.0f;
 
     // Update all voices with current parameter values
     for (int i = 0; i < synth.getNumVoices(); ++i)
@@ -3293,6 +3378,14 @@ void SpaceDustAudioProcessor::rebuildCompiledRoutings()
         for (int i = 0; i < numEffectParams; ++i)
             effectParamSlots[(size_t) i] = modDestinations.slotFor (effectParamIds[i]);
 
+        // Same idea for the voice destinations: resolved once here, read by
+        // index in voiceModulatedValue() so updateVoicesWithParameters never
+        // builds a std::string on the audio thread.
+        voiceParamSlots.assign ((size_t) numVoiceParams, -1);
+
+        for (int i = 0; i < numVoiceParams; ++i)
+            voiceParamSlots[(size_t) i] = modDestinations.slotFor (voiceParamIds[i]);
+
         // The chain's choices and the trance gate's step switches, resolved to
         // pointers here so no chunk ever builds a juce::String to find one.
         effectChoiceParams.assign ((size_t) numEffectChoices, nullptr);
@@ -3529,10 +3622,17 @@ void SpaceDustAudioProcessor::fillVoiceModScratch (int numSamples) noexcept
     voiceModValidSamples = columns;
 }
 
-float SpaceDustAudioProcessor::voiceModulatedValue (const char* parameterId,
+float SpaceDustAudioProcessor::voiceModulatedValue (int voiceParamIndex,
                                                     float fallback) const noexcept
 {
-    const int slot = modDestinations.slotFor (parameterId);
+    // voiceParamIndex is one of the vp_xxx constants from SPACEDUST_VOICE_PARAMS
+    // in the .cpp. voiceParamSlots is resolved ONCE, on the message thread, in
+    // rebuildCompiledRoutings -- this is an array read, not a string lookup, so
+    // nothing is built on the audio thread here.
+    if (voiceParamIndex < 0 || voiceParamIndex >= (int) voiceParamSlots.size())
+        return fallback;
+
+    const int slot = voiceParamSlots[(size_t) voiceParamIndex];
 
     if (slot < 0)
         return fallback;
