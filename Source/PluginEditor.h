@@ -16,6 +16,7 @@
 #include "WaveformChoiceAttachment.h"
 #include "ComboStepper.h"
 #include "WaveformEditorComponent.h"
+#include "PitchCurveEditor.h"
 #include "SpaceDustDither.h"
 #include "AssignModeState.h"
 #include "ModulatableKnob.h"
@@ -584,6 +585,9 @@ private:
 
     std::unique_ptr<WaveformEditorPanel> waveformWindow;
 
+    /** The pitch curve's popped-out editor -- see openPitchCurveWindow. */
+    std::unique_ptr<PitchCurveEditorPanel> pitchCurveWindow;
+
     /** Open the Waveforms window, pointed at the dropdown that asked for it.
 
         The window drives that dropdown directly rather than keeping a list of its
@@ -604,6 +608,9 @@ private:
     void openWaveformWindow(juce::Component* anchorButton, juce::ComboBox* combo,
                             int userBase, WaveformEditorComponent::BuiltInKind kind,
                             UserWave::Group group);
+
+    /** Open the pitch curve editor, pointed at the box that was clicked. */
+    void openPitchCurveWindow(juce::Component* anchorBox);
 
     //==========================================================================
     // -- WaveformEditorComponent::ResampleHost --
@@ -893,11 +900,12 @@ private:
     juce::Label envSustainLabel;
     juce::Label envReleaseLabel;
     
-    // Pitch curve (below Amp Envelope). Only the Time knob lives here for now --
-    // the drawn shape itself gets its own box and editor panel in task 12; this
-    // one knob is a placeholder for that box, not the finished feature.
-    juce::Slider pitchCurveTimeSlider;
-    juce::Label pitchCurveTimeLabel;
+    // Pitch curve (below Amp Envelope). The thumbnail box; clicking it opens
+    // pitchCurveWindow, where the shape is drawn and the Time knob lives now --
+    // see PitchCurveEditor.h. pitchCurveBox is constructed with a reference to
+    // audioProcessor.pitchCurve in the editor's constructor init list.
+    PitchCurveBox pitchCurveBox;
+    juce::Label   pitchCurveLabel;
 
     // Sub oscillator (expandable when toggle is on)
     juce::ToggleButton subOscToggleButton;
@@ -1358,7 +1366,6 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> envDecayAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> envSustainAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> envReleaseAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> pitchCurveTimeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> subOscToggleAttachment;
     std::unique_ptr<WaveformChoiceAttachment> subOscWaveformAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> subOscLevelAttachment;

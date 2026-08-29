@@ -121,6 +121,8 @@ target_sources(SpaceDust PRIVATE
     Source/PitchCurve.h
     Source/PitchCurveState.cpp
     Source/PitchCurveState.h
+    Source/PitchCurveEditor.cpp
+    Source/PitchCurveEditor.h
     Source/ModulatableKnob.cpp
     Source/WaveAnalysis.cpp
     Source/WaveAnalysis.h

@@ -735,8 +735,8 @@ MainPageComponent::MainPageComponent(SpaceDustAudioProcessorEditor& editor)
     addAndMakeVisible(parentEditor.envSustainLabel);
     addAndMakeVisible(parentEditor.envReleaseSlider);
     addAndMakeVisible(parentEditor.envReleaseLabel);
-    addAndMakeVisible(parentEditor.pitchCurveTimeSlider);
-    addAndMakeVisible(parentEditor.pitchCurveTimeLabel);
+    addAndMakeVisible(parentEditor.pitchCurveBox);
+    addAndMakeVisible(parentEditor.pitchCurveLabel);
     addAndMakeVisible(parentEditor.subOscToggleButton);
     addAndMakeVisible(parentEditor.subOscWaveformCombo);
     addAndMakeVisible(parentEditor.subOscWaveformEditButton);
@@ -1103,21 +1103,22 @@ void MainPageComponent::resized()
     layoutAmpEnvKnob(parentEditor.envSustainSlider, parentEditor.envSustainLabel);
     layoutAmpEnvKnob(parentEditor.envReleaseSlider, parentEditor.envReleaseLabel);
     
-    // Pitch curve: one knob (Time) for now, centred where the old 3-knob pitch
-    // envelope row sat. The drawn shape gets its own box in task 12, which will
-    // widen this row -- pitchEnvKnobSize/pitchEnvGap stay the same names so Sub
-    // Osc below (sized to match) does not need to change either.
+    // Pitch curve: the thumbnail box, task 12's finished replacement for the
+    // old 3-knob pitch envelope row. It spans the full column width rather
+    // than one knob's width -- a wide, short box reads better as "a drawn
+    // line" than a square knob would. pitchEnvKnobSize/pitchEnvGap keep their
+    // names (rather than being renamed to something box-shaped) purely so Sub
+    // Osc below, which reads them to size its own knobs, does not also need
+    // to change.
     const int pitchEnvKnobSize = 56;
-    // 56Ã—56 bounds match other Main-tab rotaries (LAF splits dial + textbox inside the rect).
     int pitchEnvGap = 10;
-    int pitchEnvStartX = ampEnvContent.getCentreX() - pitchEnvKnobSize / 2;
     int pitchEnvRowTop = ampEnvKnobY;
-    parentEditor.pitchCurveTimeLabel.setBounds(pitchEnvStartX, pitchEnvRowTop, pitchEnvKnobSize, labelHeight);
-    int pitchEnvKnobY = pitchEnvRowTop + labelHeight + oscKnobLabelGap;
-    parentEditor.pitchCurveTimeSlider.setBounds(pitchEnvStartX, pitchEnvKnobY, pitchEnvKnobSize, pitchEnvKnobSize);
-    // Anchor to full slider component bottom (rotary + value). getSliderLayout().textBoxBounds can disagree
-    // with the Slider's actual bounds when a custom LAF draws the dial but uses default layout math.
-    const int pitchValueBottom = parentEditor.pitchCurveTimeSlider.getBottom();
+    parentEditor.pitchCurveLabel.setBounds(ampEnvContent.getX(), pitchEnvRowTop,
+                                           ampEnvContent.getWidth(), labelHeight);
+    int pitchCurveBoxY = pitchEnvRowTop + labelHeight + oscKnobLabelGap;
+    parentEditor.pitchCurveBox.setBounds(ampEnvContent.getX(), pitchCurveBoxY,
+                                         ampEnvContent.getWidth(), pitchEnvKnobSize);
+    const int pitchValueBottom = parentEditor.pitchCurveBox.getBottom();
     
     // Sub oscillator (below pitch envelope, expandable when toggle is on)
     // Section gap after pitch value text = topBottomGap (same as Oscillators â†” Filter)
@@ -3532,6 +3533,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
       filterEnvGroup("Filter Envelope", "Filter Envelope"),
       voiceGroup("Voice", "Voice"),
       envelopeGroup("Amp Envelope", "Amp Envelope"),
+      pitchCurveBox(p.pitchCurve),
       masterGroup("Master", "Master"),
       modulationGroup("", ""),  // Empty title, using separate label for "Modulation" title
       lfo1Group("LFO 1", "LFO 1"),
@@ -4349,17 +4351,15 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     envReleaseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));  // Light blue
     envReleaseLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
-    // Pitch curve (Time: 0-10 s). The drawn shape itself has no knob -- it gets
-    // its own box and editor panel in task 12; this is a placeholder for that.
-    pitchCurveTimeSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    pitchCurveTimeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
-    pitchCurveTimeSlider.setTextValueSuffix(" s");
-    pitchCurveTimeAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
-        audioProcessor.getValueTreeState(), "pitchCurveTime", pitchCurveTimeSlider);
-    pitchCurveTimeLabel.setText(safeString("Curve Time"), juce::dontSendNotification);
-    pitchCurveTimeLabel.setJustificationType(juce::Justification::centred);
-    pitchCurveTimeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    pitchCurveTimeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+    // Pitch curve: the thumbnail box, task 12's finished replacement for the
+    // three old Pitch Env knobs. The drawn shape and the Time knob both live
+    // in pitchCurveWindow now, opened by clicking the box -- see
+    // PitchCurveEditor.h and openPitchCurveWindow().
+    pitchCurveBox.onClick = [this] { openPitchCurveWindow(&pitchCurveBox); };
+    pitchCurveLabel.setText(safeString("Pitch Curve"), juce::dontSendNotification);
+    pitchCurveLabel.setJustificationType(juce::Justification::centred);
+    pitchCurveLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    pitchCurveLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
     // Explicit LookAndFeel for labels that don't inherit correctly (fixes font inconsistency)
     osc1CoarseTuneLabel.setLookAndFeel(&customLookAndFeel);
@@ -4369,7 +4369,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     envSustainLabel.setLookAndFeel(&customLookAndFeel);
     envReleaseLabel.setLookAndFeel(&customLookAndFeel);
     filterEnvReleaseLabel.setLookAndFeel(&customLookAndFeel);
-    pitchCurveTimeLabel.setLookAndFeel(&customLookAndFeel);
+    pitchCurveLabel.setLookAndFeel(&customLookAndFeel);
     pitchBendLabel.setLookAndFeel(&customLookAndFeel);
 
     // Sub oscillator (expandable when toggle is on)
@@ -4515,7 +4515,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     envSustainLabel.setLookAndFeel(&customLookAndFeel);
     envReleaseLabel.setLookAndFeel(&customLookAndFeel);
     filterEnvReleaseLabel.setLookAndFeel(&customLookAndFeel);
-    pitchCurveTimeLabel.setLookAndFeel(&customLookAndFeel);
+    pitchCurveLabel.setLookAndFeel(&customLookAndFeel);
     pitchBendLabel.setLookAndFeel(&customLookAndFeel);
     subOscCoarseLabel.setLookAndFeel(&customLookAndFeel);
     lfo1PhaseLabel.setLookAndFeel(&customLookAndFeel);
@@ -6824,6 +6824,32 @@ void SpaceDustAudioProcessorEditor::openWaveformWindow(juce::Component* anchorBu
 }
 
 //==============================================================================
+void SpaceDustAudioProcessorEditor::openPitchCurveWindow(juce::Component* anchorBox)
+{
+    if (pitchCurveWindow == nullptr)
+    {
+        pitchCurveWindow = std::make_unique<PitchCurveEditorPanel>(
+            audioProcessor.pitchCurve, audioProcessor.getValueTreeState(),
+            audioProcessor, customLookAndFeel);
+
+        // Parented to mainView for the same reason waveformWindow is -- see
+        // openWaveformWindow -- so it scales with the window and may float
+        // over the tab bar.
+        mainView.addChildComponent(*pitchCurveWindow);
+
+        // Redraw the thumbnail box live while the panel edits the same curve.
+        pitchCurveWindow->onCurveChanged = [this] { pitchCurveBox.repaint(); };
+    }
+
+    // Keep the panel clear of the standalone's keyboard strip -- same reason
+    // waveformWindow needs this, see openWaveformWindow.
+    pitchCurveWindow->setKeepAboveBottom(designHeight_
+                                        - (standaloneKeyboard != nullptr ? standaloneKeyboardHeight : 0));
+
+    pitchCurveWindow->showFor(anchorBox);
+}
+
+//==============================================================================
 bool SpaceDustAudioProcessorEditor::startCapture(juce::String& errorMessage)
 {
     if (audioProcessor.startResampleRecording())
@@ -7040,6 +7066,7 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
     // or a later import would call into a half-destroyed editor.
     audioProcessor.getUserWaveLibrary().onChange = nullptr;
     waveformWindow.reset();
+    pitchCurveWindow.reset();
 
 
     // Remove all listeners first
@@ -7073,7 +7100,7 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
     envSustainLabel.setLookAndFeel(nullptr);
     envReleaseLabel.setLookAndFeel(nullptr);
     filterEnvReleaseLabel.setLookAndFeel(nullptr);
-    pitchCurveTimeLabel.setLookAndFeel(nullptr);
+    pitchCurveLabel.setLookAndFeel(nullptr);
     pitchBendLabel.setLookAndFeel(nullptr);
     subOscCoarseLabel.setLookAndFeel(nullptr);
     lfo1PhaseLabel.setLookAndFeel(nullptr);
@@ -7273,10 +7300,11 @@ void SpaceDustAudioProcessorEditor::wrapAssignableKnobs()
     wrapKnob(envDecaySlider,       "envDecay");
     wrapKnob(envSustainSlider,     "envSustain");
     wrapKnob(envReleaseSlider,     "envRelease");
-    // pitchCurveTimeSlider is deliberately absent: isLegalDestination would
-    // accept it (a plain float, not an LFO control, not pitchBend), but this
-    // task reads it with safeGetParam rather than voiceModulatedValue, so
-    // wrapping it here would light the knob up as assignable while an assigned
+    // The pitch curve Time knob (now inside pitchCurveWindow, not on this tab)
+    // is deliberately absent: isLegalDestination would accept it (a plain
+    // float, not an LFO control, not pitchBend), but this task reads it with
+    // safeGetParam rather than voiceModulatedValue, so wrapping it here would
+    // light the knob up as assignable while an assigned
     // LFO reached nothing. Wiring it into the matrix is a separate task.
 
     // -- Master section --
