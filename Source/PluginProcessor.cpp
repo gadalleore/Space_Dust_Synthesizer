@@ -307,7 +307,8 @@ namespace
         X (delayRate) \
         X (delayFilterHPCutoff)           X (delayFilterLPCutoff) \
         X (delayFilterHPResonance)        X (delayFilterLPResonance) \
-        X (grainDelayMix)                 X (grainDelayTime) \
+        X (grainDelayDecay)               X (grainDelayMix) \
+        X (grainDelayTime) \
         X (grainDelaySize)                X (grainDelayPitch) \
         X (grainDelayDensity)             X (grainDelayJitter) \
         X (grainDelayFilterHPCutoff)      X (grainDelayFilterLPCutoff) \
@@ -361,6 +362,59 @@ namespace
 
     static_assert (sizeof (effectParamIds) / sizeof (effectParamIds[0]) == numEffectParams,
                    "the id table and the enum come from the same list");
+
+    //==========================================================================
+    // -- Every CHOICE and per-step switch the effects chain reads --
+    //
+    // None of these can be a modulation destination -- isLegalDestination takes
+    // floats only -- so they are not in the list above. They are here for a
+    // different reason: the chain now runs sixteen times a block when a knob is
+    // assigned, and every one of these reads used to build a juce::String to
+    // find its parameter. juce::ParameterID{"reverbType", 1}.getParamID() heap
+    // allocates, and so does "tranceGateStep" + juce::String(s + 1) inside a
+    // sixteen-iteration loop. That is roughly 340-860 allocations per block on
+    // the audio thread instead of the ~20-55 that were there when the chunked
+    // path only ran under the test harness.
+    //
+    // So the POINTERS are resolved once, on the message thread, and the chain
+    // reads through them. No string is built on the audio thread at all.
+    #define SPACEDUST_EFFECT_CHOICES(X) \
+        X (reverbType)            X (phaserStages) \
+        X (transientType)         X (compressorType) \
+        X (softClipperMode)       X (softClipperOversample) \
+        X (tranceGateSteps) \
+        X (finalEQB1Type)         X (finalEQB2Type) \
+        X (finalEQB3Type)         X (finalEQB4Type) \
+        X (finalEQB5Type)
+
+    enum EffectChoice
+    {
+        #define SPACEDUST_EC_ENUM(name) ec_##name,
+        SPACEDUST_EFFECT_CHOICES (SPACEDUST_EC_ENUM)
+        #undef SPACEDUST_EC_ENUM
+        numEffectChoices
+    };
+
+    static_assert (ec_finalEQB2Type - ec_finalEQB1Type == 1,
+                   "the final EQ Type choices must stay one apart and in band order");
+
+    const char* const effectChoiceIds[] = {
+        #define SPACEDUST_EC_ID(name) #name,
+        SPACEDUST_EFFECT_CHOICES (SPACEDUST_EC_ID)
+        #undef SPACEDUST_EC_ID
+    };
+
+    static_assert (sizeof (effectChoiceIds) / sizeof (effectChoiceIds[0]) == numEffectChoices,
+                   "the choice id table and the choice enum come from the same list");
+
+    /** The trance gate's sixteen step switches, by id. Built once so the gate's
+        per-step loop never concatenates a string on the audio thread. */
+    const char* const tranceGateStepIds[16] = {
+        "tranceGateStep1",  "tranceGateStep2",  "tranceGateStep3",  "tranceGateStep4",
+        "tranceGateStep5",  "tranceGateStep6",  "tranceGateStep7",  "tranceGateStep8",
+        "tranceGateStep9",  "tranceGateStep10", "tranceGateStep11", "tranceGateStep12",
+        "tranceGateStep13", "tranceGateStep14", "tranceGateStep15", "tranceGateStep16"
+    };
 
     //==========================================================================
     // -- Crash-safety marker for state restoration --
@@ -1815,6 +1869,13 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                               resampleReleaseAt);
 
     juce::ScopedNoDenormals noDenormals;
+
+    // This block's routing set, taken ONCE and announced to the message thread
+    // so it cannot rebuild into the buffer being walked. Must come before every
+    // consumer: fillVoiceModScratch below, and refreshEffectModulatedValues in
+    // the effects chain.
+    latchCompiledRoutings();
+
     auto totalNumInputChannels  = getTotalNumInputChannels();
     auto totalNumOutputChannels = getTotalNumOutputChannels();
 
@@ -1836,6 +1897,17 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     for (int lfo = 0; lfo < spacedust::numLfos; ++lfo)
         if (lfoBuffers[lfo].getNumSamples() < numSamples)
             lfoBuffers[lfo].setSize(1, numSamples, false, false, true);
+
+    // The voice modulation scratch needs the same guard, and for the same
+    // reason: without it an oversized block short-fills every row and the tail
+    // of the block reads whatever the previous block left there. Stale, not
+    // corrupt -- but the LFO buffers beside it do not accept stale either.
+    // Allocates only on growth (rare), then stays grown.
+    if (voiceModRowSamples < numSamples)
+    {
+        voiceModRowSamples = numSamples;
+        voiceModScratch.assign ((size_t) maxVoiceModRows * (size_t) voiceModRowSamples, 0.0f);
+    }
 
     // LFO waveform generation lives in Source/LfoWaveform.cpp so its fold-back can be
     // measured directly (tools/lfotest). It takes the per-sample phase advance so the
@@ -2849,21 +2921,18 @@ void SpaceDustAudioProcessor::processTranceGate (juce::AudioBuffer<float>& buffe
     {
         SpaceDustTranceGate::Parameters tp;
         tp.enabled = true;
-        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"tranceGateSteps", 1}.getParamID())))
-            tp.numSteps = (p->getIndex() == 0) ? 4 : (p->getIndex() == 1) ? 8 : 16;
-        else
-            tp.numSteps = 8;
+        {
+            const int stepsIdx = effectChoiceIndex(ec_tranceGateSteps, 1);
+            tp.numSteps = (stepsIdx == 0) ? 4 : (stepsIdx == 1) ? 8 : 16;
+        }
         tp.sync = safeGetParam(apvts, "tranceGateSync") > 0.5f;
         tp.rate = modParam(ep_tranceGateRate);
         tp.attackMs = modParam(ep_tranceGateAttack);
         tp.releaseMs = modParam(ep_tranceGateRelease);
         tp.mix = modParam(ep_tranceGateMix);
         for (int s = 0; s < 16; ++s)
-        {
-            juce::String stepId = "tranceGateStep" + juce::String(s + 1);
-            if (auto* rp = apvts.getRawParameterValue(stepId))
+            if (auto* rp = tranceGateStepValues[s])
                 tp.stepOn[s] = rp->load() > 0.5f;
-        }
         tranceGate_.setParameters(tp);
         tranceGate_.process(buffer, currentSampleRate, getPlayHead(), startSampleInBlock);
     }
@@ -2897,10 +2966,7 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
             buffer.applyGain(0, 0, buffer.getNumSamples(), reverbDrive);
             buffer.applyGain(1, 0, buffer.getNumSamples(), reverbDrive);
             SpaceDustReverb::Parameters rp;
-            if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"reverbType", 1}.getParamID())))
-                rp.type = p->getIndex();
-            else
-                rp.type = 0;
+            rp.type = effectChoiceIndex(ec_reverbType, 0);
             rp.wetMix = reverbWetMix;
             rp.decayTime = reverbDecayTime;
             rp.filterOn = safeGetParam(apvts, "reverbFilterShow") > 0.5f;
@@ -2934,11 +3000,13 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
         gp.grainSizeMs = juce::jlimit(10.0f, 500.0f, modParam(ep_grainDelaySize));
         gp.pitchSemitones = juce::jlimit(-12.0f, 12.0f, modParam(ep_grainDelayPitch));
         gp.mix = grainMix;
-        // Decay is 0â€“150% in the APVTS; getRawParameterValue is normalized â€” must use get() for real percent.
-        float grainDecayPct = 0.0f;
-        if (auto* p = dynamic_cast<juce::AudioParameterFloat*>(apvts.getParameter("grainDelayDecay")))
-            grainDecayPct = p->get();
-        gp.decay = juce::jlimit(0.0f, 1.0f, grainDecayPct / 150.0f);
+        // Decay is 0-150% in the APVTS, so it is scaled here. It is a plain
+        // AudioParameterFloat exactly like grainDelayMix beside it, and
+        // getRawParameterValue reports real units for it as it does for every
+        // other parameter. An older comment here claimed the value was
+        // normalised and that get() was needed; that was wrong, and believing
+        // it left this knob assignable but unable to move.
+        gp.decay = juce::jlimit(0.0f, 1.0f, modParam(ep_grainDelayDecay) / 150.0f);
         gp.density = juce::jlimit(1.0f, 8.0f, modParam(ep_grainDelayDensity));
         gp.jitter = juce::jlimit(0.0f, 1.0f, modParam(ep_grainDelayJitter) * 0.01f);
         gp.pingPong = safeGetParam(apvts, "grainDelayPingPong") > 0.5f;
@@ -2969,10 +3037,7 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
         pp.scriptMode = safeGetParam(apvts, "phaserScriptMode") > 0.5f;
         pp.mix = phaserMix;
         pp.centreHz = juce::jlimit(50.0f, 2000.0f, modParam(ep_phaserCentre));
-        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"phaserStages", 1}.getParamID())))
-            pp.numStages = (p->getIndex() == 0) ? 4 : 6;
-        else
-            pp.numStages = 4;
+        pp.numStages = (effectChoiceIndex(ec_phaserStages, 0) == 0) ? 4 : 6;
         pp.stereoOffset = juce::jlimit(0.0f, 1.0f, modParam(ep_phaserStereoOffset));
         pp.vintageMode = safeGetParam(apvts, "phaserVintageMode") > 0.5f;
         phaser_.setParameters(pp);
@@ -3007,8 +3072,7 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
         {
             SpaceDustTransient::Parameters tp;
             tp.enabled = true;
-            if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"transientType", 1}.getParamID())))
-                tp.type = p->getIndex();
+            tp.type = effectChoiceIndex(ec_transientType, tp.type);
             tp.mix = juce::jlimit(0.0f, 1.0f, modParam(ep_transientMix));
             tp.postEffect = true;
             tp.kaDonk = juce::jlimit(0.0f, 1.0f, modParam(ep_transientKaDonk));
@@ -3040,10 +3104,7 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
     {
         SpaceDustCompressor::Parameters cp;
         cp.enabled = true;
-        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"compressorType", 1}.getParamID())))
-            cp.type = p->getIndex();
-        else
-            cp.type = 0;
+        cp.type = effectChoiceIndex(ec_compressorType, 0);
         cp.thresholdDb = juce::jlimit(-60.0f, 0.0f, modParam(ep_compressorThreshold));
         cp.ratio = juce::jlimit(1.0f, 20.0f, modParam(ep_compressorRatio));
         cp.attackMs = juce::jlimit(0.1f, 80.0f, modParam(ep_compressorAttack));
@@ -3063,19 +3124,13 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
     {
         SpaceDustSoftClipper::Parameters sp;
         sp.enabled = true;
-        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"softClipperMode", 1}.getParamID())))
-            sp.mode = p->getIndex();
-        else
-            sp.mode = 0;
+        sp.mode = effectChoiceIndex(ec_softClipperMode, 0);
         sp.drive = juce::jlimit(0.0f, 1.0f, modParam(ep_softClipperDrive));
         sp.knee = juce::jlimit(0.0f, 1.0f, modParam(ep_softClipperKnee));
-        if (auto* p = dynamic_cast<juce::AudioParameterChoice*>(apvts.getParameter(juce::ParameterID{"softClipperOversample", 1}.getParamID())))
         {
-            const int idx = p->getIndex();
+            const int idx = effectChoiceIndex(ec_softClipperOversample, 0);
             sp.oversample = (idx == 0) ? 2 : (idx == 1) ? 4 : (idx == 2) ? 8 : 16;
         }
-        else
-            sp.oversample = 2;
         sp.mix = juce::jlimit(0.0f, 1.0f, modParam(ep_softClipperMix));
         softClipper_.setParameters(sp);
         softClipper_.process(buffer);
@@ -3113,18 +3168,18 @@ void SpaceDustAudioProcessor::runEffectsChain (juce::AudioBuffer<float>& buffer,
             fep.enabled = true;
             for (int i = 0; i < 5; ++i)
             {
-                juce::String n(i + 1);
                 // Band i's three modulatable knobs sit together in the effect
-                // parameter list, in Freq / Gain / Q order -- see the
-                // static_assert beside that list. The Type is a choice, so it
-                // cannot be modulated and keeps its id-built read.
+                // parameter list, in Freq / Gain / Q order, and its Type sits
+                // at the matching place in the choice list -- see the
+                // static_asserts beside both lists. Nothing here builds a
+                // string, because the chain runs this sixteen times a block
+                // whenever an effect knob is assigned.
                 const int band = ep_finalEQB1Freq + i * finalEQParamsPerBand;
                 fep.bands[i].freqHz = juce::jlimit(20.0f, 20000.0f, modParam(band + 0, 1000.0f));
                 fep.bands[i].gainDb = juce::jlimit(-15.0f, 15.0f,    modParam(band + 1));
                 fep.bands[i].Q      = juce::jlimit(0.1f, 10.0f,      modParam(band + 2, 1.0f));
                 fep.bands[i].type   = SpaceDustFinalEQ::typeFromChoiceIndex(
-                    static_cast<int>(safeGetParam(apvts, "finalEQB" + n + "Type",
-                                                  static_cast<float>(defaultTypeIndex[i]))));
+                    effectChoiceIndex(ec_finalEQB1Type + i, defaultTypeIndex[i]));
             }
             finalEQ_.setParameters(fep);
             finalEQ_.process(buffer);
@@ -3197,10 +3252,31 @@ void SpaceDustAudioProcessor::rebuildCompiledRoutings()
 
         for (int i = 0; i < numEffectParams; ++i)
             effectParamSlots[(size_t) i] = modDestinations.slotFor (effectParamIds[i]);
+
+        // The chain's choices and the trance gate's step switches, resolved to
+        // pointers here so no chunk ever builds a juce::String to find one.
+        effectChoiceParams.assign ((size_t) numEffectChoices, nullptr);
+
+        for (int i = 0; i < numEffectChoices; ++i)
+            effectChoiceParams[(size_t) i] = dynamic_cast<juce::AudioParameterChoice*> (
+                apvts.getParameter (effectChoiceIds[i]));
+
+        for (int i = 0; i < 16; ++i)
+            tranceGateStepValues[i] = apvts.getRawParameterValue (tranceGateStepIds[i]);
     }
 
-    // Fill the buffer that is not live, then publish it.
-    const int target = 1 - liveCompiled.load (std::memory_order_relaxed);
+    // Build into a buffer that is NEITHER the one published last NOR the one
+    // the audio thread said it is walking. With three buffers and two
+    // forbidden indices, exactly one is always free.
+    const int live = liveCompiled.load (std::memory_order_relaxed);
+    const int busy = readerInUse.load (std::memory_order_acquire);
+
+    int target = 0;
+    while (target == live || target == busy)
+        ++target;
+
+    jassert (target < numCompiledBuffers);
+
     auto& out = compiledBuffers[target];
 
     out.routings.clear();
@@ -3208,6 +3284,7 @@ void SpaceDustAudioProcessor::rebuildCompiledRoutings()
     out.routings.reserve (modMatrix.routings().size());
 
     bool touchesEffects = false;
+    int  voiceSlotsRefused = 0;
 
     for (const auto& r : modMatrix.routings())
     {
@@ -3221,9 +3298,6 @@ void SpaceDustAudioProcessor::rebuildCompiledRoutings()
 
         const auto range = modDestinations.rangeAt (slot);
 
-        out.routings.push_back (spacedust::CompiledRouting {
-            slot, r.lfoIndex, r.amount * range.halfRange() });
-
         if (isEffectParameter (modDestinations.idAt (slot)))
         {
             touchesEffects = true;
@@ -3233,9 +3307,34 @@ void SpaceDustAudioProcessor::rebuildCompiledRoutings()
         {
             // One row per DESTINATION, not per routing: four LFOs on the same
             // knob still sum into one value.
+            //
+            // The scratch cap is enforced HERE, on the message thread, not in
+            // the audio-thread fill. A routing past the cap is refused outright
+            // and logged, so the knob simply never becomes a destination --
+            // rather than being accepted, compiled, and then silently dropped
+            // every block by a fill loop with nowhere to put it.
+            if ((int) out.voiceSlots.size() >= maxVoiceModRows)
+            {
+                ++voiceSlotsRefused;
+                logToFile ("Mod matrix: refused a routing to '"
+                           + juce::String (modDestinations.idAt (slot))
+                           + "' -- already at the limit of "
+                           + juce::String (maxVoiceModRows)
+                           + " modulated voice knobs");
+                continue;
+            }
+
             out.voiceSlots.push_back (slot);
         }
+
+        out.routings.push_back (spacedust::CompiledRouting {
+            slot, r.lfoIndex, r.amount * range.halfRange() });
     }
+
+    if (voiceSlotsRefused > 0)
+        logToFile ("Mod matrix: " + juce::String (voiceSlotsRefused)
+                   + " routing(s) refused; the voice scratch holds "
+                   + juce::String (maxVoiceModRows) + " knobs");
 
     effectsAreModulated.store (touchesEffects, std::memory_order_relaxed);
     liveCompiled.store (target, std::memory_order_release);
@@ -3257,6 +3356,20 @@ float SpaceDustAudioProcessor::modParam (int which, float fallback) noexcept
     // Not a legal destination, or the tables are not built yet: read it the way
     // the chain always did.
     return safeGetParam (apvts, effectParamIds[which], fallback);
+}
+
+void SpaceDustAudioProcessor::latchCompiledRoutings() noexcept
+{
+    // Load once, then tell the message thread which buffer this block is on.
+    // The acquire pairs with the release store at the end of
+    // rebuildCompiledRoutings, so the routings are visible before they are read.
+    blockCompiledIndex = liveCompiled.load (std::memory_order_acquire);
+
+    // Published so rebuildCompiledRoutings can avoid this buffer. Never
+    // cleared: leaving it set means the message thread keeps avoiding the last
+    // buffer the audio thread touched, which is exactly what makes a rebuild
+    // during a block safe.
+    readerInUse.store (blockCompiledIndex, std::memory_order_release);
 }
 
 void SpaceDustAudioProcessor::refreshEffectModulatedValues (int startSampleInBlock) noexcept
@@ -3283,7 +3396,10 @@ void SpaceDustAudioProcessor::refreshEffectModulatedValues (int startSampleInBlo
         destBases[(size_t) i] = (raw != nullptr) ? raw->load (std::memory_order_relaxed) : 0.0f;
     }
 
-    const auto& live = compiledBuffers[liveCompiled.load (std::memory_order_acquire)];
+    // The set latched for this block, not a fresh load: every chunk must see
+    // the same routings, and the message thread is guaranteed not to be
+    // building into this buffer.
+    const auto& live = compiledBuffers[blockCompiledIndex];
 
     spacedust::ModMatrix::applyCompiled (live.routings.data(), (int) live.routings.size(),
                                          destBases.data(), destRanges.data(), numDests,
@@ -3297,19 +3413,23 @@ void SpaceDustAudioProcessor::fillVoiceModScratch (int numSamples) noexcept
     if (voiceModRowSamples <= 0 || numSamples <= 0 || destBases.empty())
         return;
 
-    const auto& live = compiledBuffers[liveCompiled.load (std::memory_order_acquire)];
+    const auto& live = compiledBuffers[blockCompiledIndex];
 
     if (live.voiceSlots.empty())
         return;
 
     const int columns = juce::jmin (numSamples, voiceModRowSamples);
-    const int rows     = juce::jmin ((int) live.voiceSlots.size(), maxVoiceModRows);
 
-    for (int row = 0; row < rows; ++row)
+    // Every slot in the list has a row: rebuildCompiledRoutings refused any
+    // routing past the cap on the message thread, so there is nothing to
+    // truncate here and nothing is dropped without the player being told. The
+    // assert catches the cap being raised in one place and not the other.
+    jassert ((int) live.voiceSlots.size() <= maxVoiceModRows);
+
+    for (const int slot : live.voiceSlots)
     {
-        const int slot = live.voiceSlots[(size_t) row];
-
-        if (slot < 0 || slot >= (int) destBases.size())
+        if (slot < 0 || slot >= (int) destBases.size()
+            || voiceModRowsFilled >= maxVoiceModRows)
             continue;
 
         // Gather this destination's LFOs once, then walk the samples. A

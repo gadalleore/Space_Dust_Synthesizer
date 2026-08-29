@@ -500,6 +500,11 @@ private:
         strings and writes no memory the message thread owns. */
     void refreshEffectModulatedValues (int startSampleInBlock) noexcept;
 
+    /** Take this block's routing set and tell the message thread which buffer
+        is in use, so it never builds into the one being walked. Audio thread,
+        at the very top of processBlock, before ANY consumer reads. */
+    void latchCompiledRoutings() noexcept;
+
     /** Fill voiceModScratch for this block. Audio thread, BEFORE the voices
         render -- see the note on voiceModScratch. */
     void fillVoiceModScratch (int numSamples) noexcept;
@@ -529,12 +534,39 @@ private:
         std::vector<int>                        voiceSlots;   // distinct, non-effect
     };
 
-    /** Two buffers and an atomic index rather than a lock. The message thread
-        fills the buffer that is NOT live and then stores its index; the audio
-        thread reads whichever index it finds. The audio thread therefore never
-        allocates, never compares a string, and never waits. */
-    CompiledSet      compiledBuffers[2];
+    /** THREE buffers, an atomic index, and a reader epoch -- not two buffers.
+
+        Two was a use-after-free waiting for Task 5. With two, a second rebuild
+        inside one audio block puts the message thread back on the very buffer
+        the audio thread is walking, where routings.clear() plus push_back can
+        reallocate and free the array under it. That needed two edits inside one
+        ~10 ms block, which was rare while setStateInformation was the only
+        caller -- and becomes the common case the moment the editor rebuilds on
+        every drag of an assign gesture.
+
+        With three, the writer skips BOTH the buffer it published last
+        (liveCompiled) and the buffer the audio thread announced it is walking
+        (readerInUse), and a third is therefore always free. Two forbidden
+        indices out of three leaves exactly one.
+
+        The audio thread latches its index ONCE per block, in
+        latchCompiledRoutings(), so every consumer in that block sees one
+        coherent routing set -- the effects and the voices cannot disagree, and
+        the set cannot change under a chunk loop halfway through.
+
+        Single writer (message thread) and single reader (audio thread) is what
+        makes this safe without a lock. */
+    static constexpr int numCompiledBuffers = 3;
+
+    CompiledSet      compiledBuffers[numCompiledBuffers];
     std::atomic<int> liveCompiled { 0 };
+
+    /** The buffer the audio thread is walking this block. Written by the audio
+        thread, read by the message thread when it picks where to build. */
+    std::atomic<int> readerInUse { 0 };
+
+    /** The latched index for THIS block. Audio thread only. */
+    int blockCompiledIndex = 0;
 
     /** Base values and ranges, one per destination slot.
 
@@ -554,6 +586,26 @@ private:
         -- a bool or a choice -- which then reads raw exactly as it did before.
         Indexed by the effect-parameter list in the .cpp. */
     std::vector<int> effectParamSlots;
+
+    /** The chain's CHOICE parameters and the trance gate's sixteen step
+        switches, resolved to pointers once on the message thread.
+
+        The chunked chain reads these up to sixteen times a block. Looking them
+        up by id would build a juce::String -- a heap allocation -- every time.
+        Indexed by the choice list in the .cpp; a null entry means the parameter
+        is missing and the caller's fallback stands. */
+    std::vector<juce::AudioParameterChoice*> effectChoiceParams;
+    std::atomic<float>* tranceGateStepValues[16] { };
+
+    /** One choice parameter's index, or `fallback` when it is not there. */
+    int effectChoiceIndex (int which, int fallback) const noexcept
+    {
+        if (which >= 0 && which < (int) effectChoiceParams.size())
+            if (auto* p = effectChoiceParams[(size_t) which])
+                return p->getIndex();
+
+        return fallback;
+    }
 
     /** Whether any live routing lands on a parameter the effects chain reads. */
     std::atomic<bool> effectsAreModulated { false };
