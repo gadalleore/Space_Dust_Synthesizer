@@ -1386,8 +1386,6 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     addAndMakeVisible(parentEditor.lfo1EnabledButton);
     addAndMakeVisible(parentEditor.lfo1WaveformCombo);
     addAndMakeVisible(parentEditor.lfo1WaveformLabel);
-    addAndMakeVisible(parentEditor.lfo1TargetCombo);
-    addAndMakeVisible(parentEditor.lfo1TargetLabel);
     addAndMakeVisible(parentEditor.lfo1SyncButton);
     addAndMakeVisible(parentEditor.lfo1SyncLabel);
     addAndMakeVisible(parentEditor.lfo1TripletButton);
@@ -1406,8 +1404,6 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     addAndMakeVisible(parentEditor.lfo2EnabledButton);
     addAndMakeVisible(parentEditor.lfo2WaveformCombo);
     addAndMakeVisible(parentEditor.lfo2WaveformLabel);
-    addAndMakeVisible(parentEditor.lfo2TargetCombo);
-    addAndMakeVisible(parentEditor.lfo2TargetLabel);
     addAndMakeVisible(parentEditor.lfo2SyncButton);
     addAndMakeVisible(parentEditor.lfo2SyncLabel);
     addAndMakeVisible(parentEditor.lfo2TripletButton);
@@ -1427,32 +1423,6 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     for (auto* assignButton : parentEditor.lfoAssignButtons)
         addAndMakeVisible(assignButton);
 
-    addAndMakeVisible(parentEditor.modFilterShowButton);
-    addAndMakeVisible(parentEditor.modFilterShowButton2);
-    addAndMakeVisible(parentEditor.modFilter1Group);
-    addAndMakeVisible(parentEditor.modFilter1LinkButton);
-    addAndMakeVisible(parentEditor.modFilter1ModeCombo);
-    addAndMakeVisible(parentEditor.modFilter1CutoffSlider);
-    addAndMakeVisible(parentEditor.modFilter1ResonanceSlider);
-    addAndMakeVisible(parentEditor.warmSaturationMod1Button);
-    addAndMakeVisible(parentEditor.modFilter1KeyTrackButton);
-    addChildComponent(parentEditor.modFilter1NoteLockButton);     // shown by resized() when Key Tracking is on
-    addChildComponent(parentEditor.modFilter1HarmonicLockButton); // shown by resized() when Note Lock is on
-    addAndMakeVisible(parentEditor.modFilter1ModeLabel);
-    addAndMakeVisible(parentEditor.modFilter1CutoffLabel);
-    addAndMakeVisible(parentEditor.modFilter1ResonanceLabel);
-    addAndMakeVisible(parentEditor.modFilter2Group);
-    addAndMakeVisible(parentEditor.modFilter2LinkButton);
-    addAndMakeVisible(parentEditor.modFilter2ModeCombo);
-    addAndMakeVisible(parentEditor.modFilter2CutoffSlider);
-    addAndMakeVisible(parentEditor.modFilter2ResonanceSlider);
-    addAndMakeVisible(parentEditor.warmSaturationMod2Button);
-    addAndMakeVisible(parentEditor.modFilter2KeyTrackButton);
-    addChildComponent(parentEditor.modFilter2NoteLockButton);     // shown by resized() when Key Tracking is on
-    addChildComponent(parentEditor.modFilter2HarmonicLockButton); // shown by resized() when Note Lock is on
-    addAndMakeVisible(parentEditor.modFilter2ModeLabel);
-    addAndMakeVisible(parentEditor.modFilter2CutoffLabel);
-    addAndMakeVisible(parentEditor.modFilter2ResonanceLabel);
 
     // MPE controls
     addAndMakeVisible(parentEditor.mpeGroup);
@@ -1474,22 +1444,11 @@ ModulationPageComponent::~ModulationPageComponent()
 
 juce::StringArray ModulationPageComponent::relayoutTriggerParams()
 {
-    // Params whose value changes what this page shows, so resized() has to re-run:
-    //   *Show      -- whether each mod filter's controls exist at all
-    //   *KeyTrack  -- whether that filter's Note Lock toggle is offered
-    //   *NoteLock  -- whether that filter's Harmonic Series toggle is offered
-    //   *Link      -- which filter's toggles the shown ones reflect
+    // Params whose value changes what this page shows, so resized() has to re-run.
     // Registration and removal share this list so the two can never drift apart.
     //   voiceMode  -- LFO key tracking only exists in Mono/Legato
     //   lfo*Sync   -- and only with the LFO free-running
-    //   lfo*KeyTrack / lfo*NoteLock -- each gates the next toggle in the row
-    return { "modFilter1Show",         "modFilter2Show",
-             "filterKeyTrack",         "filterNoteLock",
-             "modFilter1KeyTrack",     "modFilter2KeyTrack",
-             "modFilter1NoteLock",     "modFilter2NoteLock",
-             "modFilter1LinkToMaster", "modFilter2LinkToMaster",
-             "voiceMode",
-             "lfo1Sync",               "lfo2Sync" };
+    return { "voiceMode", "lfo1Sync", "lfo2Sync" };
 }
 
 void ModulationPageComponent::parameterChanged(const juce::String& parameterID, float newValue)
@@ -1516,7 +1475,7 @@ void ModulationPageComponent::paint(juce::Graphics& g)
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
     drawGlows(g, baseAlpha, meterLinkedGroupGlowHue(parentEditor.clippingHoldTicks > 0),
         { &parentEditor.modulationGroup, &parentEditor.lfo1Group, &parentEditor.lfo2Group,
-          &parentEditor.modFilter1Group, &parentEditor.modFilter2Group, &parentEditor.mpeGroup });
+          &parentEditor.mpeGroup });
 }
 
 void ModulationPageComponent::resized()
@@ -1606,15 +1565,13 @@ void ModulationPageComponent::resized()
     // Larger gap between LFO columns so boxes do not intersect
     const int columnGap = 22;  // Increased by 10% from reduced value
     
-    const int modRateKnobSize = 38;  // Rate, Depth, Phase (and mod-filter knobs): one consistent rotary size
+    const int modRateKnobSize = 38;  // Rate, Depth, Phase: one consistent rotary size
     const int modRateLabelWidth = 70;  // Width for "1/8 bar", "1/128 bar" etc. - prevents cutoff
     const int modLabelHeight = 14;
     const int modComboHeight = 22;
     const int modComboWidth = 100;
     const int modButtonWidth = 70;
     const int modButtonHeight = 22;
-    const int modFilterButtonW = 75;   // Filter toggle (narrower)
-    const int modWarmSatButtonW = 128; // Warm Saturation (wider so full text fits)
     const int modLabelGap = 2;
     const int modRowSpacing = 4;
     const int modTextBoxH = 18;       // TextBoxBelow on Depth/Phase (matches slider text box height)
@@ -1626,11 +1583,6 @@ void ModulationPageComponent::resized()
     const int lfoBoxPadV = 32;  // Match groupTitleHeight so content clears in-box title
     const int lfoContentTop = 0;
     
-    // Check if filter sections are shown (each LFO has its own toggle)
-    bool modFilter1Show = parentEditor.audioProcessor.getValueTreeState().getParameter("modFilter1Show") != nullptr
-        && parentEditor.safeGetParam("modFilter1Show") > 0.5f;
-    bool modFilter2Show = parentEditor.audioProcessor.getValueTreeState().getParameter("modFilter2Show") != nullptr
-        && parentEditor.safeGetParam("modFilter2Show") > 0.5f;
     // LFO box heights will be set after layout to shrink-to-fit
     int lfo1AreaHeight = modulationContent.getHeight();
     int lfo2AreaHeight = modulationContent.getHeight();
@@ -1690,11 +1642,6 @@ void ModulationPageComponent::resized()
 
     lfo1CurrentY += modOnBtnH + modRowSpacing;
     
-    // LFO1 Destination (Target) - above Waveform (more important)
-    parentEditor.lfo1TargetLabel.setBounds(lfo1CentreX - controlWidth / 2, lfo1CurrentY, controlWidth, modLabelHeight);
-    lfo1CurrentY += modLabelHeight + modLabelGap;
-    parentEditor.lfo1TargetCombo.setBounds(lfo1CentreX - controlWidth / 2, lfo1CurrentY, controlWidth, modComboHeight);
-    lfo1CurrentY += modComboHeight + modRowSpacing;
     
     // LFO1 Waveform
     parentEditor.lfo1WaveformLabel.setBounds(lfo1CentreX - controlWidth / 2, lfo1CurrentY, controlWidth, modLabelHeight);
@@ -1750,98 +1697,6 @@ void ModulationPageComponent::resized()
     parentEditor.lfo1RetriggerButton.setBounds(lfo1CentreX - modButtonWidth / 2, lfo1CurrentY, modButtonWidth, modButtonHeight);
     lfo1CurrentY += modButtonHeight + modRowSpacing;
     
-    // LFO1 Filter button; when on, Warm Saturation next to it (only visible when filter is on)
-    const int modFilterRowGap = 6;
-    if (modFilter1Show)
-    {
-        int modRowW = modFilterButtonW + modFilterRowGap + modWarmSatButtonW;
-        int modRowLeft = lfo1CentreX - modRowW / 2;
-        parentEditor.modFilterShowButton.setBounds(modRowLeft, lfo1CurrentY, modFilterButtonW, modButtonHeight);
-        parentEditor.warmSaturationMod1Button.setBounds(modRowLeft + modFilterButtonW + modFilterRowGap, lfo1CurrentY, modWarmSatButtonW, modButtonHeight);
-        parentEditor.warmSaturationMod1Button.setVisible(true);
-    }
-    else
-    {
-        parentEditor.modFilterShowButton.setBounds(lfo1CentreX - modFilterButtonW / 2, lfo1CurrentY, modFilterButtonW, modButtonHeight);
-        parentEditor.warmSaturationMod1Button.setVisible(false);
-    }
-    lfo1CurrentY += modButtonHeight + modRowSpacing;
-    
-    // LFO1 Filter controls (when filter shown): Cutoff, Resonance, Mode dropdown, Link to master
-    // Rotary must use modRotaryTextBoxTotalH like Depth/Phase â€” TextBoxBelow in a square bounds shrinks the knob
-    if (modFilter1Show)
-    {
-        const int filterKnobSize = modRateKnobSize;  // Rotary width matches Rate/Depth/Phase
-        const int filterKnobGap = 28;                // Wider gap so the full "Resonance" label fits
-        const int filterLabelW = 62;                 // Label wider than the knob to show "Resonance" uncut
-        const int filterComboW = 90;
-        const int filterComboH = 20;
-        int filterPairLeft = lfo1CentreX - (2 * filterKnobSize + filterKnobGap) / 2;  // Center pair under Filter button
-        int resX = filterPairLeft + filterKnobSize + filterKnobGap;
-        const int cutoffCentre = filterPairLeft + filterKnobSize / 2;
-        const int resCentre = resX + filterKnobSize / 2;
-        // Labels are centred on each knob but wider than it, so long words ("Resonance") aren't clipped.
-        parentEditor.modFilter1CutoffLabel.setBounds(cutoffCentre - filterLabelW / 2, lfo1CurrentY, filterLabelW, modLabelHeight);
-        parentEditor.modFilter1ResonanceLabel.setBounds(resCentre - filterLabelW / 2, lfo1CurrentY, filterLabelW, modLabelHeight);
-        lfo1CurrentY += modLabelHeight + modLabelGap;
-        parentEditor.modFilter1CutoffSlider.setBounds(filterPairLeft, lfo1CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
-        parentEditor.modFilter1ResonanceSlider.setBounds(resX, lfo1CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
-        // Key Tracking toggle: in the open space to the right of the Resonance knob, centred on the
-        // rotary. Height matches the Filter / Warm Saturation buttons (modButtonHeight).
-        {
-            const int ktH = modButtonHeight;
-            int ktX = resCentre + filterKnobSize / 2 + 8;
-            int ktY = lfo1CurrentY + (filterKnobSize - ktH) / 2;
-            int ktW = juce::jmin(84, lfo1Content.getRight() - ktX);
-            parentEditor.modFilter1KeyTrackButton.setBounds(ktX, ktY, ktW, ktH);
-            // Note Lock directly below, same column. Only while Key Tracking is on --
-            // and when this filter is linked to the master, the master's Key Tracking
-            // is what the shared toggle reflects, so read the same param the button does.
-            const bool linked1 = parentEditor.safeGetParam("modFilter1LinkToMaster") > 0.5f;
-            const int noteLockY = ktY + ktH + 12;
-            parentEditor.modFilter1NoteLockButton.setBounds(ktX, noteLockY, ktW, ktH);
-            const bool kt1 = parentEditor.safeGetParam(linked1 ? "filterKeyTrack" : "modFilter1KeyTrack") > 0.5f;
-            parentEditor.modFilter1NoteLockButton.setVisible(kt1);
-
-            // Harmonic Series mirrors Note Lock across the knob pair: same row, same
-            // width, but in the empty column to the LEFT of Cutoff. Clamped to the box
-            // so a narrow LFO column shrinks it instead of letting it escape the panel.
-            int hsX = juce::jmax(lfo1Content.getX(), filterPairLeft - 8 - ktW);
-            int hsW = juce::jmin(ktW, filterPairLeft - 8 - hsX);
-            parentEditor.modFilter1HarmonicLockButton.setBounds(hsX, noteLockY, hsW, ktH);
-            parentEditor.modFilter1HarmonicLockButton.setVisible(
-                kt1 && parentEditor.safeGetParam(linked1 ? "filterNoteLock" : "modFilter1NoteLock") > 0.5f);
-        }
-        lfo1CurrentY += modRotaryTextBoxTotalH + gapValueToNextLabel;
-        parentEditor.modFilter1ModeLabel.setBounds(lfo1CentreX - filterComboW / 2, lfo1CurrentY, filterComboW, 12);
-        lfo1CurrentY += 14;
-        parentEditor.modFilter1ModeCombo.setBounds(lfo1CentreX - filterComboW / 2, lfo1CurrentY, filterComboW, filterComboH);
-        lfo1CurrentY += filterComboH + modRowSpacing;
-        parentEditor.modFilter1LinkButton.setBounds(lfo1CentreX - 55, lfo1CurrentY, 110, modButtonHeight);
-        lfo1CurrentY += modButtonHeight + modRowSpacing;
-        parentEditor.modFilter1CutoffSlider.setVisible(true);
-        parentEditor.modFilter1CutoffLabel.setVisible(true);
-        parentEditor.modFilter1ResonanceSlider.setVisible(true);
-        parentEditor.modFilter1ResonanceLabel.setVisible(true);
-        parentEditor.modFilter1ModeCombo.setVisible(true);
-        parentEditor.modFilter1ModeLabel.setVisible(true);
-        parentEditor.modFilter1LinkButton.setVisible(true);
-        parentEditor.modFilter1KeyTrackButton.setVisible(true);
-    }
-    else
-    {
-        parentEditor.modFilter1CutoffSlider.setVisible(false);
-        parentEditor.modFilter1CutoffLabel.setVisible(false);
-        parentEditor.modFilter1ResonanceSlider.setVisible(false);
-        parentEditor.modFilter1ResonanceLabel.setVisible(false);
-        parentEditor.modFilter1ModeCombo.setVisible(false);
-        parentEditor.modFilter1ModeLabel.setVisible(false);
-        parentEditor.modFilter1LinkButton.setVisible(false);
-        parentEditor.modFilter1KeyTrackButton.setVisible(false);
-        parentEditor.modFilter1NoteLockButton.setVisible(false);
-        parentEditor.modFilter1HarmonicLockButton.setVisible(false);
-    }
-    
     // Shrink LFO1 box to fit its actual content
     {
         int lfo1FinalH = lfo1CurrentY - modulationContent.getY() + lfoBoxPadV;
@@ -1872,11 +1727,6 @@ void ModulationPageComponent::resized()
 
     lfo2CurrentY += modOnBtnH + modRowSpacing;
     
-    // LFO2 Destination (Target) - above Waveform (more important)
-    parentEditor.lfo2TargetLabel.setBounds(lfo2CentreX - controlWidth / 2, lfo2CurrentY, controlWidth, modLabelHeight);
-    lfo2CurrentY += modLabelHeight + modLabelGap;
-    parentEditor.lfo2TargetCombo.setBounds(lfo2CentreX - controlWidth / 2, lfo2CurrentY, controlWidth, modComboHeight);
-    lfo2CurrentY += modComboHeight + modRowSpacing;
     
     // LFO2 Waveform
     parentEditor.lfo2WaveformLabel.setBounds(lfo2CentreX - controlWidth / 2, lfo2CurrentY, controlWidth, modLabelHeight);
@@ -1925,102 +1775,12 @@ void ModulationPageComponent::resized()
     parentEditor.lfo2RetriggerButton.setBounds(lfo2CentreX - modButtonWidth / 2, lfo2CurrentY, modButtonWidth, modButtonHeight);
     lfo2CurrentY += modButtonHeight + modRowSpacing;
     
-    // LFO2 Filter button; when on, Warm Saturation next to it (only visible when filter is on)
-    if (modFilter2Show)
-    {
-        int modRowW = modFilterButtonW + modFilterRowGap + modWarmSatButtonW;
-        int modRowLeft = lfo2CentreX - modRowW / 2;
-        parentEditor.modFilterShowButton2.setBounds(modRowLeft, lfo2CurrentY, modFilterButtonW, modButtonHeight);
-        parentEditor.warmSaturationMod2Button.setBounds(modRowLeft + modFilterButtonW + modFilterRowGap, lfo2CurrentY, modWarmSatButtonW, modButtonHeight);
-        parentEditor.warmSaturationMod2Button.setVisible(true);
-    }
-    else
-    {
-        parentEditor.modFilterShowButton2.setBounds(lfo2CentreX - modFilterButtonW / 2, lfo2CurrentY, modFilterButtonW, modButtonHeight);
-        parentEditor.warmSaturationMod2Button.setVisible(false);
-    }
-    lfo2CurrentY += modButtonHeight + modRowSpacing;
-
-    // LFO2 Filter controls (when filter shown): Cutoff, Resonance, Mode dropdown, Link to master
-    // Rotary must use modRotaryTextBoxTotalH like Depth/Phase â€” TextBoxBelow in a square bounds shrinks the knob
-    if (modFilter2Show)
-    {
-        const int filterKnobSize = modRateKnobSize;  // Rotary width matches Rate/Depth/Phase
-        const int filterKnobGap = 28;                // Wider gap so the full "Resonance" label fits
-        const int filterLabelW = 62;                 // Label wider than the knob to show "Resonance" uncut
-        const int filterComboW = 90;
-        const int filterComboH = 20;
-        int filterPairLeft = lfo2CentreX - (2 * filterKnobSize + filterKnobGap) / 2;  // Center pair under Filter button
-        int resX = filterPairLeft + filterKnobSize + filterKnobGap;
-        const int cutoffCentre = filterPairLeft + filterKnobSize / 2;
-        const int resCentre = resX + filterKnobSize / 2;
-        // Labels are centred on each knob but wider than it, so long words ("Resonance") aren't clipped.
-        parentEditor.modFilter2CutoffLabel.setBounds(cutoffCentre - filterLabelW / 2, lfo2CurrentY, filterLabelW, modLabelHeight);
-        parentEditor.modFilter2ResonanceLabel.setBounds(resCentre - filterLabelW / 2, lfo2CurrentY, filterLabelW, modLabelHeight);
-        lfo2CurrentY += modLabelHeight + modLabelGap;
-        parentEditor.modFilter2CutoffSlider.setBounds(filterPairLeft, lfo2CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
-        parentEditor.modFilter2ResonanceSlider.setBounds(resX, lfo2CurrentY, filterKnobSize, modRotaryTextBoxTotalH);
-        // Key Tracking toggle: in the open space to the right of the Resonance knob, centred on the
-        // rotary. Height matches the Filter / Warm Saturation buttons (modButtonHeight).
-        {
-            const int ktH = modButtonHeight;
-            int ktX = resCentre + filterKnobSize / 2 + 8;
-            int ktY = lfo2CurrentY + (filterKnobSize - ktH) / 2;
-            int ktW = juce::jmin(84, lfo2Content.getRight() - ktX);
-            parentEditor.modFilter2KeyTrackButton.setBounds(ktX, ktY, ktW, ktH);
-            // Note Lock directly below, Harmonic Series mirrored to the left of the knob
-            // pair (see the LFO 1 block for the linked-filter and clamping notes).
-            const bool linked2 = parentEditor.safeGetParam("modFilter2LinkToMaster") > 0.5f;
-            const int noteLockY = ktY + ktH + 12;
-            parentEditor.modFilter2NoteLockButton.setBounds(ktX, noteLockY, ktW, ktH);
-            const bool kt2 = parentEditor.safeGetParam(linked2 ? "filterKeyTrack" : "modFilter2KeyTrack") > 0.5f;
-            parentEditor.modFilter2NoteLockButton.setVisible(kt2);
-
-            int hsX = juce::jmax(lfo2Content.getX(), filterPairLeft - 8 - ktW);
-            int hsW = juce::jmin(ktW, filterPairLeft - 8 - hsX);
-            parentEditor.modFilter2HarmonicLockButton.setBounds(hsX, noteLockY, hsW, ktH);
-            parentEditor.modFilter2HarmonicLockButton.setVisible(
-                kt2 && parentEditor.safeGetParam(linked2 ? "filterNoteLock" : "modFilter2NoteLock") > 0.5f);
-        }
-        lfo2CurrentY += modRotaryTextBoxTotalH + gapValueToNextLabel;
-        parentEditor.modFilter2ModeLabel.setBounds(lfo2CentreX - filterComboW / 2, lfo2CurrentY, filterComboW, 12);
-        lfo2CurrentY += 14;
-        parentEditor.modFilter2ModeCombo.setBounds(lfo2CentreX - filterComboW / 2, lfo2CurrentY, filterComboW, filterComboH);
-        lfo2CurrentY += filterComboH + modRowSpacing;
-        parentEditor.modFilter2LinkButton.setBounds(lfo2CentreX - 55, lfo2CurrentY, 110, modButtonHeight);
-        lfo2CurrentY += modButtonHeight + modRowSpacing;
-        parentEditor.modFilter2CutoffSlider.setVisible(true);
-        parentEditor.modFilter2CutoffLabel.setVisible(true);
-        parentEditor.modFilter2ResonanceSlider.setVisible(true);
-        parentEditor.modFilter2ResonanceLabel.setVisible(true);
-        parentEditor.modFilter2ModeCombo.setVisible(true);
-        parentEditor.modFilter2ModeLabel.setVisible(true);
-        parentEditor.modFilter2LinkButton.setVisible(true);
-        parentEditor.modFilter2KeyTrackButton.setVisible(true);
-    }
-    else
-    {
-        parentEditor.modFilter2CutoffSlider.setVisible(false);
-        parentEditor.modFilter2CutoffLabel.setVisible(false);
-        parentEditor.modFilter2ResonanceSlider.setVisible(false);
-        parentEditor.modFilter2ResonanceLabel.setVisible(false);
-        parentEditor.modFilter2ModeCombo.setVisible(false);
-        parentEditor.modFilter2ModeLabel.setVisible(false);
-        parentEditor.modFilter2LinkButton.setVisible(false);
-        parentEditor.modFilter2KeyTrackButton.setVisible(false);
-        parentEditor.modFilter2NoteLockButton.setVisible(false);
-        parentEditor.modFilter2HarmonicLockButton.setVisible(false);
-    }
-    
     // Shrink LFO2 box to fit its actual content
     {
         int lfo2FinalH = lfo2CurrentY - modulationContent.getY() + lfoBoxPadV;
         parentEditor.lfo2Group.setBounds(lfo2X, modulationContent.getY(), lfo2Width, lfo2FinalH);
     }
 
-    parentEditor.modFilter1Group.setVisible(false);
-    parentEditor.modFilter2Group.setVisible(false);
-    parentEditor.modFilterShowLabel.setVisible(false);
 
 }
 
@@ -3851,8 +3611,6 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
       modulationGroup("", ""),  // Empty title, using separate label for "Modulation" title
       lfo1Group("LFO 1", "LFO 1"),
       lfo2Group("LFO 2", "LFO 2"),
-      modFilter1Group("Filter 1", "Filter 1"),
-      modFilter2Group("Filter 2", "Filter 2"),
       delayGroup("Delay", "Delay"),
       reverbGroup("Reverb", "Reverb"),
       grainDelayGroup("Grain Delay", "Grain Delay"),
@@ -3955,8 +3713,6 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     modulationGroup.getProperties().set("viewportGlow", true);
     lfo1Group.getProperties().set("viewportGlow", true);
     lfo2Group.getProperties().set("viewportGlow", true);
-    modFilter1Group.getProperties().set("viewportGlow", true);
-    modFilter2Group.getProperties().set("viewportGlow", true);
     mpeGroup.getProperties().set("viewportGlow", true);
     delayGroup.getProperties().set("viewportGlow", true);
     reverbGroup.getProperties().set("viewportGlow", true);
@@ -4514,7 +4270,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     filterCutoffSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
     filterCutoffSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 20);
     filterCutoffSlider.setTextValueSuffix(" Hz");
-    filterCutoffSlider.activeGrid = [this] { return activeNoteLockGrid(0); };
+    filterCutoffSlider.activeGrid = [this] { return activeNoteLockGrid(); };
     filterCutoffAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         audioProcessor.getValueTreeState(), "filterCutoff", filterCutoffSlider);
     filterCutoffLabel.setText(safeString("Cutoff"), juce::dontSendNotification);
@@ -4540,7 +4296,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     filterKeyTrackAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "filterKeyTrack", filterKeyTrackButton);
 
-    // Shared by all three of each toggle (master + both mod filters), which are set up
+    // Shared by the master filter's toggles, which are set up
     // far apart in this constructor -- one string each so the wording cannot drift.
     const juce::String noteLockTip (safeString(
         "Note Lock: the Cutoff knob clicks into semitone steps measured from the note you play "
@@ -4561,7 +4317,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // Pull the cutoff onto the grid the moment it is switched on, so engaging Note
     // Lock locks the sound you are already hearing. The attachment has written the
     // param by the time onClick fires, so activeNoteLockGrid() already sees the new state.
-    filterNoteLockButton.onClick = [this] { snapCutoffToNoteLock(0); };
+    filterNoteLockButton.onClick = [this] { snapCutoffToNoteLock(); };
 
     // Button text is "Harmonics", not "Harmonic Series": the toggles are 84-86px wide
     // and the LookAndFeel draws their text on one unwrapped line at 12pt bold, so the
@@ -4572,7 +4328,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         audioProcessor.getValueTreeState(), "filterHarmonicLock", filterHarmonicLockButton);
     // Switching grid re-snaps too, so the cutoff jumps to the nearest partial rather
     // than sitting between two of them until the knob is next touched.
-    filterHarmonicLockButton.onClick = [this] { snapCutoffToNoteLock(0); };
+    filterHarmonicLockButton.onClick = [this] { snapCutoffToNoteLock(); };
 
     // Filter Envelope
     filterEnvAttackSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
@@ -4860,13 +4616,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     subOscCoarseLabel.setLookAndFeel(&customLookAndFeel);
     lfo1PhaseLabel.setLookAndFeel(&customLookAndFeel);
     lfo2PhaseLabel.setLookAndFeel(&customLookAndFeel);
-    lfo1TargetLabel.setLookAndFeel(&customLookAndFeel);
-    lfo2TargetLabel.setLookAndFeel(&customLookAndFeel);
     grainDelayDensityLabel.setLookAndFeel(&customLookAndFeel);
     phaserStagesLabel.setLookAndFeel(&customLookAndFeel);
     compressorThresholdLabel.setLookAndFeel(&customLookAndFeel);
-    modFilter1ResonanceLabel.setLookAndFeel(&customLookAndFeel);
-    modFilter2ResonanceLabel.setLookAndFeel(&customLookAndFeel);
     compressorReleaseLabel.setLookAndFeel(&customLookAndFeel);
     
     // Voice Mode (moved to Master section)
@@ -4992,21 +4744,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo1EnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "lfo1Enabled", lfo1EnabledButton);
     
-    // LFO1 Destination (Target)
-    lfo1TargetCombo.addItem(safeString("Pitch"), 1);
-    lfo1TargetCombo.addItem(safeString("Filter"), 2);
-    lfo1TargetCombo.addItem(safeString("Master Vol"), 3);
-    lfo1TargetCombo.addItem(safeString("Osc1 Vol"), 4);
-    lfo1TargetCombo.addItem(safeString("Osc2 Vol"), 5);
-    lfo1TargetCombo.addItem(safeString("Noise Vol"), 6);
-    lfo1TargetCombo.setSelectedId(2);  // Default to Filter
-    lfo1TargetAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        audioProcessor.getValueTreeState(), "lfo1Target", lfo1TargetCombo);
-    lfo1TargetLabel.setText(safeString("Destination"), juce::dontSendNotification);
-    lfo1TargetLabel.setJustificationType(juce::Justification::centred);
-    lfo1TargetLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lfo1TargetLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    
+
     // LFO1 Sync button (glows when checked)
     lfo1SyncButton.setButtonText(safeString("Sync"));
     lfo1SyncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
@@ -5111,21 +4849,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo2EnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "lfo2Enabled", lfo2EnabledButton);
     
-    // LFO2 Destination (Target)
-    lfo2TargetCombo.addItem(safeString("Pitch"), 1);
-    lfo2TargetCombo.addItem(safeString("Filter"), 2);
-    lfo2TargetCombo.addItem(safeString("Master Vol"), 3);
-    lfo2TargetCombo.addItem(safeString("Osc1 Vol"), 4);
-    lfo2TargetCombo.addItem(safeString("Osc2 Vol"), 5);
-    lfo2TargetCombo.addItem(safeString("Noise Vol"), 6);
-    lfo2TargetCombo.setSelectedId(1);  // Default to Pitch
-    lfo2TargetAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
-        audioProcessor.getValueTreeState(), "lfo2Target", lfo2TargetCombo);
-    lfo2TargetLabel.setText(safeString("Destination"), juce::dontSendNotification);
-    lfo2TargetLabel.setJustificationType(juce::Justification::centred);
-    lfo2TargetLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    lfo2TargetLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    
+
     lfo2SyncButton.setButtonText(safeString("Sync"));
     lfo2SyncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "lfo2Sync", lfo2SyncButton);
@@ -5201,98 +4925,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo2PhaseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
     lfo2PhaseLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
     
-    // Mod Filter toggles (each LFO has its own - filter controls only appear when Filter is toggled)
-    modFilterShowButton.setButtonText(safeString("Filter"));
-    modFilterShowAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        audioProcessor.getValueTreeState(), "modFilter1Show", modFilterShowButton);
-    modFilterShowButton2.setButtonText(safeString("Filter"));
-    modFilterShowAttachment2 = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        audioProcessor.getValueTreeState(), "modFilter2Show", modFilterShowButton2);
-    modFilterShowLabel.setText(safeString("Show Filters"), juce::dontSendNotification);
-    modFilterShowLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    modFilterShowLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    
-    modFilter1LinkButton.setButtonText(safeString("Link to Master"));
-    modFilter1LinkAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        audioProcessor.getValueTreeState(), "modFilter1LinkToMaster", modFilter1LinkButton);
-    for (int i = 0; i < NonlinearSVF::numModes; ++i)
-        modFilter1ModeCombo.addItem(safeString(NonlinearSVF::modeNames()[i]), i + 1);
-    modFilter1ModeCombo.setSelectedId(1);
-    modFilter1CutoffSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    modFilter1CutoffSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
-    modFilter1CutoffSlider.setTextValueSuffix(" Hz");
-    modFilter1CutoffSlider.activeGrid = [this] { return activeNoteLockGrid(1); };
-    modFilter1ResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    modFilter1ResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
-    warmSaturationMod1Button.setButtonText(safeString("Warm Saturation"));
-    modFilter1KeyTrackButton.setButtonText(safeString("Key Tracking"));
-    modFilter1KeyTrackButton.setTooltip(safeString("Filter cutoff follows the played key (neutral at middle C)"));
-    modFilter1NoteLockButton.setButtonText(safeString("Note Lock"));
-    modFilter1NoteLockButton.setTooltip(noteLockTip);
-    modFilter1NoteLockButton.onClick = [this] { snapCutoffToNoteLock(1); };
-    modFilter1HarmonicLockButton.setButtonText(safeString("Harmonics"));
-    modFilter1HarmonicLockButton.setTooltip(harmonicTip);
-    modFilter1HarmonicLockButton.onClick = [this] { snapCutoffToNoteLock(1); };
-    // Cutoff/Resonance/Mode/WarmSat/KeyTrack/NoteLock attachments are created in rebuildLinkedFilterAttachments()
-    // (called below and on every link toggle) so they can point at master or own params.
-    modFilter1ModeLabel.setText(safeString("Mode"), juce::dontSendNotification);
-    modFilter1CutoffLabel.setText(safeString("Cutoff"), juce::dontSendNotification);
-    modFilter1ResonanceLabel.setText(safeString("Resonance"), juce::dontSendNotification);
-    modFilter1ModeLabel.setJustificationType(juce::Justification::centred);
-    modFilter1ModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    modFilter1ModeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    modFilter1CutoffLabel.setJustificationType(juce::Justification::centred);
-    modFilter1CutoffLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    modFilter1CutoffLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    modFilter1ResonanceLabel.setJustificationType(juce::Justification::centred);
-    modFilter1ResonanceLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    modFilter1ResonanceLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    
-    modFilter2LinkButton.setButtonText(safeString("Link to Master"));
-    modFilter2LinkAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
-        audioProcessor.getValueTreeState(), "modFilter2LinkToMaster", modFilter2LinkButton);
-    for (int i = 0; i < NonlinearSVF::numModes; ++i)
-        modFilter2ModeCombo.addItem(safeString(NonlinearSVF::modeNames()[i]), i + 1);
-    modFilter2ModeCombo.setSelectedId(1);
-    modFilter2CutoffSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    modFilter2CutoffSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
-    modFilter2CutoffSlider.setTextValueSuffix(" Hz");
-    modFilter2CutoffSlider.activeGrid = [this] { return activeNoteLockGrid(2); };
-    modFilter2ResonanceSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
-    modFilter2ResonanceSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
-    warmSaturationMod2Button.setButtonText(safeString("Warm Saturation"));
-    modFilter2KeyTrackButton.setButtonText(safeString("Key Tracking"));
-    modFilter2KeyTrackButton.setTooltip(safeString("Filter cutoff follows the played key (neutral at middle C)"));
-    modFilter2NoteLockButton.setButtonText(safeString("Note Lock"));
-    modFilter2NoteLockButton.setTooltip(noteLockTip);
-    modFilter2NoteLockButton.onClick = [this] { snapCutoffToNoteLock(2); };
-    modFilter2HarmonicLockButton.setButtonText(safeString("Harmonics"));
-    modFilter2HarmonicLockButton.setTooltip(harmonicTip);
-    modFilter2HarmonicLockButton.onClick = [this] { snapCutoffToNoteLock(2); };
-    modFilter2ModeLabel.setText(safeString("Mode"), juce::dontSendNotification);
-    modFilter2CutoffLabel.setText(safeString("Cutoff"), juce::dontSendNotification);
-    modFilter2ResonanceLabel.setText(safeString("Resonance"), juce::dontSendNotification);
-    modFilter2ModeLabel.setJustificationType(juce::Justification::centred);
-    modFilter2ModeLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    modFilter2ModeLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    modFilter2CutoffLabel.setJustificationType(juce::Justification::centred);
-    modFilter2CutoffLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    modFilter2CutoffLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
-    modFilter2ResonanceLabel.setJustificationType(juce::Justification::centred);
-    modFilter2ResonanceLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
-    modFilter2ResonanceLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
 
-    // Point the mod-filter knobs at the master params (if linked) or their own params (if not).
-    // Re-run on every link toggle via syncLinkedFilterParams(). No onChange/setValueNotifyingHost
-    // sync is needed any more: a linked filter literally shares the master's parameter, so one
-    // automation lane drives both knobs and moving either edits the same param.
-    rebuildLinkedFilterAttachments();
-    // While linked, mod-tab Warm Saturation toggle must push to warmSaturationMaster.
-    // buttonStateChanged() handles the push; without these listeners the mod toggle
-    // updates only warmSaturationMod*, and the next master-side mirror reverts the visual.
-    warmSaturationMod1Button.addListener(this);
-    warmSaturationMod2Button.addListener(this);
-    
     // LFO2 Retrigger button
     lfo2RetriggerButton.setButtonText(safeString("Retrigger"));
     lfo2RetriggerButton.setToggleState(true, juce::dontSendNotification);
@@ -6811,16 +6444,6 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         #endif
     });
     
-    //==============================================================================
-    // -- Register APVTS Listeners for Bidirectional Filter Sync --
-    {
-        // Only the link toggles need a listener: when one flips, we repoint that filter's knob
-        // attachments at the master or its own params. Linked knobs share the master parameter
-        // directly, so master-filter changes propagate to them with no extra listening.
-        auto& vts = audioProcessor.getValueTreeState();
-        vts.addParameterListener("modFilter1LinkToMaster", this);
-        vts.addParameterListener("modFilter2LinkToMaster", this);
-    }
 
     //==============================================================================
     // -- Waveform Menus --
@@ -7318,12 +6941,6 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
     audioProcessor.getUserWaveLibrary().onChange = nullptr;
     waveformWindow.reset();
 
-    // Remove APVTS filter sync listeners
-    {
-        auto& vts = audioProcessor.getValueTreeState();
-        vts.removeParameterListener("modFilter1LinkToMaster", this);
-        vts.removeParameterListener("modFilter2LinkToMaster", this);
-    }
 
     // Remove all listeners first
     delayEnabledButton.removeListener(this);
@@ -7341,12 +6958,6 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
     lfo2EnabledButton.removeListener(this);
     finalEQEnabledButton.removeListener(this);
     pitchBendSlider.removeListener(this);
-    modFilter1CutoffSlider.removeListener(this);
-    modFilter1ResonanceSlider.removeListener(this);
-    modFilter2CutoffSlider.removeListener(this);
-    modFilter2ResonanceSlider.removeListener(this);
-    warmSaturationMod1Button.removeListener(this);
-    warmSaturationMod2Button.removeListener(this);
     if (lfo1SyncRateListener)
         lfo1SyncRateCombo.removeListener(lfo1SyncRateListener.get());
     if (lfo2SyncRateListener)
@@ -7367,13 +6978,9 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
     subOscCoarseLabel.setLookAndFeel(nullptr);
     lfo1PhaseLabel.setLookAndFeel(nullptr);
     lfo2PhaseLabel.setLookAndFeel(nullptr);
-    lfo1TargetLabel.setLookAndFeel(nullptr);
-    lfo2TargetLabel.setLookAndFeel(nullptr);
     grainDelayDensityLabel.setLookAndFeel(nullptr);
     phaserStagesLabel.setLookAndFeel(nullptr);
     compressorThresholdLabel.setLookAndFeel(nullptr);
-    modFilter1ResonanceLabel.setLookAndFeel(nullptr);
-    modFilter2ResonanceLabel.setLookAndFeel(nullptr);
     compressorReleaseLabel.setLookAndFeel(nullptr);
 
     // Clear LookAndFeel on page components and editor before destruction
@@ -7457,72 +7064,19 @@ void SpaceDustAudioProcessorEditor::showSavePresetDialog()
 }
 
 //==============================================================================
-// -- APVTS Listener: master / mod filter "Link to Master" (host-safe sync) --
+// -- APVTS Listener --
+//
+// The editor subscribed to exactly one thing: the two mod filters' "Link to
+// Master" toggles, so it could re-point their knobs at the master parameters.
+// Both filters are gone, so nothing registers this editor as a listener any
+// more. The override stays because the base class demands one; the Modulation
+// page keeps its OWN listener for the handful of params that change its layout.
 
 void SpaceDustAudioProcessorEditor::parameterChanged(const juce::String& parameterID, float newValue)
 {
-    auto safeThis = juce::Component::SafePointer<SpaceDustAudioProcessorEditor>(this);
-    juce::MessageManager::callAsync([safeThis, parameterID, newValue]()
-    {
-        if (safeThis == nullptr || safeThis->isBeingDestroyed.load()) return;
-        safeThis->syncLinkedFilterParams(parameterID, newValue);
-    });
+    juce::ignoreUnused(parameterID, newValue);
 }
 
-void SpaceDustAudioProcessorEditor::rebuildLinkedFilterAttachments()
-{
-    auto& vts = audioProcessor.getValueTreeState();
-    const bool link1 = safeGetParam("modFilter1LinkToMaster") > 0.5f;
-    const bool link2 = safeGetParam("modFilter2LinkToMaster") > 0.5f;
-
-    using SliderAtt = juce::AudioProcessorValueTreeState::SliderAttachment;
-    using ComboAtt  = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
-    using ButtonAtt = juce::AudioProcessorValueTreeState::ButtonAttachment;
-
-    auto setSlider = [&](std::unique_ptr<SliderAtt>& att, juce::Slider& s, const juce::String& id)
-    { att.reset(); att = std::make_unique<SliderAtt>(vts, id, s); };
-    auto setCombo = [&](std::unique_ptr<ComboAtt>& att, juce::ComboBox& c, const juce::String& id)
-    { att.reset(); att = std::make_unique<ComboAtt>(vts, id, c); };
-    auto setButton = [&](std::unique_ptr<ButtonAtt>& att, juce::Button& b, const juce::String& id)
-    { att.reset(); att = std::make_unique<ButtonAtt>(vts, id, b); };
-
-    // Linked  -> attach to the MASTER filter params, so the linked filter is literally the same
-    //            automatable parameter as the master (one automation lane moves both knobs;
-    //            moving either knob edits the same param).
-    // Unlinked -> attach to the filter's OWN params, for fully independent automation.
-    // Recreating an attachment only reads the target param to set the widget; it never writes a
-    // param, so this is safe to call any time and never re-enters the host's automation engine.
-    setCombo (modFilter1ModeAttachment,      modFilter1ModeCombo,       link1 ? "filterMode"           : "modFilter1Mode");
-    setSlider(modFilter1CutoffAttachment,    modFilter1CutoffSlider,    link1 ? "filterCutoff"         : "modFilter1Cutoff");
-    setSlider(modFilter1ResonanceAttachment, modFilter1ResonanceSlider, link1 ? "filterResonance"      : "modFilter1Resonance");
-    setButton(warmSaturationMod1Attachment,  warmSaturationMod1Button,  link1 ? "warmSaturationMaster" : "warmSaturationMod1");
-    setButton(modFilter1KeyTrackAttachment,  modFilter1KeyTrackButton,  link1 ? "filterKeyTrack"       : "modFilter1KeyTrack");
-    setButton(modFilter1NoteLockAttachment,  modFilter1NoteLockButton,  link1 ? "filterNoteLock"       : "modFilter1NoteLock");
-    setButton(modFilter1HarmonicLockAttachment, modFilter1HarmonicLockButton, link1 ? "filterHarmonicLock" : "modFilter1HarmonicLock");
-
-    setCombo (modFilter2ModeAttachment,      modFilter2ModeCombo,       link2 ? "filterMode"           : "modFilter2Mode");
-    setSlider(modFilter2CutoffAttachment,    modFilter2CutoffSlider,    link2 ? "filterCutoff"         : "modFilter2Cutoff");
-    setSlider(modFilter2ResonanceAttachment, modFilter2ResonanceSlider, link2 ? "filterResonance"      : "modFilter2Resonance");
-    setButton(warmSaturationMod2Attachment,  warmSaturationMod2Button,  link2 ? "warmSaturationMaster" : "warmSaturationMod2");
-    setButton(modFilter2KeyTrackAttachment,  modFilter2KeyTrackButton,  link2 ? "filterKeyTrack"       : "modFilter2KeyTrack");
-    setButton(modFilter2NoteLockAttachment,  modFilter2NoteLockButton,  link2 ? "filterNoteLock"       : "modFilter2NoteLock");
-    setButton(modFilter2HarmonicLockAttachment, modFilter2HarmonicLockButton, link2 ? "filterHarmonicLock" : "modFilter2HarmonicLock");
-
-    // The wrapper follows the attachment. Assigning an LFO to a LINKED mod
-    // filter's cutoff must reach the master cutoff -- the same parameter the
-    // knob itself is now editing -- or the knob would move under a modulation
-    // that was written to a parameter nothing is reading.
-    // Null on the first call: this runs from the constructor before the knobs
-    // are wrapped, and the wrap then picks up whatever is current.
-    if (modFilter1CutoffModKnob != nullptr)
-        modFilter1CutoffModKnob->setDestination(link1 ? "filterCutoff" : "modFilter1Cutoff");
-    if (modFilter1ResonanceModKnob != nullptr)
-        modFilter1ResonanceModKnob->setDestination(link1 ? "filterResonance" : "modFilter1Resonance");
-    if (modFilter2CutoffModKnob != nullptr)
-        modFilter2CutoffModKnob->setDestination(link2 ? "filterCutoff" : "modFilter2Cutoff");
-    if (modFilter2ResonanceModKnob != nullptr)
-        modFilter2ResonanceModKnob->setDestination(link2 ? "filterResonance" : "modFilter2Resonance");
-}
 
 //==============================================================================
 // -- Assign mode --
@@ -7635,17 +7189,6 @@ void SpaceDustAudioProcessorEditor::wrapAssignableKnobs()
     wrapKnob(mpePitchBendRangeSlider, "mpePitchBendRange");
     wrapKnob(mpePressureDepthSlider,  "mpePressureDepth");
     wrapKnob(mpeTimbreDepthSlider,    "mpeTimbreDepth");
-
-    // -- The two modulation-page filters --
-    // Their destination is not fixed: it follows Link to Master, exactly as
-    // their attachments do. rebuildLinkedFilterAttachments re-points them.
-    const bool link1 = safeGetParam("modFilter1LinkToMaster") > 0.5f;
-    const bool link2 = safeGetParam("modFilter2LinkToMaster") > 0.5f;
-
-    modFilter1CutoffModKnob    = wrapKnob(modFilter1CutoffSlider,    link1 ? "filterCutoff"    : "modFilter1Cutoff");
-    modFilter1ResonanceModKnob = wrapKnob(modFilter1ResonanceSlider, link1 ? "filterResonance" : "modFilter1Resonance");
-    modFilter2CutoffModKnob    = wrapKnob(modFilter2CutoffSlider,    link2 ? "filterCutoff"    : "modFilter2Cutoff");
-    modFilter2ResonanceModKnob = wrapKnob(modFilter2ResonanceSlider, link2 ? "filterResonance" : "modFilter2Resonance");
 
     // -- Delay --
     wrapKnob(delayFreeRateSlider,           "delayRate");
@@ -7869,7 +7412,7 @@ void SpaceDustAudioProcessorEditor::changeListenerCallback(juce::ChangeBroadcast
     //
     // An earlier version suppressed every wrapper while that page was showing.
     // That is a cheap approximation of the rule and it is wrong: it also swept
-    // up the two mod filters' cutoff and resonance and the three MPE depths,
+    // up the three MPE depths,
     // which are ordinary float destinations, and left those seven with no way
     // to be given a first routing at all -- the indicator bar only takes a
     // click once a routing exists, so there was no other path in.
@@ -7901,7 +7444,7 @@ bool SpaceDustAudioProcessorEditor::keyPressed(const juce::KeyPress& key)
 //==============================================================================
 // -- Note Lock --
 
-std::optional<NoteLock::Grid> SpaceDustAudioProcessorEditor::activeNoteLockGrid(int filterIndex) const
+std::optional<NoteLock::Grid> SpaceDustAudioProcessorEditor::activeNoteLockGrid() const
 {
     // Note Lock is only offered while Key Tracking is on -- that is what makes the
     // cutoff a ratio to the played note, and so what makes one grid mean "n steps
@@ -7914,21 +7457,6 @@ std::optional<NoteLock::Grid> SpaceDustAudioProcessorEditor::activeNoteLockGrid(
     juce::String noteLockID = "filterNoteLock";
     juce::String harmonicID = "filterHarmonicLock";
 
-    if (filterIndex == 1 && safeGetParam("modFilter1LinkToMaster") <= 0.5f)
-    {
-        keyTrackID = "modFilter1KeyTrack";
-        noteLockID = "modFilter1NoteLock";
-        harmonicID = "modFilter1HarmonicLock";
-    }
-    else if (filterIndex == 2 && safeGetParam("modFilter2LinkToMaster") <= 0.5f)
-    {
-        keyTrackID = "modFilter2KeyTrack";
-        noteLockID = "modFilter2NoteLock";
-        harmonicID = "modFilter2HarmonicLock";
-    }
-    // A linked mod filter falls through to the master IDs above, which is exactly how
-    // its knobs and its Key Tracking toggle already behave.
-
     if (safeGetParam(keyTrackID) <= 0.5f || safeGetParam(noteLockID) <= 0.5f)
         return std::nullopt;
 
@@ -7936,19 +7464,13 @@ std::optional<NoteLock::Grid> SpaceDustAudioProcessorEditor::activeNoteLockGrid(
                                            : NoteLock::Grid::Semitones;
 }
 
-void SpaceDustAudioProcessorEditor::snapCutoffToNoteLock(int filterIndex)
+void SpaceDustAudioProcessorEditor::snapCutoffToNoteLock()
 {
-    const auto grid = activeNoteLockGrid(filterIndex);
+    const auto grid = activeNoteLockGrid();
     if (!grid)
         return;
 
-    // A linked mod filter shares the master's cutoff parameter, so snap that one --
-    // writing to the filter's own (currently detached) param would change nothing.
-    juce::String cutoffID = "filterCutoff";
-    if (filterIndex == 1 && safeGetParam("modFilter1LinkToMaster") <= 0.5f)
-        cutoffID = "modFilter1Cutoff";
-    else if (filterIndex == 2 && safeGetParam("modFilter2LinkToMaster") <= 0.5f)
-        cutoffID = "modFilter2Cutoff";
+    const juce::String cutoffID = "filterCutoff";
 
     auto* param = dynamic_cast<juce::AudioParameterFloat*>(
         audioProcessor.getValueTreeState().getParameter(cutoffID));
@@ -7971,29 +7493,18 @@ void SpaceDustAudioProcessorEditor::snapCutoffToNoteLock(int filterIndex)
     param->endChangeGesture();
 }
 
-void SpaceDustAudioProcessorEditor::syncLinkedFilterParams(const juce::String& parameterID, float /*newValue*/)
-{
-    // The only thing to handle now is a "Link to Master" toggle flipping: repoint that filter's
-    // knobs at the master params (linked) or its own params (unlinked). Master-filter edits reach
-    // a linked knob automatically because the knob shares the master parameter. No param is ever
-    // written from here, so nothing can re-enter Live's automation pass.
-    if (parameterID == "modFilter1LinkToMaster" || parameterID == "modFilter2LinkToMaster")
-        rebuildLinkedFilterAttachments();
-}
 
 //==============================================================================
-// -- Slider Listener (linked mod filter -> master, pitch bend snap-back) --
+// -- Slider Listener (pitch bend snap-back) --
 
 void SpaceDustAudioProcessorEditor::sliderDragStarted(juce::Slider* /*slider*/)
 {
-    // No-op: linked mod-filter knobs share the master parameter via their attachment, so there
-    // is no drag-driven mod->master push to arm here.
+    // No-op. Only pitch bend needs a drag callback, and it needs the END of one.
 }
 
 void SpaceDustAudioProcessorEditor::sliderValueChanged(juce::Slider* /*slider*/)
 {
-    // No-op: mod-filter <-> master coupling is handled by attachment retargeting
-    // (see rebuildLinkedFilterAttachments), not by pushing values between parameters.
+    // No-op. Every knob edits its parameter through its own attachment.
 }
 
 void SpaceDustAudioProcessorEditor::sliderDragEnded(juce::Slider* slider)

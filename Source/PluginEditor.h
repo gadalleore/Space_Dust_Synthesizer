@@ -333,8 +333,7 @@ public:
     /** Set by the editor. Returns the grid THIS knob should click into, or nullopt
         when Note Lock is off for it. One callback rather than an on/off flag plus a
         separate mode, so the two can never disagree -- and a callback rather than
-        stored state because a mod filter follows the master's setting while
-        "Link to Master" is engaged. */
+        stored state so the knob always reflects the toggles as they are now. */
     std::function<std::optional<NoteLock::Grid>()> activeGrid;
 
     /** Optional mapping between this slider's own units and the Hz the grid works in.
@@ -491,25 +490,14 @@ private:
     // Flag to prevent timerCallback from accessing components during destruction
     std::atomic<bool> isBeingDestroyed{false};
 
-    // Master / mod filter "Link to Master": when a Mod-tab filter is linked, its knobs are
-    // repointed at the MASTER filter parameters so the linked filter is literally the same
-    // automatable parameter as the master (one automation lane drives both knobs). When
-    // unlinked, the knobs point back at the filter's own params for independent automation.
-    // This deliberately avoids any param-to-param syncing (setValueNotifyingHost), which
-    // re-enters Live's automation engine and crashes it.
-    bool isSyncingFilterParams = false;
-    void syncLinkedFilterParams(const juce::String& parameterID, float newValue);
-    void rebuildLinkedFilterAttachments();
-
-    // Note Lock. isNoteLockActive answers "is this filter's cutoff knob currently
-    // quantised", following Link to Master the same way Key Tracking does: a linked
-    // mod filter shares the master's lock param, an unlinked one has its own.
-    // snapCutoffToNoteLock pulls a cutoff onto the grid immediately when the toggle
-    // is switched on, so engaging it locks what you are already hearing rather than
-    // waiting for the next knob move.
-    // 0 = master, 1 = mod 1, 2 = mod 2.
-    std::optional<NoteLock::Grid> activeNoteLockGrid(int filterIndex) const;
-    void snapCutoffToNoteLock(int filterIndex);
+    // Note Lock. activeNoteLockGrid answers "is the filter's cutoff knob currently
+    // quantised, and to which grid". snapCutoffToNoteLock pulls the cutoff onto the
+    // grid immediately when the toggle is switched on, so engaging it locks what you
+    // are already hearing rather than waiting for the next knob move.
+    //
+    // filterIndex is gone with the two mod filters: there is one filter now.
+    std::optional<NoteLock::Grid> activeNoteLockGrid() const;
+    void snapCutoffToNoteLock();
 
     // Pitch bend snap-back: poll processor ramp and sync display
     bool pitchBendSnapActive{false};
@@ -949,7 +937,6 @@ private:
     juce::GroupComponent lfo1Group;
     juce::ToggleButton lfo1EnabledButton;
     juce::ComboBox lfo1WaveformCombo;
-    juce::ComboBox lfo1TargetCombo;  // Destination: Pitch or Filter
     juce::ToggleButton lfo1SyncButton;
     juce::ToggleButton lfo1TripletButton;  // Triplet timing toggle (only visible when sync is on)
     juce::ToggleButton lfo1TripletStraightButton;  // Triplet/Straight toggle (only visible when triplet is enabled)
@@ -960,7 +947,6 @@ private:
     juce::ToggleButton lfo1RetriggerButton;
     
     juce::Label lfo1WaveformLabel;
-    juce::Label lfo1TargetLabel;
     juce::Label lfo1SyncLabel;
     juce::Label lfo1RateLabel;
     juce::Label lfo1RateValueLabel;  // Value display for free rate (Hz) or sync beats
@@ -971,7 +957,6 @@ private:
     juce::GroupComponent lfo2Group;
     juce::ToggleButton lfo2EnabledButton;
     juce::ComboBox lfo2WaveformCombo;
-    juce::ComboBox lfo2TargetCombo;  // Destination: Pitch or Filter
     juce::ToggleButton lfo2SyncButton;
     juce::ToggleButton lfo2TripletButton;  // Triplet timing toggle (only visible when sync is on)
     juce::ToggleButton lfo2TripletStraightButton;  // Triplet/Straight toggle (only visible when triplet is enabled)
@@ -982,31 +967,12 @@ private:
     juce::ToggleButton lfo2RetriggerButton;
     
     juce::Label lfo2WaveformLabel;
-    juce::Label lfo2TargetLabel;
     juce::Label lfo2SyncLabel;
     juce::Label lfo2RateLabel;
     juce::Label lfo2RateValueLabel;  // Value display for free rate (Hz) or sync beats
     juce::Label lfo2DepthLabel;
     juce::Label lfo2PhaseLabel;
     
-    // Mod tab filters (inside LFO boxes, below Retrigger, each has its own toggle)
-    juce::ToggleButton modFilterShowButton;   // In LFO 1 box -> modFilter1Show
-    juce::ToggleButton modFilterShowButton2;  // In LFO 2 box -> modFilter2Show
-    juce::Label modFilterShowLabel;
-    juce::GroupComponent modFilter1Group;
-    juce::ToggleButton modFilter1LinkButton;
-    juce::ComboBox modFilter1ModeCombo;
-    NoteLockSlider modFilter1CutoffSlider;
-    juce::Slider modFilter1ResonanceSlider;
-    juce::ToggleButton warmSaturationMod1Button;
-    juce::ToggleButton modFilter1KeyTrackButton;
-    juce::ToggleButton modFilter1NoteLockButton;
-    juce::ToggleButton modFilter1HarmonicLockButton;
-    juce::Label modFilter1ModeLabel;
-    juce::Label modFilter1CutoffLabel;
-    juce::Label modFilter1ResonanceLabel;
-    juce::GroupComponent modFilter2Group;
-    juce::ToggleButton modFilter2LinkButton;
     
     // Delay Effect (Effects tab)
     juce::GroupComponent delayGroup;
@@ -1058,16 +1024,6 @@ private:
     juce::Label delayDecayLabel;
     juce::Label delayDryWetLabel;
     juce::Label delayPingPongLabel;
-    juce::ComboBox modFilter2ModeCombo;
-    NoteLockSlider modFilter2CutoffSlider;
-    juce::Slider modFilter2ResonanceSlider;
-    juce::ToggleButton warmSaturationMod2Button;
-    juce::ToggleButton modFilter2KeyTrackButton;
-    juce::ToggleButton modFilter2NoteLockButton;
-    juce::ToggleButton modFilter2HarmonicLockButton;
-    juce::Label modFilter2ModeLabel;
-    juce::Label modFilter2CutoffLabel;
-    juce::Label modFilter2ResonanceLabel;
 
     // Grain Delay Effect (Effects tab)
     juce::ToggleButton grainDelayEnabledButton;
@@ -1338,7 +1294,6 @@ private:
     // LFO Attachments (Modulation Section)
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo1EnabledAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> lfo1WaveformAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> lfo1TargetAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo1SyncAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo1TripletAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo1TripletStraightAttachment;
@@ -1349,7 +1304,6 @@ private:
     
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo2EnabledAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> lfo2WaveformAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> lfo2TargetAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo2SyncAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo2TripletAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo2TripletStraightAttachment;
@@ -1358,24 +1312,6 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfo2DepthAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfo2PhaseAttachment;
     
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilterShowAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilterShowAttachment2;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter1LinkAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modFilter1ModeAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> modFilter1CutoffAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> modFilter1ResonanceAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> warmSaturationMod1Attachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter1KeyTrackAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter1NoteLockAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter1HarmonicLockAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter2LinkAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> modFilter2ModeAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> modFilter2CutoffAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> modFilter2ResonanceAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> warmSaturationMod2Attachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter2KeyTrackAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter2NoteLockAttachment;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> modFilter2HarmonicLockAttachment;
 
     // Listeners for sync rate combos (must be destroyed before components)
     std::unique_ptr<SyncRateComboListener> lfo1SyncRateListener;
@@ -1547,14 +1483,9 @@ private:
     /** Appears in the tab strip only while assign mode is on. */
     juce::TextButton exitLfoModeButton { "Exit LFO Mode" };
 
-    // These knobs do not drive a fixed parameter. The two mod filters follow
-    // their Link to Master toggle, and the Final EQ trio follows the Node
-    // dropdown, exactly as their attachments do -- so their wrappers are
-    // re-pointed in the same two functions that rebuild those attachments.
-    ModulatableKnob* modFilter1CutoffModKnob = nullptr;
-    ModulatableKnob* modFilter1ResonanceModKnob = nullptr;
-    ModulatableKnob* modFilter2CutoffModKnob = nullptr;
-    ModulatableKnob* modFilter2ResonanceModKnob = nullptr;
+    // These knobs do not drive a fixed parameter: the Final EQ trio follows the
+    // Node dropdown, exactly as its attachments do -- so their wrappers are
+    // re-pointed in the same function that rebuilds those attachments.
     ModulatableKnob* finalEQQModKnob = nullptr;
     ModulatableKnob* finalEQFreqModKnob = nullptr;
     ModulatableKnob* finalEQGainModKnob = nullptr;

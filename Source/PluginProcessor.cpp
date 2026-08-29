@@ -431,21 +431,20 @@ namespace
     // This one was first written taking a `const char*` and calling
     // DestinationTable::slotFor() directly, once per call site, ~48-51 times a
     // block. Short ids fit inside std::string's small-string buffer, but ids
-    // like modFilter1Resonance (19 chars) and subOscUnisonDetune (18) do not,
+    // like subOscUnisonDetune (18 chars) and osc1UnisonDetune (16) do not,
     // so a meaningful fraction of those calls heap-allocated on the audio
     // thread every block -- the same defect class as the effects chain's
     // choice lookups above, just smaller (~48-51 instead of ~340-860). Fixed
     // the same way: resolved once, read by index.
     //
-    // The six destinations already modulated per sample inside SynthVoice
-    // (filterCutoff, masterVolume, osc1Level, osc2Level, noiseLevel, pitch) are
-    // deliberately NOT in this list -- see updateVoicesWithParameters.
+    // The destinations already modulated PER SAMPLE (perSampleDestIds below:
+    // the two Coarse tunes, filterCutoff, masterVolume and the three levels) are
+    // deliberately NOT in this list. Reading them here as well would apply the
+    // same modulation twice, once per sample and once per block.
     #define SPACEDUST_VOICE_PARAMS(X) \
-        X (osc1CoarseTune)     X (osc1Detune) \
-        X (osc2CoarseTune)     X (osc2Detune) \
+        X (osc1Detune) \
+        X (osc2Detune) \
         X (filterResonance) \
-        X (modFilter1Cutoff)   X (modFilter1Resonance) \
-        X (modFilter2Cutoff)   X (modFilter2Resonance) \
         X (filterEnvAttack)    X (filterEnvDecay) \
         X (filterEnvRelease)   X (filterEnvAmount) \
         X (envAttack)          X (envDecay) \
@@ -487,6 +486,28 @@ namespace
 
     static_assert (sizeof (voiceParamIds) / sizeof (voiceParamIds[0]) == numVoiceParams,
                    "the voice param id table and the voice param enum come from the same list");
+
+    //==========================================================================
+    // -- The destinations that are applied inside a per-sample loop --
+    //
+    // One id per spacedust::PerSampleModDest, IN THAT ORDER. These are the six
+    // the voice applies itself plus the master gain the processor applies, and
+    // they are the seven that keep the proportional formulas the deleted
+    // Destination drop-down used -- see the comment on PerSampleModDest.
+    //
+    // They are deliberately absent from SPACEDUST_VOICE_PARAMS above and from
+    // SPACEDUST_EFFECT_PARAMS: reading them there as well would apply the same
+    // modulation a second time.
+    const char* const perSampleDestIds[] = {
+        "osc1CoarseTune", "osc2CoarseTune",
+        "filterCutoff",
+        "osc1Level", "osc2Level", "noiseLevel",
+        "masterVolume"
+    };
+
+    static_assert (sizeof (perSampleDestIds) / sizeof (perSampleDestIds[0])
+                       == (size_t) spacedust::numPerSampleMod,
+                   "the per-sample destination ids and PerSampleModDest come from the same list");
 
     //==========================================================================
     // -- Crash-safety marker for state restoration --
@@ -1135,15 +1156,10 @@ void SpaceDustAudioProcessor::prepareToPlay(double sampleRate, int samplesPerBlo
         transient_.prepare(reverbSpec);
         transient_.reset();
 
-        // Pre-mode transient "before the filter" mirror filters + render scratch.
-        // One mirror per per-voice filter stage (master + the two Mod-tab filters)
-        // so an unlinked Mod filter cuts the transient just like the Main filter.
+        // Pre-mode transient "before the filter" mirror filter + render scratch.
+        // One mirror for the one per-voice filter stage there is.
         transientPreFilter_.prepare(reverbSpec);
         transientPreFilter_.reset();
-        transientPreFilterMod1_.prepare(reverbSpec);
-        transientPreFilterMod1_.reset();
-        transientPreFilterMod2_.prepare(reverbSpec);
-        transientPreFilterMod2_.reset();
         transientScratch_.setSize(reverbSpec.numChannels,
                                   static_cast<int>(reverbSpec.maximumBlockSize),
                                   false, false, true);
@@ -1274,9 +1290,13 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     int osc2Wave = (int)safeGetParam(apvts, "osc2Waveform");
 
     // Oscillator tuning parameters (simple, intuitive system)
-    float osc1CoarseTune = voiceModulatedValue(vp_osc1CoarseTune, safeGetParam(apvts, "osc1CoarseTune"));
+    // osc1CoarseTune and osc2CoarseTune are per-sample destinations now (the
+    // Pitch entry of the deleted Destination drop-down became one routing per
+    // oscillator), so the knob is read raw here and the LFO is added inside the
+    // voice's own sample loop.
+    float osc1CoarseTune = safeGetParam(apvts, "osc1CoarseTune");
     float osc1Detune = voiceModulatedValue(vp_osc1Detune, safeGetParam(apvts, "osc1Detune"));
-    float osc2CoarseTune = voiceModulatedValue(vp_osc2CoarseTune, safeGetParam(apvts, "osc2CoarseTune"));
+    float osc2CoarseTune = safeGetParam(apvts, "osc2CoarseTune");
     float osc2Detune = voiceModulatedValue(vp_osc2Detune, safeGetParam(apvts, "osc2Detune"));
 
     // LFO modulation is now applied per-sample in renderNextBlock via LFO buffers
@@ -1302,42 +1322,19 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
 
     float filterResonance = voiceModulatedValue(vp_filterResonance, safeGetParam(apvts, "filterResonance"));
     
-    // LFO targets (cache per-block to avoid per-sample APVTS reads in voice - major CPU win)
-    int lfo1Target = static_cast<int>(safeGetParam(apvts, "lfo1Target"));
-    int lfo2Target = static_cast<int>(safeGetParam(apvts, "lfo2Target"));
-    
-    bool modFilter1Show = safeGetParam(apvts, "modFilter1Show") > 0.5f;
-    bool modFilter2Show = safeGetParam(apvts, "modFilter2Show") > 0.5f;
-    bool modFilter1Link = safeGetParam(apvts, "modFilter1LinkToMaster") > 0.5f;
-    bool modFilter2Link = safeGetParam(apvts, "modFilter2LinkToMaster") > 0.5f;
     bool warmSaturationMaster = safeGetParam(apvts, "warmSaturationMaster") > 0.5f;
     bool filterOversample = safeGetParam(apvts, "filterOversample") > 0.5f;  // [A/B prototype]
     bool filterKeyTrack = safeGetParam(apvts, "filterKeyTrack") > 0.5f;
 
-    // When linked, use master filter values directly instead of mod filter values.
-    // This avoids calling setValueNotifyingHost for sync, which triggers performEdit
-    // in the VST3 wrapper and causes Ableton to grey out automation lanes.
-    // When linked, modFilterNCutoff/Resonance alias the ALREADY-modulated master
-    // values above rather than reading their own parameters -- correct either
-    // way: filterCutoffHz stays untouched (protected, see above) and
-    // filterResonance already carries whatever the matrix gave it. Only the
-    // unlinked branch reads its own knob, and that knob IS a legal, unprotected
-    // destination, so it goes through voiceModulatedValue.
-    int modFilter1Mode = modFilter1Link ? filterMode : (int)safeGetParam(apvts, "modFilter1Mode");
-    float modFilter1Cutoff = modFilter1Link ? filterCutoffHz
-        : voiceModulatedValue(vp_modFilter1Cutoff, safeGetParam(apvts, "modFilter1Cutoff"));
-    float modFilter1Resonance = modFilter1Link ? filterResonance
-        : voiceModulatedValue(vp_modFilter1Resonance, safeGetParam(apvts, "modFilter1Resonance"));
-    bool warmSaturationMod1 = modFilter1Link ? warmSaturationMaster : safeGetParam(apvts, "warmSaturationMod1") > 0.5f;
-    bool modFilter1KeyTrack = modFilter1Link ? filterKeyTrack : safeGetParam(apvts, "modFilter1KeyTrack") > 0.5f;
-
-    int modFilter2Mode = modFilter2Link ? filterMode : (int)safeGetParam(apvts, "modFilter2Mode");
-    float modFilter2Cutoff = modFilter2Link ? filterCutoffHz
-        : voiceModulatedValue(vp_modFilter2Cutoff, safeGetParam(apvts, "modFilter2Cutoff"));
-    float modFilter2Resonance = modFilter2Link ? filterResonance
-        : voiceModulatedValue(vp_modFilter2Resonance, safeGetParam(apvts, "modFilter2Resonance"));
-    bool warmSaturationMod2 = modFilter2Link ? warmSaturationMaster : safeGetParam(apvts, "warmSaturationMod2") > 0.5f;
-    bool modFilter2KeyTrack = modFilter2Link ? filterKeyTrack : safeGetParam(apvts, "modFilter2KeyTrack") > 0.5f;
+    // Which LFO reaches which of the per-sample destinations, and by how much.
+    //
+    // This is what the two Destination drop-downs used to be. It is taken from
+    // the routing set LATCHED for this block, not from a fresh load, so the
+    // voices, the effects chain and the master gain all agree about the same
+    // edit -- and it is a fixed-size array copy, so nothing here looks a
+    // parameter id up or allocates.
+    const auto& latchedSet = compiledBuffers[blockCompiledIndex];
+    const float* const perSampleAmounts = &latchedSet.perSampleAmounts[0][0];
 
     // Filter envelope: read directly from parameters each block (guarantees label matches decay)
     // Uses plain param ID strings to match SliderAttachment; p->get() returns exact displayed value
@@ -1529,12 +1526,6 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setWarmSaturationMaster(warmSaturationMaster);
             voice->setFilterOversample(filterOversample);  // [A/B prototype]
             voice->setFilterKeyTrack(filterKeyTrack);
-            voice->setModFilter1(modFilter1Show, modFilter1Link, modFilter1Mode, modFilter1Cutoff, modFilter1Resonance);
-            voice->setWarmSaturationMod1(warmSaturationMod1);
-            voice->setModFilter1KeyTrack(modFilter1KeyTrack);
-            voice->setModFilter2(modFilter2Show, modFilter2Link, modFilter2Mode, modFilter2Cutoff, modFilter2Resonance);
-            voice->setWarmSaturationMod2(warmSaturationMod2);
-            voice->setModFilter2KeyTrack(modFilter2KeyTrack);
             voice->setFilterEnvAttack(filterEnvAttack);
             voice->setFilterEnvDecay(filterEnvDecay);
             voice->setFilterEnvSustain(filterEnvSustain);
@@ -1555,8 +1546,8 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setSubOscCoarse(subOscCoarse);
             voice->setPitchBendAmount(pitchBendAmount);
             voice->setPitchBend(pitchBend);
-            voice->setLfoTargets(lfo1Target, lfo2Target);
-            voice->setLfoRates(lastLfoHz[0], lastLfoHz[1]);
+            voice->setLfoModAmounts(perSampleAmounts);
+            voice->setLfoRates(lastLfoHz);
             voice->setAnalogDrift(analogDrift);
 
             // MPE expression depth (0-100% â†’ 0.0-1.0), already divided above.
@@ -1641,10 +1632,6 @@ void SpaceDustAudioProcessor::parameterChanged(const juce::String& parameterID, 
     {
         mpeReconfigPending.store(true, std::memory_order_release);
     }
-    // Filter link params: no sync needed. updateVoicesWithParameters() reads master
-    // values directly when linked, bypassing the mod filter parameters entirely.
-    // This avoids setValueNotifyingHost which triggers performEdit in the VST3 wrapper,
-    // causing Ableton to grey out automation lanes.
 }
 
 //==============================================================================
@@ -1652,10 +1639,9 @@ void SpaceDustAudioProcessor::parameterChanged(const juce::String& parameterID, 
 
 void SpaceDustAudioProcessor::handleAsyncUpdate()
 {
-    // Filter sync is now handled at the voice level in updateVoicesWithParameters():
-    // when a mod filter is linked to master, the voice uses master filter values directly.
-    // No parameter-level sync is needed, which avoids setValueNotifyingHost calls
-    // that were causing automation to grey out in Ableton (VST3 performEdit issue).
+    // Nothing to do. This carried the filter-link sync between the master filter
+    // and the two deleted mod filters; there is one filter now, and its knobs
+    // drive their own parameters directly.
 }
 
 //==============================================================================
@@ -1753,8 +1739,6 @@ void SpaceDustAudioProcessor::releaseResources()
     finalEQ_.reset();
     tranceGate_.reset();
     transientPreFilter_.reset();
-    transientPreFilterMod1_.reset();
-    transientPreFilterMod2_.reset();
 
     // Step 3: (Formerly cleared SynthesiserSound array.)
     // MPE: juce::MPESynthesiser has no SynthesiserSound array.  Nothing to clear.
@@ -2556,14 +2540,12 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     //==============================================================================
     // -- Transient (Pre: BEFORE the filter when Post Effect OFF) --
     // The transient must be coloured by the synth filter in this mode. The real
-    // filters are per-voice (inside the synth, already run), so we render the
-    // transient into a private scratch buffer and pass it through a SERIES of linear
-    // SVF mirrors â€” one for the MASTER (Main-tab) filter, then one for each Mod-tab
-    // filter that is Shown AND unlinked â€” then sum it into the mix. This mirrors the
-    // per-voice order (master â†’ mod1 â†’ mod2 in series, mod stages active only when
-    // Shown && unlinked), so the unlinked Mod filters cut the transient exactly like
-    // the Main filter does. Post mode (below) stays end-of-chain and unfiltered. This
-    // is confined to the master chain; SynthVoice is untouched.
+    // filter is per-voice (inside the synth, already run), so we render the
+    // transient into a private scratch buffer and pass it through a linear SVF
+    // mirror of the MASTER (Main-tab) filter, then sum it into the mix, so the
+    // filter cuts the transient exactly as it cuts the voices. Post mode (below)
+    // stays end-of-chain and unfiltered. This is confined to the master chain;
+    // SynthVoice is untouched.
     if (transientEnabled && !transientPostEffect)
     {
         SpaceDustTransient::Parameters tp;
@@ -2598,40 +2580,18 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 f.setResonanceQ(juce::jlimit(0.1f, 16.0f, resQ));
             };
 
-            // Master mirror (always present â€” it is the only filter when no Mod
-            // filter is active, so the master-only sound is unchanged).
+            // The master mirror, which is the only one there is.
             configureMirror(transientPreFilter_,
                             static_cast<int>(safeGetParam(apvts, "filterMode")),
                             safeGetParam(apvts, "filterCutoff", 8000.0f),
                             safeGetParam(apvts, "filterResonance"));
-
-            // Mod mirrors: active only when Shown AND unlinked, matching the per-voice
-            // chain. A linked Mod filter is NOT mirrored â€” the master already covers it
-            // (the per-voice synth skips it for the same reason).
-            const bool mod1Active = safeGetParam(apvts, "modFilter1Show") > 0.5f
-                                 && safeGetParam(apvts, "modFilter1LinkToMaster") <= 0.5f;
-            const bool mod2Active = safeGetParam(apvts, "modFilter2Show") > 0.5f
-                                 && safeGetParam(apvts, "modFilter2LinkToMaster") <= 0.5f;
-            if (mod1Active)
-                configureMirror(transientPreFilterMod1_,
-                                static_cast<int>(safeGetParam(apvts, "modFilter1Mode")),
-                                safeGetParam(apvts, "modFilter1Cutoff", 8000.0f),
-                                safeGetParam(apvts, "modFilter1Resonance"));
-            if (mod2Active)
-                configureMirror(transientPreFilterMod2_,
-                                static_cast<int>(safeGetParam(apvts, "modFilter2Mode")),
-                                safeGetParam(apvts, "modFilter2Cutoff", 8000.0f),
-                                safeGetParam(apvts, "modFilter2Resonance"));
 
             for (int ch = 0; ch < scratch.getNumChannels(); ++ch)
             {
                 auto* s = scratch.getWritePointer(ch);
                 for (int i = 0; i < numSamples; ++i)
                 {
-                    float y = transientPreFilter_.processSample(ch, s[i]);  // master
-                    if (mod1Active) y = transientPreFilterMod1_.processSample(ch, y);
-                    if (mod2Active) y = transientPreFilterMod2_.processSample(ch, y);
-                    s[i] = y;
+                    s[i] = transientPreFilter_.processSample(ch, s[i]);  // master
                 }
 
                 buffer.addFrom(ch, 0, scratch, ch, 0, numSamples);
@@ -2927,11 +2887,35 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     if (masterVolumeParam != nullptr)
     {
         float masterVol = *masterVolumeParam;
-        int lfo1Target = static_cast<int>(safeGetParam(apvts, "lfo1Target"));
-        int lfo2Target = static_cast<int>(safeGetParam(apvts, "lfo2Target"));
-        bool lfo1Master = (lfo1Target == 2);
-        bool lfo2Master = (lfo2Target == 2);
-        if (lfo1Master || lfo2Master)
+
+        // Which LFOs reach the master gain, and by how much. This was the
+        // Destination drop-down's "Master Vol" entry; it is now a routing to
+        // masterVolume, read from the set latched for this block so it agrees
+        // with what the voices were handed. The (1 + m) shape is unchanged, so a
+        // routing of +1.0 is the old tremolo exactly.
+        const auto& live = compiledBuffers[blockCompiledIndex];
+        const float* const masterAmounts = live.perSampleAmounts[spacedust::psm_masterVolume];
+
+        const float* lfoRead[spacedust::numLfos] = { };
+        int          lfoLen [spacedust::numLfos] = { };
+        bool         anyMasterMod = false;
+
+        for (int lfo = 0; lfo < spacedust::numLfos; ++lfo)
+        {
+            if (masterAmounts[lfo] == 0.0f)
+                continue;
+
+            const auto& b = lfoBufferFor(lfo);
+
+            if (b.getNumSamples() <= 0)
+                continue;
+
+            lfoRead[lfo] = b.getReadPointer(0);
+            lfoLen [lfo] = b.getNumSamples();
+            anyMasterMod = true;
+        }
+
+        if (anyMasterMod)
         {
             for (int ch = 0; ch < buffer.getNumChannels(); ++ch)
             {
@@ -2939,10 +2923,11 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 for (int i = 0; i < numSamples; ++i)
                 {
                     float mod = 1.0f;
-                    if (lfo1Master && i < lfoBufferFor(0).getNumSamples())
-                        mod += lfoBufferFor(0).getSample(0, i);
-                    if (lfo2Master && i < lfoBufferFor(1).getNumSamples())
-                        mod += lfoBufferFor(1).getSample(0, i);
+
+                    for (int lfo = 0; lfo < spacedust::numLfos; ++lfo)
+                        if (lfoRead[lfo] != nullptr && i < lfoLen[lfo])
+                            mod += masterAmounts[lfo] * lfoRead[lfo][i];
+
                     ptr[i] *= masterVol * juce::jlimit(0.0f, 2.0f, mod);
                 }
             }
@@ -3412,6 +3397,14 @@ void SpaceDustAudioProcessor::rebuildCompiledRoutings()
         for (int i = 0; i < numVoiceParams; ++i)
             voiceParamSlots[(size_t) i] = modDestinations.slotFor (voiceParamIds[i]);
 
+        // And the seven that are applied inside a per-sample loop instead. Same
+        // reason, one step further: this one is compared against every routing's
+        // slot on every rebuild, so it must not be a string compare either.
+        perSampleDestSlots.assign ((size_t) spacedust::numPerSampleMod, -1);
+
+        for (int i = 0; i < spacedust::numPerSampleMod; ++i)
+            perSampleDestSlots[(size_t) i] = modDestinations.slotFor (perSampleDestIds[i]);
+
         // The chain's choices and the trance gate's step switches, resolved to
         // pointers here so no chunk ever builds a juce::String to find one.
         effectChoiceParams.assign ((size_t) numEffectChoices, nullptr);
@@ -3442,6 +3435,13 @@ void SpaceDustAudioProcessor::rebuildCompiledRoutings()
     out.voiceSlots.clear();
     out.routings.reserve (modMatrix.routings().size());
 
+    // Cleared, not accumulated: a routing that has just been REMOVED must leave
+    // its amount at zero, which is what tells the voice, the master gain and the
+    // oversample latch that nothing reaches that destination any more.
+    for (int d = 0; d < spacedust::numPerSampleMod; ++d)
+        for (int lfo = 0; lfo < spacedust::numLfos; ++lfo)
+            out.perSampleAmounts[d][lfo] = 0.0f;
+
     bool touchesEffects = false;
     int  voiceSlotsRefused = 0;
 
@@ -3457,7 +3457,29 @@ void SpaceDustAudioProcessor::rebuildCompiledRoutings()
 
         const auto range = modDestinations.rangeAt (slot);
 
-        if (isEffectParameter (modDestinations.idAt (slot)))
+        // A per-sample destination takes its amount RAW and takes no scratch
+        // row: its formula is proportional, written by hand into the per-sample
+        // loop, and an amount of +1.0 is the swing the deleted Destination
+        // drop-down gave. It still gets a compiled routing below, which is what
+        // keeps the editor's indicator and hasAnyRouting() honest.
+        bool isPerSample = false;
+
+        for (int d = 0; d < spacedust::numPerSampleMod; ++d)
+        {
+            if (d < (int) perSampleDestSlots.size() && perSampleDestSlots[(size_t) d] == slot)
+            {
+                out.perSampleAmounts[d][r.lfoIndex] = r.amount;
+                isPerSample = true;
+                break;
+            }
+        }
+
+        if (isPerSample)
+        {
+            // No voice scratch row, and never counted as an effect parameter --
+            // both would apply this modulation a second time.
+        }
+        else if (isEffectParameter (modDestinations.idAt (slot)))
         {
             touchesEffects = true;
         }
@@ -4622,14 +4644,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"lfo1Rate", 1}, "LFO1 Rate",
             juce::NormalisableRange<float>(0.0f, 12.0f, 0.01f), 6.0f),
         "lfo1Rate");
-    // LFO1 Target (what to modulate)
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterChoice>(
-            juce::ParameterID{"lfo1Target", 1}, "LFO1 Target",
-            juce::StringArray(safeString("Pitch"), safeString("Filter"),
-                safeString("Master Vol"), safeString("Osc1 Vol"), safeString("Osc2 Vol"), safeString("Noise Vol")), 1),
-        safeString("lfo1Target"));
-    
     // LFO1 Phase (0-360Â°)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -4689,14 +4703,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
         "lfo2Rate");
 
     
-    // LFO2 Target (what to modulate)
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterChoice>(
-            juce::ParameterID{"lfo2Target", 1}, "LFO2 Target",
-            juce::StringArray(safeString("Pitch"), safeString("Filter"),
-                safeString("Master Vol"), safeString("Osc1 Vol"), safeString("Osc2 Vol"), safeString("Noise Vol")), 0),
-        safeString("lfo2Target"));
-    
     // LFO2 Phase (0-360Â°)
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
@@ -4722,108 +4728,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"lfo2Retrigger", 1}, "LFO2 Retrigger", true),
         "lfo2Retrigger");
     
-    //==============================================================================
-    // -- Modulation Tab Filters (inside LFO boxes) --
-    // Each LFO has its own Filter toggle. Link to Master: use main filter params.
-    
-    ADD_PARAM_WITH_LOG(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"modFilter1Show", 1}, "Mod Filter 1 Show", false),
-        "modFilter1Show");
-    
-    ADD_PARAM_WITH_LOG(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"modFilter2Show", 1}, "Mod Filter 2 Show", false),
-        "modFilter2Show");
-    
-    ADD_PARAM_WITH_LOG(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"modFilter1LinkToMaster", 1}, "Mod Filter 1 Link", true),
-        "modFilter1LinkToMaster");
-    
-    ADD_PARAM_WITH_LOG(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"modFilter2LinkToMaster", 1}, "Mod Filter 2 Link", true),
-        "modFilter2LinkToMaster");
-    
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterChoice>(
-            juce::ParameterID{"modFilter1Mode", 1}, "Mod Filter 1 Mode",
-            filterModeChoices, 0),
-        safeString("modFilter1Mode"));
-    
-    ADD_PARAM_WITH_LOG(params,
-        std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{"modFilter1Cutoff", 1}, "Mod Filter 1 Cutoff",
-            juce::NormalisableRange<float>(20.0f, 20000.0f, 0.0f, 0.3f), 8000.0f,
-            wholeHzAttributes()),
-        "modFilter1Cutoff");
-    
-    ADD_PARAM_WITH_LOG(params,
-        std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{"modFilter1Resonance", 1}, "Mod Filter 1 Resonance",
-            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.3f),
-        "modFilter1Resonance");
-    
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"warmSaturationMod1", 1}, "Mod 1 Warm Sat", false),
-        "warmSaturationMod1");
-
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"modFilter1KeyTrack", 1}, "Mod 1 Key Track", false),
-        "modFilter1KeyTrack");
-
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"modFilter1NoteLock", 1}, "Mod 1 Note Lock", false),
-        "modFilter1NoteLock");
-
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"modFilter1HarmonicLock", 1}, "Mod 1 Harmonic Series", false),
-        "modFilter1HarmonicLock");
-
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterChoice>(
-            juce::ParameterID{"modFilter2Mode", 1}, "Mod Filter 2 Mode",
-            filterModeChoices, 0),
-        safeString("modFilter2Mode"));
-    
-    ADD_PARAM_WITH_LOG(params,
-        std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{"modFilter2Cutoff", 1}, "Mod Filter 2 Cutoff",
-            juce::NormalisableRange<float>(20.0f, 20000.0f, 0.0f, 0.3f), 8000.0f,
-            wholeHzAttributes()),
-        "modFilter2Cutoff");
-    
-    ADD_PARAM_WITH_LOG(params,
-        std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{"modFilter2Resonance", 1}, "Mod Filter 2 Resonance",
-            juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f), 0.3f),
-        "modFilter2Resonance");
-    
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"warmSaturationMod2", 1}, "Mod 2 Warm Sat", false),
-        "warmSaturationMod2");
-
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"modFilter2KeyTrack", 1}, "Mod 2 Key Track", false),
-        "modFilter2KeyTrack");
-
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"modFilter2NoteLock", 1}, "Mod 2 Note Lock", false),
-        "modFilter2NoteLock");
-
-    addParameterWithLogging(params,
-        std::make_unique<juce::AudioParameterBool>(
-            juce::ParameterID{"modFilter2HarmonicLock", 1}, "Mod 2 Harmonic Series", false),
-        "modFilter2HarmonicLock");
-
     //==============================================================================
     // -- Delay Effect Parameters --
     ADD_PARAM_WITH_LOG(params,

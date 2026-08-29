@@ -4,7 +4,8 @@
 // MPE support: juce_audio_basics provides MPESynthesiserVoice, MPENote, MPEValue
 #include <juce_audio_basics/juce_audio_basics.h>
 #include <juce_dsp/juce_dsp.h>
-#include "NonlinearSVF.h" // Self-oscillating state-variable filter (master + mod filters)
+#include "ModMatrix.h"    // numLfos, and which destinations are applied per sample
+#include "NonlinearSVF.h" // Self-oscillating state-variable filter
 #include "OversampledStage.h" // Per-sample oversampling wrapper for the nonlinear master filter
 #include "RetargetableADSR.h" // juce::ADSR-faithful envelope + live release retargeting
 #include "SynthSound.h"   // Kept for build compatibility (some headers still include it indirectly)
@@ -252,13 +253,6 @@ public:
     void setFilterKeyTrack(bool enabled);        // Cutoff follows the played key when ON
     void setFilterOversample(bool enabled);      // [A/B prototype] 4x-oversample the master filter stage to kill audio-rate-modulation aliasing
 
-    // Mod tab filters (show=enabled in UI, linkToMaster=use main filter params)
-    void setModFilter1(bool show, bool linkToMaster, int mode, float cutoffHz, float resonance);
-    void setWarmSaturationMod1(bool enabled);
-    void setModFilter1KeyTrack(bool enabled);
-    void setModFilter2(bool show, bool linkToMaster, int mode, float cutoffHz, float resonance);
-    void setWarmSaturationMod2(bool enabled);
-    void setModFilter2KeyTrack(bool enabled);
     
     // Filter envelope parameters
     void setFilterEnvAttack(float seconds);
@@ -287,15 +281,28 @@ public:
     // Pitch bend (scaled by pitchBendAmount: 0-24 semitones) - separate from pitch envelope
     void setPitchBendAmount(float semitones);  // Range for pitch bend (0-24)
     void setPitchBend(float value);           // Manual pitch bend (-1 to 1)
-    void setLfoTargets(int lfo1Target, int lfo2Target);  // 0=Pitch, 1=Filter, 2=MasterVol, 3=Osc1, 4=Osc2, 5=Noise
+    /** How far each LFO moves each of the six destinations this voice applies
+        inside its own per-sample loop.
 
-    /** Current free-run frequency of each LFO, in Hz.
+        `amounts` points at spacedust::numVoicePerSampleMod * spacedust::numLfos
+        floats, laid out destination-major: amounts[dest * numLfos + lfo]. Each is
+        the routing amount from the modulation matrix, -1..+1, and zero when that
+        LFO does not reach that destination. The processor compiles the figure on
+        the MESSAGE thread, so this call is a copy -- no lookup, no string.
+
+        This replaces the old Destination drop-down: one LFO used to reach one
+        of six things, chosen from a drop-down. Now any number of LFOs reach any
+        number of them, and the per-sample formulas are unchanged. */
+    void setLfoModAmounts (const float* amounts) noexcept;
+
+    /** Current free-run frequency of each LFO, in Hz. `hzPerLfo` points at
+        spacedust::numLfos doubles.
 
         Needed by the oversample latch. Sweeping a filter's cutoff at audio rate makes
         sidebands that fold back regardless of how linear the filter is, so resonance
         and warm saturation alone are not enough to decide whether oversampling is
         required -- see updateOversampleLatch(). */
-    void setLfoRates(double lfo1Hz, double lfo2Hz) noexcept;
+    void setLfoRates (const double* hzPerLfo) noexcept;
     // Analog Drift: emulates hardware component tolerance and slow oscillator/filter drift
     void setAnalogDrift(float amount) { analogDriftAmount = juce::jlimit(0.0f, 1.0f, amount); }
 
@@ -652,17 +659,13 @@ private:
     // Self-oscillating SVF: identical to a clean TPT filter for the lower ~80% of
     // the resonance knob; the top of the knob drives it into self-oscillation.
     NonlinearSVF filter;
-    NonlinearSVF modFilter1;  // Second filter when modFilter1 unlinked
-    NonlinearSVF modFilter2;  // Third filter when modFilter2 unlinked
 
     // Oversampling for the nonlinear filter stages (SVF + warm-sat + per-stage
     // clip). OFF => filters run at host rate, bit-identical to before. ON => 4x, so
     // the nonlinear/time-varying filter's products no longer fold back into the
     // audible band when driven by audio-rate LFO modulation. The master stage is
-    // always oversampled when enabled; the mod stages only when they're active.
+    // always oversampled when enabled.
     OversampledStage masterFilterOS;
-    OversampledStage modFilter1OS;
-    OversampledStage modFilter2OS;
     bool oversampleFilter = false;
     static constexpr int kFilterOSFactor = 4;
 
@@ -679,8 +682,6 @@ private:
     // note, not the current one (an uncommon gesture; reverts to pre-OS behaviour).
     // INVARIANT: <stage>OSActive == true  <=>  that filter's sampleRateScale == kFilterOSFactor.
     bool masterOSActive = false;
-    bool mod1OSActive   = false;
-    bool mod2OSActive   = false;
     // Resonance (0..1) at/above which a filter is treated as "needs oversampling" (~Q6).
     // Tunable: lower = safer (oversample more often), higher = bigger CPU savings.
     static constexpr float kOversampleResThreshold = 0.35f;
@@ -695,8 +696,7 @@ private:
     // meant the latch only ever fired at the exact maximum, i.e. never in practice.
     // Still far above any vibrato or tremolo, so ordinary patches pay nothing.
     static constexpr double kOversampleLfoHzThreshold = 100.0;
-    double lfo1RateHz = 0.0;
-    double lfo2RateHz = 0.0;
+    double lfoRateHz[spacedust::numLfos] { };
 
     //==========================================================================
     // -- Oscillator oversampling (audio-rate pitch modulation only) --
@@ -719,9 +719,15 @@ private:
     OversampledStage oscSubOS;     // ch0 = sub
     bool oscOSActive = false;
     static constexpr int kOscOSFactor = 4;
-    // Re-derive the three latches from the current params and apply the matching
-    // sample-rate scale + OS factor to every filter (keeps the INVARIANT above).
+    // Re-derive the latches from the current params and apply the matching
+    // sample-rate scale + OS factor to every stage (keeps the INVARIANT above).
     void updateOversampleLatch() noexcept;
+
+    /** Whether an LFO at or above kOversampleLfoHzThreshold carries a routing to
+        one of the per-sample destinations -- the whole of what the latch needs
+        to know about the modulation matrix. `destination` is a
+        spacedust::PerSampleModDest below numVoicePerSampleMod. */
+    bool anyFastLfoReaches (int destination) const noexcept;
     
     // Noise EQ filters: simple 1-pole shelf filters for low and high frequency shaping
     juce::dsp::IIR::Filter<float> lowShelfFilter;
@@ -743,21 +749,6 @@ private:
     bool warmSaturationMaster = false; // Moog-style tanh saturation when ON
     bool filterKeyTrack = false;       // Master filter cutoff follows the played key when ON
 
-    // Mod tab filters (show=Filter toggle on, linkToMaster=use main filter params)
-    bool modFilter1Show = false;
-    bool modFilter1Linked = true;
-    int modFilter1Mode = 0;           // see filterMode above for the mode numbering
-    float modFilter1Cutoff = 8000.0f;
-    float modFilter1Resonance = 0.3f;
-    bool warmSaturationMod1 = false;
-    bool modFilter1KeyTrack = false;
-    bool modFilter2Show = false;
-    bool modFilter2Linked = true;
-    int modFilter2Mode = 0;           // see filterMode above for the mode numbering
-    float modFilter2Cutoff = 8000.0f;
-    float modFilter2Resonance = 0.3f;
-    bool warmSaturationMod2 = false;
-    bool modFilter2KeyTrack = false;
     
     // -- Filter Envelope (ADSR) --
     RetargetableADSR filterAdsr;     // Filter envelope (juce::ADSR-faithful + live release retarget)
@@ -920,9 +911,20 @@ private:
     float pitchEnvPitch = 0.0f;        // 0-24 semitones
     float pitchEnvSamplesElapsed = 0.0f;  // Samples since note-on (for ramp)
     
-    // LFO targets (cached per-block from processor - avoids per-sample APVTS reads)
-    int lfo1TargetCached = 0;  // 0=Pitch, 1=Filter, 2=MasterVol, 3=Osc1, 4=Osc2, 5=Noise
-    int lfo2TargetCached = 1;
+    /** How far each LFO moves each per-sample destination, copied from the
+        processor once a block by setLfoModAmounts(). Destination-major, so
+        lfoModAmount[dest][lfo]. All zero means no LFO reaches any of the six and
+        the per-sample loop skips the whole thing.
+
+        Cached rather than read through the processor for the same reason the
+        Destination drop-down was cached before it: the alternative is a lookup
+        per sample, per voice. */
+    float lfoModAmount[spacedust::numVoicePerSampleMod][spacedust::numLfos] { };
+
+    /** Whether any entry of lfoModAmount is non-zero. Recomputed by
+        setLfoModAmounts, so the sample loop tests one bool instead of walking
+        twenty-four floats. */
+    bool anyLfoModAmount = false;
     
     // Pitch bend (from processor, updated every block) - separate from pitch envelope.
     // pitchBendAmountFloat is the bend range used by the *manual* UI bend slider
@@ -1037,8 +1039,6 @@ private:
         Called when filter parameters change.
     */
     void updateFilter();
-    void updateModFilter1();
-    void updateModFilter2();
     
     /**
         Update noise EQ shelf filter coefficients based on current shelf amounts.

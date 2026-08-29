@@ -506,8 +506,6 @@ void SynthVoice::noteStarted()
         meanAbsDeltaR = 0.0f;
         postStealCutoffSlowdownSamples = 0;
         filter.reset();
-        modFilter1.reset();
-        modFilter2.reset();
         // CRITICAL: also clear the filter OVERSAMPLERS. filter.reset() only zeroes the
         // SVF state; the oversampler keeps a ~17-sample FIR history of the PREVIOUS note.
         // Left un-reset, a fresh voice's first samples convolve out that stale tail â€”
@@ -515,8 +513,6 @@ void SynthVoice::noteStarted()
         // "Sunset Beach" snap; loudest on fast playing, which leaves big residue in the FIR).
         masterFilterOS.reset();
         oscOsc12OS.reset(); oscSubOS.reset();
-        modFilter1OS.reset();
-        modFilter2OS.reset();
         // Clean start: latch which filters actually need oversampling for THIS note
         // and apply the matching sample-rate scale before updateFilter() recomputes g.
         updateOversampleLatch();
@@ -591,15 +587,11 @@ void SynthVoice::noteStarted()
                 // this as a fresh note start. Clear any stale ring (inaudible at this
                 // level) and SNAP the cutoff to the new note so the resonant peak
                 // doesn't sweep into the attack (the note-on "zip").
-                if (filter.isRinging())     filter.reset();
-                if (modFilter1.isRinging()) modFilter1.reset();
-                if (modFilter2.isRinging()) modFilter2.reset();
+                if (filter.isRinging()) filter.reset();
                 // Clear the oversampler FIR history too (see fresh-voice path above) so a
                 // clean mono start can't dump the previous note's stale tail samples.
                 masterFilterOS.reset();
                 oscOsc12OS.reset(); oscSubOS.reset();
-                modFilter1OS.reset();
-                modFilter2OS.reset();
                 // Clean mono start: re-latch oversampling for this note (see fresh path).
                 updateOversampleLatch();
                 snapFilterCutoffOnNote = true;
@@ -1270,24 +1262,6 @@ void SynthVoice::updateOsc2Frequency(double baseFrequency)
 //==============================================================================
 // -- Filter Updates --
 
-void SynthVoice::updateModFilter1()
-{
-    if (modFilter1Linked || sampleRate <= 0.0f) return;
-    float clampedCutoff = juce::jlimit(20.0f, 20000.0f, modFilter1Cutoff);
-    modFilter1.setMode(modFilter1Mode);
-    modFilter1.setCutoffFrequency(clampedCutoff);
-    modFilter1.setResonanceNormalized(modFilter1Resonance);
-}
-
-void SynthVoice::updateModFilter2()
-{
-    if (modFilter2Linked || sampleRate <= 0.0f) return;
-    float clampedCutoff = juce::jlimit(20.0f, 20000.0f, modFilter2Cutoff);
-    modFilter2.setMode(modFilter2Mode);
-    modFilter2.setCutoffFrequency(clampedCutoff);
-    modFilter2.setResonanceNormalized(modFilter2Resonance);
-}
-
 void SynthVoice::updateFilter()
 {
     // Clamp cutoff to valid range
@@ -1298,9 +1272,7 @@ void SynthVoice::updateFilter()
     //
     // velocityResonanceScale is 1.0 unless the patch asked for velocity, and it is
     // per VOICE: the knob is shared by every note, how hard THIS note was played
-    // is not. Only the master filter takes it. The two Mod filters are effects on
-    // the whole voice rather than the note's own character, and moving them per
-    // note would make the same patch sound like two different ones in a chord.
+    // is not.
     filter.setMode(juce::jlimit(0, NonlinearSVF::numModes - 1, filterMode));
     filter.setCutoffFrequency(clampedCutoff);
     filter.setResonanceNormalized(juce::jlimit(0.0f, 1.0f, filterResonance * velocityResonanceScale));
@@ -1580,9 +1552,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
     // bit-identical to before â€” and re-derived per sample from the live gliding pitch
     // while a portamento is in progress (see the per-sample block below) so the filter
     // tracks the glide instead of snapping to the destination note. keyTrackLogOffset
-    // is added in log-frequency space for the master filter; keyTrackMultiplier scales
-    // the unlinked mod-filter cutoffs. Each filter only applies these when its own
-    // key-track flag is on. Default 0 / 1.0 = no change (full backward compatibility).
+    // is added in log-frequency space, and only when the filter's key-track flag is
+    // on. Default 0 = no change (full backward compatibility).
     const int keyTrackNote = currentlyPlayingNote.isValid()
                                  ? static_cast<int>(currentlyPlayingNote.initialNote)
                                  : kFilterKeyTrackRefNote;
@@ -1597,9 +1568,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
     // currentPitch == the note's Hz so the static values above are used verbatim (no
     // behaviour change for held/non-glide notes). keyTrackRefHz = Hz of note 60.
     const double keyTrackRefHz = juce::MidiMessage::getMidiNoteInHertz(kFilterKeyTrackRefNote);
-    const bool anyKeyTrackOn = filterKeyTrack
-                            || (modFilter1Show && !modFilter1Linked && modFilter1KeyTrack)
-                            || (modFilter2Show && !modFilter2Linked && modFilter2KeyTrack);
+    const bool anyKeyTrackOn = filterKeyTrack;
 
     //==============================================================================
     // -- Per-block constants (hoisted out of the per-sample loop) --
@@ -1630,6 +1599,27 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
     const float logMin = std::log(20.0f);
     const float logMax = std::log(20000.0f);
     const float timbreLogScale = static_cast<float>(std::log(4.0)); // Â±2 octaves of timbre sweep
+
+    // Every LFO's block of values, resolved ONCE here rather than through
+    // lfoBufferFor() on every sample. The read pointer and the length are taken
+    // together so the per-sample test is an int compare, exactly the guard the
+    // old two-LFO code did inline.
+    const float* lfoRead[spacedust::numLfos] = { };
+    int          lfoLen [spacedust::numLfos] = { };
+
+    if (processor != nullptr)
+    {
+        for (int lfo = 0; lfo < spacedust::numLfos; ++lfo)
+        {
+            const auto& b = processor->lfoBufferFor(lfo);
+
+            if (b.getNumSamples() > 0)
+            {
+                lfoRead[lfo] = b.getReadPointer(0);
+                lfoLen [lfo] = b.getNumSamples();
+            }
+        }
+    }
 
     // Generate oscillator waveforms, mix, and apply envelope
     for (int i = 0; i < maxSamples; ++i)
@@ -1688,63 +1678,46 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         double osc1Freq = pitchForOscillators * bendRatio;
         double osc2Freq = pitchForOscillators * bendRatio;
         
-        // Apply LFO modulation per-sample (if processor and buffers are available)
-        float filterMod = 0.0f;           // Master filter modulation (only when Link to Master is ON)
-        float modFilter1LfoMod = 0.0f;   // LFO1 modulation for modFilter1 (when Link OFF, LFO targets Filter)
-        float modFilter2LfoMod = 0.0f;   // LFO2 modulation for modFilter2 (when Link OFF, LFO targets Filter)
-        float osc1VolMod = 0.0f, osc2VolMod = 0.0f, noiseVolMod = 0.0f;  // Volume LFO modulation
-        
-        // Access LFO buffers per-sample (buffers are filled in processBlock for the entire block)
-        if (processor != nullptr &&
-            processor->lfoBufferFor(0).getNumSamples() > 0 &&
-            processor->lfoBufferFor(1).getNumSamples() > 0 &&
-            i < processor->lfoBufferFor(0).getNumSamples() &&
-            i < processor->lfoBufferFor(1).getNumSamples())
+        // Apply LFO modulation per-sample. WHICH LFO reaches what is now the
+        // modulation matrix's answer -- setLfoModAmounts() copied this block's
+        // amounts in once, on the audio thread, from a list the message thread
+        // compiled -- but the SHAPES below are the ones the deleted Destination
+        // drop-down used, so a patch migrated to a routing of +1.0 moves exactly
+        // as it always did.
+        float filterMod = 0.0f;        // master cutoff is scaled by (1 + filterMod * 0.5)
+        float osc1PitchMod = 0.0f;     // in LFO units; the frequency ratio is 2^mod
+        float osc2PitchMod = 0.0f;
+        float osc1VolMod = 0.0f, osc2VolMod = 0.0f, noiseVolMod = 0.0f;  // gains scale by (1 + mod)
+
+        if (anyLfoModAmount)
         {
-            float lfo1Val = processor->lfoBufferFor(0).getSample(0, i);
-            float lfo2Val = processor->lfoBufferFor(1).getSample(0, i);
-            
-            // Use cached LFO targets (set per-block in updateVoicesWithParameters - avoids per-sample APVTS reads)
-            const int lfo1Target = lfo1TargetCached;
-            const int lfo2Target = lfo2TargetCached;
-            
-            // LFO1: 0=Pitch, 1=Filter, 2=MasterVol(processor), 3=Osc1, 4=Osc2, 5=Noise
-            if (lfo1Target == 0)  // Pitch
+            for (int lfo = 0; lfo < spacedust::numLfos; ++lfo)
             {
-                float pitchModCents = lfo1Val * 1200.0f;  // Â±24 semitones at full LFO swing
-                const double pitchModRatio = std::pow(2.0, pitchModCents / 1200.0);
-                osc1Freq *= pitchModRatio;
-                osc2Freq *= pitchModRatio;
+                if (i >= lfoLen[lfo])
+                    continue;
+
+                const float v = lfoRead[lfo][i];
+
+                osc1PitchMod += lfoModAmount[spacedust::psm_osc1Pitch]   [lfo] * v;
+                osc2PitchMod += lfoModAmount[spacedust::psm_osc2Pitch]   [lfo] * v;
+                filterMod    += lfoModAmount[spacedust::psm_filterCutoff][lfo] * v;
+                osc1VolMod   += lfoModAmount[spacedust::psm_osc1Level]   [lfo] * v;
+                osc2VolMod   += lfoModAmount[spacedust::psm_osc2Level]   [lfo] * v;
+                noiseVolMod  += lfoModAmount[spacedust::psm_noiseLevel]  [lfo] * v;
             }
-            else if (lfo1Target == 1)  // Filter
-            {
-                if (modFilter1Linked)
-                    filterMod += lfo1Val;  // Multiplicative: voice applies (1 + filterMod) to base
-                else if (modFilter1Show)
-                    modFilter1LfoMod = lfo1Val;  // Same for mod filter
-            }
-            else if (lfo1Target == 3) osc1VolMod += lfo1Val;
-            else if (lfo1Target == 4) osc2VolMod += lfo1Val;
-            else if (lfo1Target == 5) noiseVolMod += lfo1Val;
-            
-            // LFO2: same targets
-            if (lfo2Target == 0)  // Pitch
-            {
-                float pitchModCents = lfo2Val * 1200.0f;  // Â±24 semitones at full LFO swing
-                const double pitchModRatio = std::pow(2.0, pitchModCents / 1200.0);
-                osc1Freq *= pitchModRatio;
-                osc2Freq *= pitchModRatio;
-            }
-            else if (lfo2Target == 1)  // Filter
-            {
-                if (modFilter2Linked)
-                    filterMod += lfo2Val;  // Multiplicative: voice applies (1 + filterMod) to base
-                else if (modFilter2Show)
-                    modFilter2LfoMod = lfo2Val;  // Same for mod filter
-            }
-            else if (lfo2Target == 3) osc1VolMod += lfo2Val;
-            else if (lfo2Target == 4) osc2VolMod += lfo2Val;
-            else if (lfo2Target == 5) noiseVolMod += lfo2Val;
+
+            // Pitch. The drop-down's Pitch entry moved BOTH oscillators by
+            // 2^(LFO value) -- 1200 cents at full swing. Each oscillator now has
+            // its own Coarse knob to be pointed at, so each carries its own
+            // ratio; a patch that routes both at +1.0 is the old sound exactly.
+            //
+            // std::pow only when something actually reaches it: an unrouted
+            // pitch costs a float compare, not a transcendental, per sample.
+            if (osc1PitchMod != 0.0f)
+                osc1Freq *= std::pow(2.0, static_cast<double>(osc1PitchMod));
+
+            if (osc2PitchMod != 0.0f)
+                osc2Freq *= std::pow(2.0, static_cast<double>(osc2PitchMod));
         }
         
         // Apply oscillator tuning (constant per block â€” ratios cached above).
@@ -2293,10 +2266,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             // crossing). Hand off to the existing voice-fade ramp, which declicks
             // the residual over kVoiceFadeLength and resets the filters when it
             // completes, instead of breaking now.
-            const bool filterStillRinging =
-                   filter.isRinging()
-                || (modFilter1Show && !modFilter1Linked && modFilter1.isRinging())
-                || (modFilter2Show && !modFilter2Linked && modFilter2.isRinging());
+            const bool filterStillRinging = filter.isRinging();
 
             if (filterStillRinging)
             {
@@ -2351,12 +2321,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         float filtL = leftEnv;
         float filtR = rightEnv;
 
-        // MASTER filter runs FIRST. When no mod filters are active it is the only
-        // filter in the chain, so the master-only sound is bit-for-bit unchanged.
-        // When an unlinked mod filter is active it now sits AFTER the master, making
-        // the mod the last (dominant, untamed) voice â€” as powerful as the master,
-        // instead of having its grit smoothed away by the master downstream.
-        // (Master cutoff was already set above via smoothedFilterCutoffHz.)
+        // (Cutoff was already set above via smoothedFilterCutoffHz.)
         filter.setEnvelope(envelope);
         // The master filter's nonlinear chain (SVF + warm-sat tanh + per-stage hard
         // clip). This is the aliasing source under audio-rate modulation: the clip
@@ -2385,57 +2350,6 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         {
             filtL = masterNL(0, filtL);   // host rate â€” bit-identical to before
             filtR = masterNL(1, filtR);
-        }
-
-        if (modFilter1Show && !modFilter1Linked)
-        {
-            float mod1LfoFactor = juce::jmax(0.0f, 1.0f + modFilter1LfoMod * 0.5f);
-            float mod1KeyTrack = modFilter1KeyTrack ? keyTrackMultiplier : 1.0f;
-            float modCutoff = juce::jlimit(20.0f, 20000.0f, modFilter1Cutoff * mod1LfoFactor * mod1KeyTrack);
-            modFilter1.setCutoffFrequency(modCutoff);
-            modFilter1.setEnvelope(envelope);
-            auto mod1NL = [this](int ch, float s) noexcept -> float
-            {
-                float y = modFilter1.processSample(ch, s);
-                if (warmSaturationMod1)
-                    y = std::tanh(y * (1.0f + modFilter1Resonance * 2.0f));
-                return juce::jlimit(-1.0f, 1.0f, y);
-            };
-            if (mod1OSActive)
-            {
-                filtL = modFilter1OS.process(0, filtL, [&](float s) noexcept { return mod1NL(0, s); });
-                filtR = modFilter1OS.process(1, filtR, [&](float s) noexcept { return mod1NL(1, s); });
-            }
-            else
-            {
-                filtL = mod1NL(0, filtL);
-                filtR = mod1NL(1, filtR);
-            }
-        }
-        if (modFilter2Show && !modFilter2Linked)
-        {
-            float mod2LfoFactor = juce::jmax(0.0f, 1.0f + modFilter2LfoMod * 0.5f);
-            float mod2KeyTrack = modFilter2KeyTrack ? keyTrackMultiplier : 1.0f;
-            float modCutoff = juce::jlimit(20.0f, 20000.0f, modFilter2Cutoff * mod2LfoFactor * mod2KeyTrack);
-            modFilter2.setCutoffFrequency(modCutoff);
-            modFilter2.setEnvelope(envelope);
-            auto mod2NL = [this](int ch, float s) noexcept -> float
-            {
-                float y = modFilter2.processSample(ch, s);
-                if (warmSaturationMod2)
-                    y = std::tanh(y * (1.0f + modFilter2Resonance * 2.0f));
-                return juce::jlimit(-1.0f, 1.0f, y);
-            };
-            if (mod2OSActive)
-            {
-                filtL = modFilter2OS.process(0, filtL, [&](float s) noexcept { return mod2NL(0, s); });
-                filtR = modFilter2OS.process(1, filtR, [&](float s) noexcept { return mod2NL(1, s); });
-            }
-            else
-            {
-                filtL = mod2NL(0, filtL);
-                filtR = mod2NL(1, filtR);
-            }
         }
 
         // Final safety clip (idempotent â€” each stage above already clipped).
@@ -2467,12 +2381,8 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
                 smoothedFilterEnvelope = 0.0f;
                 filterAdsr.reset();
                 filter.reset();
-                modFilter1.reset();
-                modFilter2.reset();
                 masterFilterOS.reset();
                 oscOsc12OS.reset(); oscSubOS.reset();
-                modFilter1OS.reset();
-                modFilter2OS.reset();
                 inReleasePhase = false;
                 clearCurrentNote();
                 // Snapshot last pitch BEFORE zeroing so mono/legato "always glide"
@@ -2762,16 +2672,12 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Prepare filter with sample rate (2 channels for stereo panning)
     const juce::uint32 maxBlockSize = static_cast<juce::uint32>(juce::jmax(4096, samplesPerBlock));
     filter.prepare({ sampleRate, maxBlockSize, 2 });
-    modFilter1.prepare({ sampleRate, maxBlockSize, 2 });
-    modFilter2.prepare({ sampleRate, maxBlockSize, 2 });
 
     // Filter oversamplers. Re-apply the current factor so each filter's rate-scale
     // matches after a sample-rate change.
     {
         masterFilterOS.prepare();
         oscOsc12OS.prepare(); oscSubOS.prepare();
-        modFilter1OS.prepare();
-        modFilter2OS.prepare();
         // Derive each stage's factor + scale from current params (keeps the latch
         // INVARIANT). The first note re-latches with the live params at note-start.
         updateOversampleLatch();
@@ -2794,8 +2700,6 @@ void SynthVoice::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Update filter parameters AFTER filter is prepared
     // This ensures filter is ready to accept parameter changes
     updateFilter();
-    updateModFilter1();
-    updateModFilter2();
     
     // Prepare ADSR with sample rate (required for proper timing calculations)
     // JUCE's ADSR needs to know the sample rate to convert seconds to samples
@@ -2889,18 +2793,12 @@ void SynthVoice::setCurrentSampleRate(double newRate)
         // This ensures filter and ADSR use the correct rate
         const juce::uint32 maxBlockSize = 512; // Safe maximum
         filter.prepare({ newRate, maxBlockSize, 2 });
-        modFilter1.prepare({ newRate, maxBlockSize, 2 });
-        modFilter2.prepare({ newRate, maxBlockSize, 2 });
         {
             masterFilterOS.prepare();
             oscOsc12OS.prepare(); oscSubOS.prepare();
-            modFilter1OS.prepare();
-            modFilter2OS.prepare();
             updateOversampleLatch();  // derive factor + scale per stage (keeps INVARIANT)
         }
         updateFilter();
-        updateModFilter1();
-        updateModFilter2();
         juce::dsp::ProcessSpec eqSpec{ newRate, maxBlockSize, 1 };
         lowShelfFilter.prepare(eqSpec);
         highShelfFilter.prepare(eqSpec);
@@ -3102,45 +3000,65 @@ void SynthVoice::setWarmSaturationMaster(bool enabled)
     warmSaturationMaster = enabled;
 }
 
+bool SynthVoice::anyFastLfoReaches (int destination) const noexcept
+{
+    // "Does a FAST LFO reach this destination?" -- the question the oversample
+    // latch used to answer by comparing one cached drop-down index against a
+    // number. It now walks four amounts, which asks the same question of the
+    // modulation matrix instead: an amount is non-zero exactly when a routing
+    // exists, because ModMatrix::setRouting REMOVES a routing set to zero rather
+    // than leaving a dead entry behind.
+    //
+    // No string, no lookup, no allocation. lfoModAmount was filled by
+    // setLfoModAmounts() from a list the message thread compiled, and lfoRateHz
+    // by setLfoRates(), so this is four float compares.
+    if (destination < 0 || destination >= spacedust::numVoicePerSampleMod)
+        return false;
+
+    for (int lfo = 0; lfo < spacedust::numLfos; ++lfo)
+        if (lfoModAmount[destination][lfo] != 0.0f
+            && lfoRateHz[lfo] >= kOversampleLfoHzThreshold)
+            return true;
+
+    return false;
+}
+
 void SynthVoice::updateOversampleLatch() noexcept
 {
     // A filter needs oversampling when its nonlinear stage is engaged: warm
-    // saturation, or resonance high enough to clip/ring. Mod stages additionally
-    // must be shown AND unlinked (linked mods aren't processed â€” the master covers
-    // them). When the global oversample param is off, nothing oversamples.
+    // saturation, or resonance high enough to clip/ring. When the global
+    // oversample param is off, nothing oversamples.
     //
     // It ALSO needs oversampling when an LFO is sweeping its cutoff at audio rate,
     // whatever the resonance. That is the case this parameter was added for in the
-    // first place, but the test was only ever nonlinearity â€” so a fast LFO on a
+    // first place, but the test was only ever nonlinearity, so a fast LFO on a
     // clean, low-resonance filter folded back with oversampling sitting switched
     // off. Audible as soon as the LFO range was widened past a few hundred Hz.
-    const bool lfo1FastFilter = lfo1TargetCached == 1 && lfo1RateHz >= kOversampleLfoHzThreshold;
-    const bool lfo2FastFilter = lfo2TargetCached == 1 && lfo2RateHz >= kOversampleLfoHzThreshold;
-
-    // Route each fast LFO to whichever filter it actually drives (see the target
-    // dispatch in renderNextBlock: a linked mod filter feeds the master instead).
-    const bool masterFastMod = (lfo1FastFilter && modFilter1Linked)
-                            || (lfo2FastFilter && modFilter2Linked);
-    const bool mod1FastMod = lfo1FastFilter && modFilter1Show && !modFilter1Linked;
-    const bool mod2FastMod = lfo2FastFilter && modFilter2Show && !modFilter2Linked;
+    //
+    // THE TEST MOVED WITH THE FEATURE. It used to read "the LFO Destination
+    // drop-down says Filter". The drop-down is gone, so it now reads "some LFO
+    // has a routing to filterCutoff" -- and it reads it out of the very amounts
+    // renderNextBlock applies per sample, so the latch and the sound cannot
+    // disagree about which LFO sweeps what. Deleting the drop-down without
+    // moving this test would have left the latch permanently off, with nothing
+    // to show for it but aliasing.
+    const bool masterFastMod = anyFastLfoReaches (spacedust::psm_filterCutoff);
 
     const bool masterWant = oversampleFilter
         && (warmSaturationMaster || filterResonance >= kOversampleResThreshold || masterFastMod);
-    const bool mod1Want = oversampleFilter && modFilter1Show && !modFilter1Linked
-        && (warmSaturationMod1 || modFilter1Resonance >= kOversampleResThreshold || mod1FastMod);
-    const bool mod2Want = oversampleFilter && modFilter2Show && !modFilter2Linked
-        && (warmSaturationMod2 || modFilter2Resonance >= kOversampleResThreshold || mod2FastMod);
 
     masterOSActive = masterWant;
-    mod1OSActive   = mod1Want;
-    mod2OSActive   = mod2Want;
 
     // Oscillator oversampling: only for an LFO sweeping PITCH at audio rate, which is
     // the case that makes the naive shapes fold back audibly. Gated on the same global
     // anti-alias parameter as the filters so one switch turns all of it off.
-    const bool lfo1FastPitch = lfo1TargetCached == 0 && lfo1RateHz >= kOversampleLfoHzThreshold;
-    const bool lfo2FastPitch = lfo2TargetCached == 0 && lfo2RateHz >= kOversampleLfoHzThreshold;
-    const bool oscWant = oversampleFilter && (lfo1FastPitch || lfo2FastPitch);
+    //
+    // Either oscillator counts. The shapes fold back per oscillator, and the two
+    // Coarse knobs are separately assignable now that the drop-down's single
+    // "Pitch" entry has become one routing per oscillator.
+    const bool fastPitch = anyFastLfoReaches (spacedust::psm_osc1Pitch)
+                        || anyFastLfoReaches (spacedust::psm_osc2Pitch);
+    const bool oscWant = oversampleFilter && fastPitch;
 
     if (oscWant != oscOSActive)
     {
@@ -3149,24 +3067,24 @@ void SynthVoice::updateOversampleLatch() noexcept
         oscSubOS  .setFactor(oscWant ? kOscOSFactor : 1);
     }
 
-    // Apply the matching scale to each stage (maintains the INVARIANT). setFactor
-    // clears the FIR; setSampleRateScale recomputes g at the (over)sampled rate.
+    // Apply the matching scale to the master stage (maintains the INVARIANT).
+    // setFactor clears the FIR; setSampleRateScale recomputes g at the
+    // (over)sampled rate.
     const int mf = masterWant ? kFilterOSFactor : 1;
-    const int m1 = mod1Want   ? kFilterOSFactor : 1;
-    const int m2 = mod2Want   ? kFilterOSFactor : 1;
     masterFilterOS.setFactor(mf); filter.setSampleRateScale(mf);
-    modFilter1OS.setFactor(m1);   modFilter1.setSampleRateScale(m1);
-    modFilter2OS.setFactor(m2);   modFilter2.setSampleRateScale(m2);
 }
 
-void SynthVoice::setLfoRates(double lfo1Hz, double lfo2Hz) noexcept
+void SynthVoice::setLfoRates (const double* hzPerLfo) noexcept
 {
+    if (hzPerLfo == nullptr)
+        return;
+
     // Stored, not latched: the latch itself re-reads these at note start. Changing an
     // LFO rate mid-note therefore takes effect on the NEXT note, deliberately -- the
     // same rule the resonance test follows, because switching a filter's sample-rate
     // scale while it holds resonant energy re-introduces a note-onset click.
-    lfo1RateHz = lfo1Hz;
-    lfo2RateHz = lfo2Hz;
+    for (int lfo = 0; lfo < spacedust::numLfos; ++lfo)
+        lfoRateHz[lfo] = hzPerLfo[lfo];
 }
 
 void SynthVoice::setFilterOversample(bool enabled)
@@ -3187,46 +3105,6 @@ void SynthVoice::setFilterKeyTrack(bool enabled)
     // No filter rebuild needed: the offset is applied per-block in renderNextBlock,
     // where the played note number is known.
     filterKeyTrack = enabled;
-}
-
-void SynthVoice::setModFilter1(bool show, bool linkToMaster, int mode, float cutoffHz, float resonance)
-{
-    modFilter1Show = show;
-    modFilter1Linked = linkToMaster;
-    modFilter1Mode = juce::jlimit(0, NonlinearSVF::numModes - 1, mode);
-    modFilter1Cutoff = juce::jlimit(20.0f, 20000.0f, cutoffHz);
-    modFilter1Resonance = juce::jlimit(0.0f, 1.0f, resonance);
-    updateModFilter1();
-}
-
-void SynthVoice::setWarmSaturationMod1(bool enabled)
-{
-    warmSaturationMod1 = enabled;
-}
-
-void SynthVoice::setModFilter1KeyTrack(bool enabled)
-{
-    modFilter1KeyTrack = enabled;
-}
-
-void SynthVoice::setModFilter2(bool show, bool linkToMaster, int mode, float cutoffHz, float resonance)
-{
-    modFilter2Show = show;
-    modFilter2Linked = linkToMaster;
-    modFilter2Mode = juce::jlimit(0, NonlinearSVF::numModes - 1, mode);
-    modFilter2Cutoff = juce::jlimit(20.0f, 20000.0f, cutoffHz);
-    modFilter2Resonance = juce::jlimit(0.0f, 1.0f, resonance);
-    updateModFilter2();
-}
-
-void SynthVoice::setWarmSaturationMod2(bool enabled)
-{
-    warmSaturationMod2 = enabled;
-}
-
-void SynthVoice::setModFilter2KeyTrack(bool enabled)
-{
-    modFilter2KeyTrack = enabled;
 }
 
 //==============================================================================
@@ -3361,8 +3239,37 @@ void SynthVoice::setPitchBend(float value)
     pitchBend = juce::jlimit(-1.0f, 1.0f, value);
 }
 
-void SynthVoice::setLfoTargets(int lfo1Target, int lfo2Target)
+void SynthVoice::setLfoModAmounts (const float* amounts) noexcept
 {
-    lfo1TargetCached = juce::jlimit(0, 5, lfo1Target);  // 0=Pitch, 1=Filter, 2=MasterVol, 3=Osc1, 4=Osc2, 5=Noise
-    lfo2TargetCached = juce::jlimit(0, 5, lfo2Target);
+    if (amounts == nullptr)
+        return;
+
+    bool any     = false;
+    bool changed = false;
+
+    for (int d = 0; d < spacedust::numVoicePerSampleMod; ++d)
+    {
+        for (int lfo = 0; lfo < spacedust::numLfos; ++lfo)
+        {
+            const float a = amounts[d * spacedust::numLfos + lfo];
+
+            changed = changed || (a != lfoModAmount[d][lfo]);
+            lfoModAmount[d][lfo] = a;
+            any = any || (a != 0.0f);
+        }
+    }
+
+    anyLfoModAmount = any;
+
+    // The oversample latch asks whether a FAST LFO reaches the cutoff or a
+    // pitch. Re-derive it only when one of those amounts actually moved: this
+    // runs once a block for every voice, and the latch touches each stage's FIR
+    // and filter coefficients.
+    //
+    // Idle voices re-derive at once; an ACTIVE voice keeps the latch it took at
+    // note start, which is the same rule resonance and LFO rate already follow
+    // -- switching a filter's sample-rate scale while it holds resonant energy
+    // re-introduces a note-onset click.
+    if (changed && !isActive)
+        updateOversampleLatch();
 }

@@ -17,6 +17,41 @@ namespace spacedust
 {
     inline constexpr int numLfos = 4;
 
+    /** The destinations that are applied INSIDE a per-sample loop, by hand.
+
+        These predate the matrix: each was one entry of the LFO Destination
+        drop-down, and each has its own formula written into
+        SynthVoice::renderNextBlock (or, for the master gain, into
+        SpaceDustAudioProcessor::processBlock). The formulas are PROPORTIONAL --
+        a filter cutoff is multiplied by (1 + m/2), an oscillator level by
+        (1 + m), a pitch by 2^m -- and the sound of every patch saved before
+        assign mode existed depends on exactly those shapes.
+
+        So the matrix decides WHICH of them an LFO reaches and by how much, and
+        the formulas themselves are left alone. An amount of +1.0 reproduces the
+        old drop-down character for character.
+
+        Because of that they do NOT read the voice scratch, and they are not in
+        the block-rate voice parameter list either: either one would apply the
+        same modulation a second time. */
+    enum PerSampleModDest
+    {
+        psm_osc1Pitch = 0,    // "osc1CoarseTune"
+        psm_osc2Pitch,        // "osc2CoarseTune"
+        psm_filterCutoff,     // "filterCutoff"
+        psm_osc1Level,        // "osc1Level"
+        psm_osc2Level,        // "osc2Level"
+        psm_noiseLevel,       // "noiseLevel"
+
+        /** The six above are the voice's. The master gain is applied after the
+            voices, in the processor, so it is kept out of what a voice is
+            handed. */
+        numVoicePerSampleMod,
+
+        psm_masterVolume = numVoicePerSampleMod,   // "masterVolume"
+        numPerSampleMod
+    };
+
     /** One LFO reaching one knob. */
     struct ModRouting
     {
