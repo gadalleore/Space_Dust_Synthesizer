@@ -98,8 +98,6 @@ int main()
     setRaw("filterCutoff", 20000.0f);
     setRaw("filterResonance", 0.0f);
     setRaw("filterEnvAmount", 0.0f);
-    setRaw("modFilter1Show", 0.0f);
-    setRaw("modFilter2Show", 0.0f);
     setRaw("transientEnabled", 0.0f);
     setRaw("delayEnabled", 0.0f);
     setRaw("reverbEnabled", 0.0f);

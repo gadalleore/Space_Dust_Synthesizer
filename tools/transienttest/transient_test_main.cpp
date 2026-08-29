@@ -57,10 +57,6 @@ int main()
     setRaw("filterCutoff", 150.0f);
     setRaw("filterResonance", 0.0f);
 
-    // Make sure the Mod filters are NOT interfering with this test.
-    setRaw("modFilter1Show", 0.0f);
-    setRaw("modFilter2Show", 0.0f);
-
     // --- Transient: bright closed hat (HP-filtered, high freq) ---
     setRaw("transientEnabled", 1.0f);
     setRaw("transientMix", 1.0f);

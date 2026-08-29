@@ -1373,6 +1373,169 @@ void MainPageComponent::resized()
 }
 
 //==============================================================================
+// -- One LFO panel's widgets, gathered by reference --
+// LFO1-4's widgets stay ordinary named members (lfo1Group, lfo2Group, ...): their
+// construction differs only by parameter id string, which does not collapse into
+// an array cleanly across five different attachment types. This is the one piece
+// that WAS an exact, sizeable duplicate -- panel layout -- so only that goes
+// through a single function, called once per LFO.
+SpaceDustAudioProcessorEditor::LfoPanelRefs SpaceDustAudioProcessorEditor::lfoPanelRefs(int index)
+{
+    switch (index)
+    {
+        case 0: return { lfo1Group, lfo1EnabledButton, lfo1WaveformCombo, lfo1WaveformLabel,
+                          lfo1SyncButton, lfo1SyncLabel, lfo1TripletButton, lfo1TripletStraightButton,
+                          lfo1FreeRateSlider, lfo1SyncRateCombo, lfo1RateLabel, lfo1RateValueLabel,
+                          lfo1DepthSlider, lfo1DepthLabel, lfo1PhaseSlider, lfo1PhaseLabel,
+                          lfo1RetriggerButton };
+        case 1: return { lfo2Group, lfo2EnabledButton, lfo2WaveformCombo, lfo2WaveformLabel,
+                          lfo2SyncButton, lfo2SyncLabel, lfo2TripletButton, lfo2TripletStraightButton,
+                          lfo2FreeRateSlider, lfo2SyncRateCombo, lfo2RateLabel, lfo2RateValueLabel,
+                          lfo2DepthSlider, lfo2DepthLabel, lfo2PhaseSlider, lfo2PhaseLabel,
+                          lfo2RetriggerButton };
+        case 2: return { lfo3Group, lfo3EnabledButton, lfo3WaveformCombo, lfo3WaveformLabel,
+                          lfo3SyncButton, lfo3SyncLabel, lfo3TripletButton, lfo3TripletStraightButton,
+                          lfo3FreeRateSlider, lfo3SyncRateCombo, lfo3RateLabel, lfo3RateValueLabel,
+                          lfo3DepthSlider, lfo3DepthLabel, lfo3PhaseSlider, lfo3PhaseLabel,
+                          lfo3RetriggerButton };
+        default: return { lfo4Group, lfo4EnabledButton, lfo4WaveformCombo, lfo4WaveformLabel,
+                          lfo4SyncButton, lfo4SyncLabel, lfo4TripletButton, lfo4TripletStraightButton,
+                          lfo4FreeRateSlider, lfo4SyncRateCombo, lfo4RateLabel, lfo4RateValueLabel,
+                          lfo4DepthSlider, lfo4DepthLabel, lfo4PhaseSlider, lfo4PhaseLabel,
+                          lfo4RetriggerButton };
+    }
+}
+
+namespace
+{
+    /** Adds one LFO panel's widgets (and its Assign button) as children of `parent`. */
+    void addLfoPanelChildren(juce::Component& parent,
+                              SpaceDustAudioProcessorEditor::LfoPanelRefs r,
+                              juce::TextButton* assignButton)
+    {
+        parent.addAndMakeVisible(r.group);
+        parent.addAndMakeVisible(r.enabledButton);
+        parent.addAndMakeVisible(r.waveformCombo);
+        parent.addAndMakeVisible(r.waveformLabel);
+        parent.addAndMakeVisible(r.syncButton);
+        parent.addAndMakeVisible(r.syncLabel);
+        parent.addAndMakeVisible(r.tripletButton);
+        parent.addAndMakeVisible(r.tripletStraightButton);
+        parent.addAndMakeVisible(r.freeRateSlider);
+        parent.addAndMakeVisible(r.syncRateCombo);
+        parent.addAndMakeVisible(r.rateLabel);
+        parent.addAndMakeVisible(r.rateValueLabel);
+        parent.addAndMakeVisible(r.depthSlider);
+        parent.addAndMakeVisible(r.depthLabel);
+        parent.addAndMakeVisible(r.phaseSlider);
+        parent.addAndMakeVisible(r.phaseLabel);
+        parent.addAndMakeVisible(r.retriggerButton);
+        if (assignButton != nullptr)
+            parent.addAndMakeVisible(assignButton);
+    }
+
+    /** Lays out one LFO panel inside `area` (its box's left edge, width, and top Y --
+        height is content-driven, exactly as the two-panel version was). Sets the
+        group's final shrink-to-fit bounds and returns nothing; every widget's bounds
+        are set directly on `r`. This is the single body LFO1 and LFO2's layout blocks
+        used to duplicate character-for-character apart from their names. */
+    void layoutLfoPanel(SpaceDustAudioProcessorEditor::LfoPanelRefs r,
+                         juce::TextButton* assignButton,
+                         juce::Rectangle<int> area)
+    {
+        const int modRateKnobSize = 38;
+        const int modRateLabelWidth = 70;
+        const int modLabelHeight = 14;
+        const int modComboHeight = 22;
+        const int modComboWidth = 100;
+        const int modButtonWidth = 70;
+        const int modButtonHeight = 22;
+        const int modLabelGap = 2;
+        const int modRowSpacing = 4;
+        const int modTextBoxH = 18;
+        const int modValueTextH = 14;
+        const int gapKnobToValue = 2;
+        const int gapValueToNextLabel = modRowSpacing;
+        const int lfoBoxPadH = 8;
+        const int lfoBoxPadV = 32;
+        const int lfoContentTop = 0;
+        const int modOnBtnW = 62;
+        const int modOnBtnH = 28;
+        const int assignBtnW = 74;
+        const int tripletButtonSize = 24;
+        const int tripletButtonWidth = 50;
+        const int tripletButtonGap = 4;
+        const int modRateSliderTotalH = modRateKnobSize + gapKnobToValue + modValueTextH;
+        const int modRotaryTextBoxTotalH = modRateKnobSize + gapKnobToValue + modTextBoxH;
+
+        r.group.setBounds(area);
+
+        auto content = area.reduced(lfoBoxPadH, lfoBoxPadV);
+        int currentY = content.getY() + lfoContentTop;
+        const int controlWidth = modComboWidth;
+        const int centreX = content.getX() + content.getWidth() / 2;
+
+        // On button, upper-left; Assign, same row, far right.
+        r.enabledButton.setBounds(content.getX(), currentY, modOnBtnW, modOnBtnH);
+        if (assignButton != nullptr)
+            assignButton->setBounds(content.getRight() - assignBtnW, currentY, assignBtnW, modOnBtnH);
+        currentY += modOnBtnH + modRowSpacing;
+
+        // Waveform
+        r.waveformLabel.setBounds(centreX - controlWidth / 2, currentY, controlWidth, modLabelHeight);
+        currentY += modLabelHeight + modLabelGap;
+        r.waveformCombo.setBounds(centreX - controlWidth / 2, currentY, controlWidth, modComboHeight);
+        currentY += modComboHeight + modRowSpacing;
+
+        // Sync
+        r.syncLabel.setBounds(centreX - modButtonWidth / 2, currentY, modButtonWidth, modLabelHeight);
+        currentY += modLabelHeight + modLabelGap;
+        r.syncButton.setBounds(centreX - modButtonWidth / 2, currentY, modButtonWidth, modButtonHeight);
+        currentY += modButtonHeight + modRowSpacing;
+
+        // Rate (label + knob + Hz/sync value; spacing matches Depth/Phase rows)
+        r.rateLabel.setBounds(centreX - modRateKnobSize / 2, currentY, modRateKnobSize, modLabelHeight);
+        r.rateLabel.setVisible(true);
+        currentY += modLabelHeight + modLabelGap;
+        const juce::Rectangle<int> rateKnobBounds(centreX - modRateKnobSize / 2, currentY,
+                                                   modRateKnobSize, modRateKnobSize);
+        r.freeRateSlider.setBounds(rateKnobBounds);
+        r.rateValueLabel.setBounds(centreX - modRateLabelWidth / 2, currentY + modRateKnobSize + gapKnobToValue,
+                                    modRateLabelWidth, modValueTextH);
+        r.rateValueLabel.setVisible(true);
+        r.rateValueLabel.setAlpha(1.0f);
+        r.syncRateCombo.setBounds(centreX - controlWidth / 2, currentY, controlWidth, modComboHeight);
+        r.tripletButton.setBounds(centreX + modRateKnobSize / 2 + tripletButtonGap,
+                                   currentY + (modRateKnobSize - tripletButtonSize) / 2,
+                                   tripletButtonWidth, tripletButtonSize);
+        r.tripletStraightButton.setBounds(centreX - modRateKnobSize / 2 - tripletButtonGap - tripletButtonSize,
+                                           currentY + (modRateKnobSize - tripletButtonSize) / 2,
+                                           tripletButtonSize, tripletButtonSize);
+        currentY += modRateSliderTotalH + gapValueToNextLabel;
+
+        // Depth
+        r.depthLabel.setBounds(centreX - modRateKnobSize / 2, currentY, modRateKnobSize, modLabelHeight);
+        currentY += modLabelHeight + modLabelGap;
+        r.depthSlider.setBounds(centreX - modRateKnobSize / 2, currentY, modRateKnobSize, modRotaryTextBoxTotalH);
+        currentY += modRotaryTextBoxTotalH + gapValueToNextLabel;
+
+        // Phase
+        r.phaseLabel.setBounds(centreX - modRateKnobSize / 2, currentY, modRateKnobSize, modLabelHeight);
+        currentY += modLabelHeight + modLabelGap;
+        r.phaseSlider.setBounds(centreX - modRateKnobSize / 2, currentY, modRateKnobSize, modRotaryTextBoxTotalH);
+        currentY += modRotaryTextBoxTotalH + modRowSpacing;
+
+        // Retrigger
+        r.retriggerButton.setBounds(centreX - modButtonWidth / 2, currentY, modButtonWidth, modButtonHeight);
+        currentY += modButtonHeight + modRowSpacing;
+
+        // Shrink the box to fit its actual content.
+        const int finalH = currentY - area.getY() + lfoBoxPadV;
+        r.group.setBounds(area.getX(), area.getY(), area.getWidth(), finalH);
+    }
+}
+
+//==============================================================================
 // -- ModulationPageComponent Implementation --
 ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& editor)
     : parentEditor(editor)
@@ -1381,47 +1544,13 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     for (const auto& id : relayoutTriggerParams())
         parentEditor.audioProcessor.getValueTreeState().addParameterListener(id, this);
 
-    // Add all modulation page components as children (no outer Modulation box or title)
-    addAndMakeVisible(parentEditor.lfo1Group);
-    addAndMakeVisible(parentEditor.lfo1EnabledButton);
-    addAndMakeVisible(parentEditor.lfo1WaveformCombo);
-    addAndMakeVisible(parentEditor.lfo1WaveformLabel);
-    addAndMakeVisible(parentEditor.lfo1SyncButton);
-    addAndMakeVisible(parentEditor.lfo1SyncLabel);
-    addAndMakeVisible(parentEditor.lfo1TripletButton);
-    addAndMakeVisible(parentEditor.lfo1TripletStraightButton);
-    addAndMakeVisible(parentEditor.lfo1FreeRateSlider);
-    addAndMakeVisible(parentEditor.lfo1SyncRateCombo);
-    addAndMakeVisible(parentEditor.lfo1RateLabel);
-    addAndMakeVisible(parentEditor.lfo1RateValueLabel);
-    addAndMakeVisible(parentEditor.lfo1DepthSlider);
-    addAndMakeVisible(parentEditor.lfo1DepthLabel);
-    addAndMakeVisible(parentEditor.lfo1PhaseSlider);
-    addAndMakeVisible(parentEditor.lfo1PhaseLabel);
-    addAndMakeVisible(parentEditor.lfo1RetriggerButton);
-    
-    addAndMakeVisible(parentEditor.lfo2Group);
-    addAndMakeVisible(parentEditor.lfo2EnabledButton);
-    addAndMakeVisible(parentEditor.lfo2WaveformCombo);
-    addAndMakeVisible(parentEditor.lfo2WaveformLabel);
-    addAndMakeVisible(parentEditor.lfo2SyncButton);
-    addAndMakeVisible(parentEditor.lfo2SyncLabel);
-    addAndMakeVisible(parentEditor.lfo2TripletButton);
-    addAndMakeVisible(parentEditor.lfo2TripletStraightButton);
-    addAndMakeVisible(parentEditor.lfo2FreeRateSlider);
-    addAndMakeVisible(parentEditor.lfo2SyncRateCombo);
-    addAndMakeVisible(parentEditor.lfo2RateLabel);
-    addAndMakeVisible(parentEditor.lfo2RateValueLabel);
-    addAndMakeVisible(parentEditor.lfo2DepthSlider);
-    addAndMakeVisible(parentEditor.lfo2DepthLabel);
-    addAndMakeVisible(parentEditor.lfo2PhaseSlider);
-    addAndMakeVisible(parentEditor.lfo2PhaseLabel);
-    addAndMakeVisible(parentEditor.lfo2RetriggerButton);
-    
-    // The Assign button for each LFO, top-right of its panel. Built in the
-    // editor's constructor ahead of this page, so they exist by now.
-    for (auto* assignButton : parentEditor.lfoAssignButtons)
-        addAndMakeVisible(assignButton);
+    // Add all four LFO panels' widgets as children (no outer Modulation box or
+    // title), plus each one's Assign button -- top-right of its panel, built in
+    // the editor's constructor ahead of this page, so they exist by now.
+    for (int lfo = 0; lfo < SpaceDustAudioProcessorEditor::numLfoPanels; ++lfo)
+        addLfoPanelChildren(*this, parentEditor.lfoPanelRefs(lfo),
+                             lfo < parentEditor.lfoAssignButtons.size()
+                                 ? parentEditor.lfoAssignButtons[lfo] : nullptr);
 
 
     // MPE controls
@@ -1448,7 +1577,7 @@ juce::StringArray ModulationPageComponent::relayoutTriggerParams()
     // Registration and removal share this list so the two can never drift apart.
     //   voiceMode  -- LFO key tracking only exists in Mono/Legato
     //   lfo*Sync   -- and only with the LFO free-running
-    return { "voiceMode", "lfo1Sync", "lfo2Sync" };
+    return { "voiceMode", "lfo1Sync", "lfo2Sync", "lfo3Sync", "lfo4Sync" };
 }
 
 void ModulationPageComponent::parameterChanged(const juce::String& parameterID, float newValue)
@@ -1475,7 +1604,7 @@ void ModulationPageComponent::paint(juce::Graphics& g)
     const int baseAlpha = 10 + static_cast<int>(48.0f * avgLevel);
     drawGlows(g, baseAlpha, meterLinkedGroupGlowHue(parentEditor.clippingHoldTicks > 0),
         { &parentEditor.modulationGroup, &parentEditor.lfo1Group, &parentEditor.lfo2Group,
-          &parentEditor.mpeGroup });
+          &parentEditor.lfo3Group, &parentEditor.lfo4Group, &parentEditor.mpeGroup });
 }
 
 void ModulationPageComponent::resized()
@@ -1562,226 +1691,34 @@ void ModulationPageComponent::resized()
         getHeight() - 24 - mpeStripH - mpeGap
     );
     
-    // Larger gap between LFO columns so boxes do not intersect
+    // Gap between LFO columns so boxes do not intersect.
     const int columnGap = 22;  // Increased by 10% from reduced value
-    
-    const int modRateKnobSize = 38;  // Rate, Depth, Phase: one consistent rotary size
-    const int modRateLabelWidth = 70;  // Width for "1/8 bar", "1/128 bar" etc. - prevents cutoff
-    const int modLabelHeight = 14;
-    const int modComboHeight = 22;
-    const int modComboWidth = 100;
-    const int modButtonWidth = 70;
-    const int modButtonHeight = 22;
-    const int modLabelGap = 2;
-    const int modRowSpacing = 4;
-    const int modTextBoxH = 18;       // TextBoxBelow on Depth/Phase (matches slider text box height)
-    const int modValueTextH = 14;     // Hz / sync value under Rate knob
-    const int gapKnobToValue = 2;     // Space between rotary and value text (Rate + TextBoxBelow)
-    const int gapValueToNextLabel = modRowSpacing; // Same gap after Hz or after Depth/Phase value to next label
-    // Extra padding inside each LFO box (title now inside box - need space below it)
-    const int lfoBoxPadH = 8;
-    const int lfoBoxPadV = 32;  // Match groupTitleHeight so content clears in-box title
-    const int lfoContentTop = 0;
-    
-    // LFO box heights will be set after layout to shrink-to-fit
-    int lfo1AreaHeight = modulationContent.getHeight();
-    int lfo2AreaHeight = modulationContent.getHeight();
-    
-    // Calculate LFO boxes to match Amp Envelope gap exactly
-    // Tab width has been expanded by 10%, so modulationContent is now 10% larger
-    // Calculate old modulationContent width to preserve the gap (keep absolute gap value the same)
-    int oldModulationContentWidth = static_cast<int>(modulationContent.getWidth() / 1.1);  // Reverse the 10% expansion
-    // Keep the absolute gap value the same (based on old modulationContent width)
-    // This ensures the gap between LFO 2's right edge and tab's right edge stays the same
-    int lfoGapToRight = static_cast<int>(oldModulationContentWidth * 0.05);  // Keep same absolute gap value
-    
-    // Calculate LFO2 width to achieve this gap
-    // LFO2 right edge should be at: modulationContent.getRight() - lfoGapToRight
-    // This keeps the gap the same absolute value, expanding LFO boxes to fill the space
-    int lfo2RightEdge = modulationContent.getRight() - lfoGapToRight;
-    // LFO2 starts after LFO1 with columnGap between them
-    // We need to calculate: if LFO1 has width W, then LFO2 starts at modulationContent.getX() + W + columnGap
-    // And LFO2 width = lfo2RightEdge - (modulationContent.getX() + W + columnGap)
-    // But we want LFO1 and LFO2 to have the same width, so:
-    // Let W = LFO width (same for both)
-    // LFO1: modulationContent.getX() to modulationContent.getX() + W
-    // LFO2: modulationContent.getX() + W + columnGap to modulationContent.getX() + W + columnGap + W
-    // LFO2 right edge = modulationContent.getX() + W + columnGap + W = modulationContent.getX() + 2*W + columnGap
-    // So: modulationContent.getX() + 2*W + columnGap = lfo2RightEdge
-    // Therefore: W = (lfo2RightEdge - modulationContent.getX() - columnGap) / 2
-    int lfoWidth = (lfo2RightEdge - modulationContent.getX() - columnGap) / 2;
-    int lfo2Width = lfoWidth;
-    
-    // LFO1 Column (Left) - Same width as LFO2, height based on its own Filter toggle
-    int lfo1Width = lfoWidth;  // Same width as LFO2 (calculated above)
-    int lfo1X = modulationContent.getX();
-    auto lfo1Area = juce::Rectangle<int>(
-        lfo1X,
-        modulationContent.getY(),
-        lfo1Width,
-        lfo1AreaHeight
-    );
-    parentEditor.lfo1Group.setBounds(lfo1Area);
-    
-    auto lfo1Content = lfo1Area.reduced(lfoBoxPadH, lfoBoxPadV);
-    int lfo1CurrentY = lfo1Content.getY() + lfoContentTop;
-    int controlWidth = modComboWidth;
-    int lfo1CentreX = lfo1Content.getX() + lfo1Content.getWidth() / 2;
-    const int modOnBtnW = 62;
-    const int modOnBtnH = 28;
-    
-    // LFO1 On button (upper-left like Effects tab, larger for visibility)
-    parentEditor.lfo1EnabledButton.setBounds(lfo1Content.getX(), lfo1CurrentY, modOnBtnW, modOnBtnH);
 
-    // Assign, on the same row at the far right. That row held only the On button,
-    // so nothing below it moves to make room.
-    const int assignBtnW = 74;
-    if (parentEditor.lfoAssignButtons.size() > 0)
-        parentEditor.lfoAssignButtons[0]->setBounds(lfo1Content.getRight() - assignBtnW,
-                                                    lfo1CurrentY, assignBtnW, modOnBtnH);
+    // Calculate LFO boxes to match Amp Envelope gap exactly. Tab width has been
+    // expanded by 10%, so modulationContent is now 10% larger; reverse that to get
+    // back the absolute gap value the original layout was tuned against, so the
+    // right-hand edge keeps the same absolute gap to the tab's right edge however
+    // many columns now share the row.
+    const int oldModulationContentWidth = static_cast<int>(modulationContent.getWidth() / 1.1);
+    const int lfoGapToRight = static_cast<int>(oldModulationContentWidth * 0.05);
+    const int rightEdge = modulationContent.getRight() - lfoGapToRight;
 
-    lfo1CurrentY += modOnBtnH + modRowSpacing;
-    
-    
-    // LFO1 Waveform
-    parentEditor.lfo1WaveformLabel.setBounds(lfo1CentreX - controlWidth / 2, lfo1CurrentY, controlWidth, modLabelHeight);
-    lfo1CurrentY += modLabelHeight + modLabelGap;
-    parentEditor.lfo1WaveformCombo.setBounds(lfo1CentreX - controlWidth / 2, lfo1CurrentY, controlWidth, modComboHeight);
-    lfo1CurrentY += modComboHeight + modRowSpacing;
-    
-    // LFO1 Sync
-    parentEditor.lfo1SyncLabel.setBounds(lfo1CentreX - modButtonWidth / 2, lfo1CurrentY, modButtonWidth, modLabelHeight);
-    lfo1CurrentY += modLabelHeight + modLabelGap;
-    parentEditor.lfo1SyncButton.setBounds(lfo1CentreX - modButtonWidth / 2, lfo1CurrentY, modButtonWidth, modButtonHeight);
-    lfo1CurrentY += modButtonHeight + modRowSpacing;
-    
-    // LFO1 Rate (label + knob + Hz/sync value; spacing matches Depth/Phase rows)
-    const int modRateSliderTotalH = modRateKnobSize + gapKnobToValue + modValueTextH;
-    parentEditor.lfo1RateLabel.setBounds(lfo1CentreX - modRateKnobSize / 2, lfo1CurrentY, modRateKnobSize, modLabelHeight);
-    parentEditor.lfo1RateLabel.setVisible(true);
-    lfo1CurrentY += modLabelHeight + modLabelGap;
-    const juce::Rectangle<int> lfo1RateKnobBounds (lfo1CentreX - modRateKnobSize / 2, lfo1CurrentY,
-                                                   modRateKnobSize, modRateKnobSize);
-    parentEditor.lfo1FreeRateSlider.setBounds(lfo1RateKnobBounds);
-    parentEditor.lfo1RateValueLabel.setBounds(lfo1CentreX - modRateLabelWidth / 2, lfo1CurrentY + modRateKnobSize + gapKnobToValue, modRateLabelWidth, modValueTextH);
-    parentEditor.lfo1RateValueLabel.setVisible(true);   // Shows Hz or sync division
-    parentEditor.lfo1RateValueLabel.setAlpha(1.0f);
-    parentEditor.lfo1SyncRateCombo.setBounds(lfo1CentreX - controlWidth / 2, lfo1CurrentY, controlWidth, modComboHeight);
-    // Triplet button: positioned to the right of Rate knob, vertically centered
-    const int tripletButtonSize = 24;
-    const int tripletButtonWidth = 50;
-    const int tripletButtonGap = 4;
-    parentEditor.lfo1TripletButton.setBounds(lfo1CentreX + modRateKnobSize / 2 + tripletButtonGap, lfo1CurrentY + (modRateKnobSize - tripletButtonSize) / 2, tripletButtonWidth, tripletButtonSize);
-    // Triplet/Straight toggle button: positioned to the left of Rate knob, vertically centered
-    parentEditor.lfo1TripletStraightButton.setBounds(lfo1CentreX - modRateKnobSize / 2 - tripletButtonGap - tripletButtonSize, lfo1CurrentY + (modRateKnobSize - tripletButtonSize) / 2, tripletButtonSize, tripletButtonSize);
-    lfo1CurrentY += modRateSliderTotalH + gapValueToNextLabel;
+    // N equal-width columns with (N-1) gaps between them, filling the same span
+    // the original two-column math filled.
+    const int numCols = SpaceDustAudioProcessorEditor::numLfoPanels;
+    const int lfoWidth = (rightEdge - modulationContent.getX() - (numCols - 1) * columnGap) / numCols;
 
-    // LFO1 Key Tracking / Note Lock / Harmonics, arranged around the Rate knob the
-    // same way the filter arranges its three. Only exists with Sync off and in
-    // Mono/Legato; Note Lock nests inside Key Tracking, Harmonics inside Note Lock.
-    
-    // LFO1 Depth
-    const int modRotaryTextBoxTotalH = modRateKnobSize + gapKnobToValue + modTextBoxH;
-    parentEditor.lfo1DepthLabel.setBounds(lfo1CentreX - modRateKnobSize / 2, lfo1CurrentY, modRateKnobSize, modLabelHeight);
-    lfo1CurrentY += modLabelHeight + modLabelGap;
-    parentEditor.lfo1DepthSlider.setBounds(lfo1CentreX - modRateKnobSize / 2, lfo1CurrentY, modRateKnobSize, modRotaryTextBoxTotalH);
-    lfo1CurrentY += modRotaryTextBoxTotalH + gapValueToNextLabel;
-    
-    // LFO1 Phase
-    parentEditor.lfo1PhaseLabel.setBounds(lfo1CentreX - modRateKnobSize / 2, lfo1CurrentY, modRateKnobSize, modLabelHeight);
-    lfo1CurrentY += modLabelHeight + modLabelGap;
-    parentEditor.lfo1PhaseSlider.setBounds(lfo1CentreX - modRateKnobSize / 2, lfo1CurrentY, modRateKnobSize, modRotaryTextBoxTotalH);
-    lfo1CurrentY += modRotaryTextBoxTotalH + modRowSpacing;
-    
-    // LFO1 Retrigger button (below Phase knob)
-    parentEditor.lfo1RetriggerButton.setBounds(lfo1CentreX - modButtonWidth / 2, lfo1CurrentY, modButtonWidth, modButtonHeight);
-    lfo1CurrentY += modButtonHeight + modRowSpacing;
-    
-    // Shrink LFO1 box to fit its actual content
+    // One body for every LFO panel. LFO1 and LFO2's blocks here used to be two
+    // copies of this, character for character apart from their names -- now it is
+    // layoutLfoPanel(), called once per column, which is what lets a third and
+    // fourth panel exist without a third and fourth copy of the block.
+    for (int lfo = 0; lfo < numCols; ++lfo)
     {
-        int lfo1FinalH = lfo1CurrentY - modulationContent.getY() + lfoBoxPadV;
-        parentEditor.lfo1Group.setBounds(lfo1X, modulationContent.getY(), lfo1Width, lfo1FinalH);
+        const int x = modulationContent.getX() + lfo * (lfoWidth + columnGap);
+        const auto area = juce::Rectangle<int>(x, modulationContent.getY(), lfoWidth, modulationContent.getHeight());
+        auto* assignButton = lfo < parentEditor.lfoAssignButtons.size() ? parentEditor.lfoAssignButtons[lfo] : nullptr;
+        layoutLfoPanel(parentEditor.lfoPanelRefs(lfo), assignButton, area);
     }
-
-    // LFO2 Column (Right)
-    int lfo2X = lfo1X + lfo1Width + columnGap;
-    auto lfo2Area = juce::Rectangle<int>(
-        lfo2X,
-        modulationContent.getY(),
-        lfo2Width,
-        lfo2AreaHeight
-    );
-    parentEditor.lfo2Group.setBounds(lfo2Area);
-    
-    auto lfo2Content = lfo2Area.reduced(lfoBoxPadH, lfoBoxPadV);
-    int lfo2CurrentY = lfo2Content.getY() + lfoContentTop;
-    int lfo2CentreX = lfo2Content.getX() + lfo2Content.getWidth() / 2;
-    
-    // LFO2 On button (upper-left like Effects tab, larger for visibility)
-    parentEditor.lfo2EnabledButton.setBounds(lfo2Content.getX(), lfo2CurrentY, modOnBtnW, modOnBtnH);
-
-    // Assign, mirroring LFO 1's.
-    if (parentEditor.lfoAssignButtons.size() > 1)
-        parentEditor.lfoAssignButtons[1]->setBounds(lfo2Content.getRight() - assignBtnW,
-                                                    lfo2CurrentY, assignBtnW, modOnBtnH);
-
-    lfo2CurrentY += modOnBtnH + modRowSpacing;
-    
-    
-    // LFO2 Waveform
-    parentEditor.lfo2WaveformLabel.setBounds(lfo2CentreX - controlWidth / 2, lfo2CurrentY, controlWidth, modLabelHeight);
-    lfo2CurrentY += modLabelHeight + modLabelGap;
-    parentEditor.lfo2WaveformCombo.setBounds(lfo2CentreX - controlWidth / 2, lfo2CurrentY, controlWidth, modComboHeight);
-    lfo2CurrentY += modComboHeight + modRowSpacing;
-    
-    // LFO2 Sync
-    parentEditor.lfo2SyncLabel.setBounds(lfo2CentreX - modButtonWidth / 2, lfo2CurrentY, modButtonWidth, modLabelHeight);
-    lfo2CurrentY += modLabelHeight + modLabelGap;
-    parentEditor.lfo2SyncButton.setBounds(lfo2CentreX - modButtonWidth / 2, lfo2CurrentY, modButtonWidth, modButtonHeight);
-    lfo2CurrentY += modButtonHeight + modRowSpacing;
-    
-    // LFO2 Rate (label + knob + Hz/sync value; spacing matches Depth/Phase rows)
-    parentEditor.lfo2RateLabel.setBounds(lfo2CentreX - modRateKnobSize / 2, lfo2CurrentY, modRateKnobSize, modLabelHeight);
-    parentEditor.lfo2RateLabel.setVisible(true);
-    lfo2CurrentY += modLabelHeight + modLabelGap;
-    const juce::Rectangle<int> lfo2RateKnobBounds (lfo2CentreX - modRateKnobSize / 2, lfo2CurrentY,
-                                                   modRateKnobSize, modRateKnobSize);
-    parentEditor.lfo2FreeRateSlider.setBounds(lfo2RateKnobBounds);
-    parentEditor.lfo2RateValueLabel.setBounds(lfo2CentreX - modRateLabelWidth / 2, lfo2CurrentY + modRateKnobSize + gapKnobToValue, modRateLabelWidth, modValueTextH);
-    parentEditor.lfo2RateValueLabel.setVisible(true);   // Shows Hz or sync division
-    parentEditor.lfo2RateValueLabel.setAlpha(1.0f);
-    parentEditor.lfo2SyncRateCombo.setBounds(lfo2CentreX - controlWidth / 2, lfo2CurrentY, controlWidth, modComboHeight);
-    // Triplet button: positioned to the right of Rate knob, vertically centered
-    parentEditor.lfo2TripletButton.setBounds(lfo2CentreX + modRateKnobSize / 2 + tripletButtonGap, lfo2CurrentY + (modRateKnobSize - tripletButtonSize) / 2, tripletButtonWidth, tripletButtonSize);
-    // Triplet/Straight toggle button: positioned to the left of Rate knob, vertically centered
-    parentEditor.lfo2TripletStraightButton.setBounds(lfo2CentreX - modRateKnobSize / 2 - tripletButtonGap - tripletButtonSize, lfo2CurrentY + (modRateKnobSize - tripletButtonSize) / 2, tripletButtonSize, tripletButtonSize);
-    lfo2CurrentY += modRateSliderTotalH + gapValueToNextLabel;
-
-    // LFO2 key-tracking row -- see the LFO1 block above.
-    
-    // LFO2 Depth
-    parentEditor.lfo2DepthLabel.setBounds(lfo2CentreX - modRateKnobSize / 2, lfo2CurrentY, modRateKnobSize, modLabelHeight);
-    lfo2CurrentY += modLabelHeight + modLabelGap;
-    parentEditor.lfo2DepthSlider.setBounds(lfo2CentreX - modRateKnobSize / 2, lfo2CurrentY, modRateKnobSize, modRotaryTextBoxTotalH);
-    lfo2CurrentY += modRotaryTextBoxTotalH + gapValueToNextLabel;
-    
-    // LFO2 Phase
-    parentEditor.lfo2PhaseLabel.setBounds(lfo2CentreX - modRateKnobSize / 2, lfo2CurrentY, modRateKnobSize, modLabelHeight);
-    lfo2CurrentY += modLabelHeight + modLabelGap;
-    parentEditor.lfo2PhaseSlider.setBounds(lfo2CentreX - modRateKnobSize / 2, lfo2CurrentY, modRateKnobSize, modRotaryTextBoxTotalH);
-    lfo2CurrentY += modRotaryTextBoxTotalH + modRowSpacing;
-    
-    // LFO2 Retrigger button (below Phase knob)
-    parentEditor.lfo2RetriggerButton.setBounds(lfo2CentreX - modButtonWidth / 2, lfo2CurrentY, modButtonWidth, modButtonHeight);
-    lfo2CurrentY += modButtonHeight + modRowSpacing;
-    
-    // Shrink LFO2 box to fit its actual content
-    {
-        int lfo2FinalH = lfo2CurrentY - modulationContent.getY() + lfoBoxPadV;
-        parentEditor.lfo2Group.setBounds(lfo2X, modulationContent.getY(), lfo2Width, lfo2FinalH);
-    }
-
-
 }
 
 //==============================================================================
@@ -3611,6 +3548,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
       modulationGroup("", ""),  // Empty title, using separate label for "Modulation" title
       lfo1Group("LFO 1", "LFO 1"),
       lfo2Group("LFO 2", "LFO 2"),
+      lfo3Group("LFO 3", "LFO 3"),
+      lfo4Group("LFO 4", "LFO 4"),
       delayGroup("Delay", "Delay"),
       reverbGroup("Reverb", "Reverb"),
       grainDelayGroup("Grain Delay", "Grain Delay"),
@@ -4931,7 +4870,205 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     lfo2RetriggerButton.setToggleState(true, juce::dontSendNotification);
     lfo2RetriggerAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
         audioProcessor.getValueTreeState(), "lfo2Retrigger", lfo2RetriggerButton);
-    
+
+    //==============================================================================
+    // -- LFO3 Setup (Modulation tab) -- same shape as LFO1/LFO2 above.
+    lfo3WaveformCombo.addItem(safeString("Sine"), 1);
+    lfo3WaveformCombo.addItem(safeString("Triangle"), 2);
+    lfo3WaveformCombo.addItem(safeString("Saw Up"), 3);
+    lfo3WaveformCombo.addItem(safeString("Saw Down"), 4);
+    lfo3WaveformCombo.addItem(safeString("Square"), 5);
+    lfo3WaveformCombo.addItem(safeString("S&H"), 6);
+    lfo3WaveformCombo.setSelectedId(1);
+    lfo3WaveformAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.getValueTreeState(), "lfo3Waveform", lfo3WaveformCombo);
+    lfo3WaveformLabel.setText(safeString("Waveform"), juce::dontSendNotification);
+    lfo3WaveformLabel.setJustificationType(juce::Justification::centred);
+    lfo3WaveformLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    lfo3WaveformLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+
+    lfo3EnabledButton.setButtonText(safeString("On"));
+    lfo3EnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "lfo3Enabled", lfo3EnabledButton);
+
+    lfo3SyncButton.setButtonText(safeString("Sync"));
+    lfo3SyncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "lfo3Sync", lfo3SyncButton);
+    lfo3SyncLabel.setText(safeString("Sync"), juce::dontSendNotification);
+    lfo3SyncLabel.setJustificationType(juce::Justification::centred);
+    lfo3SyncLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    lfo3SyncLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+
+    lfo3TripletButton.setButtonText(safeString("Triplet"));
+    lfo3TripletAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "lfo3TripletEnabled", lfo3TripletButton);
+    lfo3TripletButton.setVisible(false);
+
+    lfo3TripletStraightButton.setButtonText(safeString("All"));
+    lfo3TripletStraightAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "lfo3TripletStraightToggle", lfo3TripletStraightButton);
+    lfo3TripletStraightButton.setVisible(false);
+
+    lfo3FreeRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    lfo3FreeRateSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    lfo3FreeRateSlider.setRange(0.0, 12.0, 0.01);
+    lfo3FreeRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "lfo3Rate", lfo3FreeRateSlider);
+    lfo3RateLabel.setText(safeString("Rate"), juce::dontSendNotification);
+    lfo3RateLabel.setJustificationType(juce::Justification::centred);
+    lfo3RateLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    lfo3RateLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+    lfo3RateValueLabel.setText(safeString("1.00 Hz"), juce::dontSendNotification);
+    lfo3RateValueLabel.setJustificationType(juce::Justification::centred);
+    lfo3RateValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    lfo3RateValueLabel.setFont(customLookAndFeel.getBodyFont(12.0f, false));
+
+    lfo3SyncRateCombo.addItem(safeString("1/32"), 1);
+    lfo3SyncRateCombo.addItem(safeString("1/16"), 2);
+    lfo3SyncRateCombo.addItem(safeString("1/8"), 3);
+    lfo3SyncRateCombo.addItem(safeString("1/4"), 4);
+    lfo3SyncRateCombo.addItem(safeString("1/2"), 5);
+    lfo3SyncRateCombo.addItem(safeString("1/1"), 6);
+    lfo3SyncRateCombo.addItem(safeString("2/1"), 7);
+    lfo3SyncRateCombo.addItem(safeString("4/1"), 8);
+    lfo3SyncRateCombo.addItem(safeString("8/1"), 9);
+    lfo3SyncRateCombo.addItem(safeString("16/1"), 10);
+    lfo3SyncRateCombo.addItem(safeString("32/1"), 11);
+    lfo3SyncRateCombo.addItem(safeString("64/1"), 12);
+    lfo3SyncRateCombo.addItem(safeString("128/1"), 13);
+    lfo3SyncRateListener = std::make_unique<SyncRateComboListener>(&lfo3FreeRateSlider);
+    lfo3SyncRateCombo.addListener(lfo3SyncRateListener.get());
+    // Sync combo from parameter (restores saved value when editor reopens)
+    lfo3SyncRateCombo.setSelectedId(juce::jlimit(1, 13, static_cast<int>(std::round(lfo3FreeRateSlider.getValue())) + 1),
+                                    juce::dontSendNotification);
+    // Always show the knob, hide the combo box
+    lfo3FreeRateSlider.setVisible(true);
+    lfo3SyncRateCombo.setVisible(false);
+    lfo3RateValueLabel.setVisible(true);  // Shows Hz or sync division
+
+    lfo3DepthSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    lfo3DepthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    lfo3DepthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "lfo3Depth", lfo3DepthSlider);
+    lfo3DepthLabel.setText(safeString("Depth"), juce::dontSendNotification);
+    lfo3DepthLabel.setJustificationType(juce::Justification::centred);
+    lfo3DepthLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    lfo3DepthLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+
+    lfo3PhaseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    lfo3PhaseSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    lfo3PhaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "lfo3Phase", lfo3PhaseSlider);
+    lfo3PhaseLabel.setText(safeString("Phase"), juce::dontSendNotification);
+    lfo3PhaseLabel.setJustificationType(juce::Justification::centred);
+    lfo3PhaseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    lfo3PhaseLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+
+    // LFO3 Retrigger button
+    lfo3RetriggerButton.setButtonText(safeString("Retrigger"));
+    lfo3RetriggerButton.setToggleState(true, juce::dontSendNotification);
+    lfo3RetriggerAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "lfo3Retrigger", lfo3RetriggerButton);
+
+    //==============================================================================
+    // -- LFO4 Setup (Modulation tab) -- same shape as LFO1/LFO2/LFO3 above.
+    lfo4WaveformCombo.addItem(safeString("Sine"), 1);
+    lfo4WaveformCombo.addItem(safeString("Triangle"), 2);
+    lfo4WaveformCombo.addItem(safeString("Saw Up"), 3);
+    lfo4WaveformCombo.addItem(safeString("Saw Down"), 4);
+    lfo4WaveformCombo.addItem(safeString("Square"), 5);
+    lfo4WaveformCombo.addItem(safeString("S&H"), 6);
+    lfo4WaveformCombo.setSelectedId(1);
+    lfo4WaveformAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(
+        audioProcessor.getValueTreeState(), "lfo4Waveform", lfo4WaveformCombo);
+    lfo4WaveformLabel.setText(safeString("Waveform"), juce::dontSendNotification);
+    lfo4WaveformLabel.setJustificationType(juce::Justification::centred);
+    lfo4WaveformLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    lfo4WaveformLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+
+    lfo4EnabledButton.setButtonText(safeString("On"));
+    lfo4EnabledAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "lfo4Enabled", lfo4EnabledButton);
+
+    lfo4SyncButton.setButtonText(safeString("Sync"));
+    lfo4SyncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "lfo4Sync", lfo4SyncButton);
+    lfo4SyncLabel.setText(safeString("Sync"), juce::dontSendNotification);
+    lfo4SyncLabel.setJustificationType(juce::Justification::centred);
+    lfo4SyncLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    lfo4SyncLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+
+    lfo4TripletButton.setButtonText(safeString("Triplet"));
+    lfo4TripletAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "lfo4TripletEnabled", lfo4TripletButton);
+    lfo4TripletButton.setVisible(false);
+
+    lfo4TripletStraightButton.setButtonText(safeString("All"));
+    lfo4TripletStraightAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "lfo4TripletStraightToggle", lfo4TripletStraightButton);
+    lfo4TripletStraightButton.setVisible(false);
+
+    lfo4FreeRateSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    lfo4FreeRateSlider.setTextBoxStyle(juce::Slider::NoTextBox, false, 0, 0);
+    lfo4FreeRateSlider.setRange(0.0, 12.0, 0.01);
+    lfo4FreeRateAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "lfo4Rate", lfo4FreeRateSlider);
+    lfo4RateLabel.setText(safeString("Rate"), juce::dontSendNotification);
+    lfo4RateLabel.setJustificationType(juce::Justification::centred);
+    lfo4RateLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    lfo4RateLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+    lfo4RateValueLabel.setText(safeString("1.00 Hz"), juce::dontSendNotification);
+    lfo4RateValueLabel.setJustificationType(juce::Justification::centred);
+    lfo4RateValueLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    lfo4RateValueLabel.setFont(customLookAndFeel.getBodyFont(12.0f, false));
+
+    lfo4SyncRateCombo.addItem(safeString("1/32"), 1);
+    lfo4SyncRateCombo.addItem(safeString("1/16"), 2);
+    lfo4SyncRateCombo.addItem(safeString("1/8"), 3);
+    lfo4SyncRateCombo.addItem(safeString("1/4"), 4);
+    lfo4SyncRateCombo.addItem(safeString("1/2"), 5);
+    lfo4SyncRateCombo.addItem(safeString("1/1"), 6);
+    lfo4SyncRateCombo.addItem(safeString("2/1"), 7);
+    lfo4SyncRateCombo.addItem(safeString("4/1"), 8);
+    lfo4SyncRateCombo.addItem(safeString("8/1"), 9);
+    lfo4SyncRateCombo.addItem(safeString("16/1"), 10);
+    lfo4SyncRateCombo.addItem(safeString("32/1"), 11);
+    lfo4SyncRateCombo.addItem(safeString("64/1"), 12);
+    lfo4SyncRateCombo.addItem(safeString("128/1"), 13);
+    lfo4SyncRateListener = std::make_unique<SyncRateComboListener>(&lfo4FreeRateSlider);
+    lfo4SyncRateCombo.addListener(lfo4SyncRateListener.get());
+    // Sync combo from parameter (restores saved value when editor reopens)
+    lfo4SyncRateCombo.setSelectedId(juce::jlimit(1, 13, static_cast<int>(std::round(lfo4FreeRateSlider.getValue())) + 1),
+                                    juce::dontSendNotification);
+    // Always show the knob, hide the combo box
+    lfo4FreeRateSlider.setVisible(true);
+    lfo4SyncRateCombo.setVisible(false);
+    lfo4RateValueLabel.setVisible(true);  // Shows Hz or sync division
+
+    lfo4DepthSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    lfo4DepthSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    lfo4DepthAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "lfo4Depth", lfo4DepthSlider);
+    lfo4DepthLabel.setText(safeString("Depth"), juce::dontSendNotification);
+    lfo4DepthLabel.setJustificationType(juce::Justification::centred);
+    lfo4DepthLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    lfo4DepthLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+
+    lfo4PhaseSlider.setSliderStyle(juce::Slider::RotaryVerticalDrag);
+    lfo4PhaseSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+    lfo4PhaseAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
+        audioProcessor.getValueTreeState(), "lfo4Phase", lfo4PhaseSlider);
+    lfo4PhaseLabel.setText(safeString("Phase"), juce::dontSendNotification);
+    lfo4PhaseLabel.setJustificationType(juce::Justification::centred);
+    lfo4PhaseLabel.setColour(juce::Label::textColourId, juce::Colour(0xffa0d8ff));
+    lfo4PhaseLabel.setFont(customLookAndFeel.getBodyFont(12.0f, true));
+
+    // LFO4 Retrigger button
+    lfo4RetriggerButton.setButtonText(safeString("Retrigger"));
+    lfo4RetriggerButton.setToggleState(true, juce::dontSendNotification);
+    lfo4RetriggerAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(
+        audioProcessor.getValueTreeState(), "lfo4Retrigger", lfo4RetriggerButton);
+
     //==============================================================================
     // -- Delay Effect Setup (Effects tab) --
     delayEnabledButton.setButtonText(safeString("On"));
@@ -5966,6 +6103,8 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     syncGroupGlow(grainDelayEnabledButton, grainDelayGroup);
     syncGroupGlow(lfo1EnabledButton, lfo1Group);
     syncGroupGlow(lfo2EnabledButton, lfo2Group);
+    syncGroupGlow(lfo3EnabledButton, lfo3Group);
+    syncGroupGlow(lfo4EnabledButton, lfo4Group);
     finalEQEnabledButton.addListener(this);
     syncGroupGlow(finalEQEnabledButton, finalEQGroup);
 
@@ -5973,10 +6112,6 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // -- Assign buttons, one per LFO panel --
     // Built BEFORE the pages, because ModulationPageComponent's constructor adds
     // them as its children and its resized() puts them in the LFO boxes.
-    //
-    // Two, not spacedust::numLfos: LFOs 3 and 4 have their buffers and their
-    // colours but no parameters and no panel yet, so there is nowhere to put a
-    // third button. When they get a panel, this loop grows with it.
     for (int lfo = 0; lfo < numLfoPanels; ++lfo)
     {
         auto* button = lfoAssignButtons.add(new juce::TextButton(safeString("Assign")));
@@ -7685,6 +7820,66 @@ static const juce::String allLabels[18] = {
     "1/98 bar", "1/128 bar", "1/128 bar"
 };
 
+void SpaceDustAudioProcessorEditor::updateLfoRateDisplay(int index)
+{
+    // "lfo1Sync", "lfo2TripletEnabled", etc. -- built once here rather than
+    // baked into four copies of this function under different names.
+    const juce::String prefix = "lfo" + juce::String(index + 1);
+    auto r = lfoPanelRefs(index);
+
+    const bool   sync    = safeGetParam(prefix + "Sync") > 0.5f;
+    const double rate    = r.freeRateSlider.getValue();
+    const bool   triplet = safeGetParam(prefix + "TripletEnabled") > 0.5f;
+    const bool   all     = safeGetParam(prefix + "TripletStraightToggle") > 0.5f;
+
+    r.freeRateSlider.setVisible(true);
+    r.syncRateCombo.setVisible(false);
+
+    if (sync)
+    {
+        // Sync mode: linear mapping (matches processor - avoids fold-back)
+        float rateClamped = juce::jlimit(0.0f, 12.0f, static_cast<float>(rate));
+        int musicalIndex = static_cast<int>(std::round(rateClamped * 8.0f / 12.0f));
+        musicalIndex = juce::jlimit(0, 8, musicalIndex);
+
+        juce::String syncText;
+        if (triplet && all)
+        {
+            int mappedIndex = static_cast<int>(std::round(rateClamped * 17.0f / 12.0f));
+            mappedIndex = juce::jlimit(0, 17, mappedIndex);
+            syncText = allLabels[mappedIndex];
+        }
+        else if (triplet && !all)
+        {
+            syncText = tripletLabels[musicalIndex];
+        }
+        else
+        {
+            syncText = straightLabels[musicalIndex];
+        }
+
+        if (!isBeingDestroyed.load())
+        {
+            r.rateValueLabel.setText(syncText, juce::dontSendNotification);
+            r.tripletButton.setVisible(true);
+            r.tripletStraightButton.setVisible(triplet);
+        }
+    }
+    else
+    {
+        // Free mode: 0.01-200 Hz logarithmic. Shares the processor's mapping so the
+        // readout cannot drift from the rate actually being rendered.
+        const juce::String rateText = juce::String::formatted("%.2f Hz",
+            SpaceDustAudioProcessor::lfoKnobToHz(static_cast<double>(rate)));
+        if (!isBeingDestroyed.load())
+        {
+            r.rateValueLabel.setText(rateText, juce::dontSendNotification);
+            r.tripletButton.setVisible(false);
+            r.tripletStraightButton.setVisible(false);
+        }
+    }
+}
+
 void SpaceDustAudioProcessorEditor::timerCallback()
 {
     if (isBeingDestroyed.load())
@@ -7717,111 +7912,11 @@ void SpaceDustAudioProcessorEditor::timerCallback()
         return;  // Skip LFO display updates this tick
     }
     
-    // Update LFO1 rate display
-    bool lfo1Sync = safeGetParam("lfo1Sync") > 0.5f;
-    double lfo1Rate = lfo1FreeRateSlider.getValue();
-    bool lfo1Triplet = safeGetParam("lfo1TripletEnabled") > 0.5f;
-    bool lfo1All = safeGetParam("lfo1TripletStraightToggle") > 0.5f;
-    
-    lfo1FreeRateSlider.setVisible(true);
-    lfo1SyncRateCombo.setVisible(false);
-    
-    if (lfo1Sync)
-    {
-        // Sync mode: linear mapping (matches processor - avoids fold-back)
-        float rateClamped = juce::jlimit(0.0f, 12.0f, static_cast<float>(lfo1Rate));
-        int musicalIndex = static_cast<int>(std::round(rateClamped * 8.0f / 12.0f));
-        musicalIndex = juce::jlimit(0, 8, musicalIndex);
-        
-        juce::String syncText;
-        if (lfo1Triplet && lfo1All)
-        {
-            int mappedIndex = static_cast<int>(std::round(rateClamped * 17.0f / 12.0f));
-            mappedIndex = juce::jlimit(0, 17, mappedIndex);
-            syncText = allLabels[mappedIndex];
-        }
-        else if (lfo1Triplet && !lfo1All)
-        {
-            syncText = tripletLabels[musicalIndex];
-        }
-        else
-        {
-            syncText = straightLabels[musicalIndex];
-        }
-        
-        if (!isBeingDestroyed.load())
-        {
-            lfo1RateValueLabel.setText(syncText, juce::dontSendNotification);
-            lfo1TripletButton.setVisible(true);
-            lfo1TripletStraightButton.setVisible(lfo1Triplet);
-        }
-    }
-    else
-    {
-        // Free mode: 0.01-200 Hz logarithmic. Shares the processor's mapping so the
-        // readout cannot drift from the rate actually being rendered.
-        const juce::String rateText = juce::String::formatted("%.2f Hz",
-            SpaceDustAudioProcessor::lfoKnobToHz(static_cast<double>(lfo1Rate)));
-        if (!isBeingDestroyed.load())
-        {
-            lfo1RateValueLabel.setText(rateText, juce::dontSendNotification);
-            lfo1TripletButton.setVisible(false);
-            lfo1TripletStraightButton.setVisible(false);
-        }
-    }
-    
-    // Update LFO2 rate display
-    bool lfo2Sync = safeGetParam("lfo2Sync") > 0.5f;
-    double lfo2Rate = lfo2FreeRateSlider.getValue();
-    bool lfo2Triplet = safeGetParam("lfo2TripletEnabled") > 0.5f;
-    bool lfo2All = safeGetParam("lfo2TripletStraightToggle") > 0.5f;
-    
-    lfo2FreeRateSlider.setVisible(true);
-    lfo2SyncRateCombo.setVisible(false);
-    
-    if (lfo2Sync)
-    {
-        // Sync mode: linear mapping (matches processor - avoids fold-back)
-        float rateClamped = juce::jlimit(0.0f, 12.0f, static_cast<float>(lfo2Rate));
-        int musicalIndex = static_cast<int>(std::round(rateClamped * 8.0f / 12.0f));
-        musicalIndex = juce::jlimit(0, 8, musicalIndex);
-        
-        juce::String syncText;
-        if (lfo2Triplet && lfo2All)
-        {
-            int mappedIndex = static_cast<int>(std::round(rateClamped * 17.0f / 12.0f));
-            mappedIndex = juce::jlimit(0, 17, mappedIndex);
-            syncText = allLabels[mappedIndex];
-        }
-        else if (lfo2Triplet && !lfo2All)
-        {
-            syncText = tripletLabels[musicalIndex];
-        }
-        else
-        {
-            syncText = straightLabels[musicalIndex];
-        }
-        
-        if (!isBeingDestroyed.load())
-        {
-            lfo2RateValueLabel.setText(syncText, juce::dontSendNotification);
-            lfo2TripletButton.setVisible(true);
-            lfo2TripletStraightButton.setVisible(lfo2Triplet);
-        }
-    }
-    else
-    {
-        // Free mode -- see the LFO1 branch above.
-        const juce::String rateText = juce::String::formatted("%.2f Hz",
-            SpaceDustAudioProcessor::lfoKnobToHz(static_cast<double>(lfo2Rate)));
-        if (!isBeingDestroyed.load())
-        {
-            lfo2RateValueLabel.setText(rateText, juce::dontSendNotification);
-            lfo2TripletButton.setVisible(false);
-            lfo2TripletStraightButton.setVisible(false);
-        }
-    }
-    
+    // Update all four LFOs' rate displays. See updateLfoRateDisplay: LFO1-4's
+    // blocks here used to be four copies of this apart from their names.
+    for (int lfo = 0; lfo < numLfoPanels; ++lfo)
+        updateLfoRateDisplay(lfo);
+
     // Update Delay rate display (inverted: knob 0 = long, knob 12 = short)
     // Use same parameter value as processor for consistency
     bool delaySync = safeGetParam("delaySync") > 0.5f;

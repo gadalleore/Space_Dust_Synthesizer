@@ -449,6 +449,12 @@ public:
     float safeGetParam(const juce::String& paramID, float fallback = 0.0f) const noexcept;
 
 private:
+    /** Refreshes one LFO panel's rate readout (Hz or sync division text) and its
+        triplet buttons' visibility from the current parameter values. Runs on the
+        UI timer, not the audio thread. index is 0-3; LFO1-4's timerCallback blocks
+        used to be four copies of this apart from their names. */
+    void updateLfoRateDisplay(int index);
+
     SpaceDustAudioProcessor& audioProcessor;
     
     //==============================================================================
@@ -972,8 +978,86 @@ private:
     juce::Label lfo2RateValueLabel;  // Value display for free rate (Hz) or sync beats
     juce::Label lfo2DepthLabel;
     juce::Label lfo2PhaseLabel;
-    
-    
+
+    // LFO3 Sub-group and Controls
+    juce::GroupComponent lfo3Group;
+    juce::ToggleButton lfo3EnabledButton;
+    juce::ComboBox lfo3WaveformCombo;
+    juce::ToggleButton lfo3SyncButton;
+    juce::ToggleButton lfo3TripletButton;  // Triplet timing toggle (only visible when sync is on)
+    juce::ToggleButton lfo3TripletStraightButton;  // Triplet/Straight toggle (only visible when triplet is enabled)
+    juce::Slider lfo3FreeRateSlider;  // Free rate slider (0.01-200 Hz)
+    juce::ComboBox lfo3SyncRateCombo;  // Sync rate combo (1/32 to 8)
+    juce::Slider lfo3DepthSlider;
+    juce::Slider lfo3PhaseSlider;
+    juce::ToggleButton lfo3RetriggerButton;
+
+    juce::Label lfo3WaveformLabel;
+    juce::Label lfo3SyncLabel;
+    juce::Label lfo3RateLabel;
+    juce::Label lfo3RateValueLabel;  // Value display for free rate (Hz) or sync beats
+    juce::Label lfo3DepthLabel;
+    juce::Label lfo3PhaseLabel;
+
+    // LFO4 Sub-group and Controls
+    juce::GroupComponent lfo4Group;
+    juce::ToggleButton lfo4EnabledButton;
+    juce::ComboBox lfo4WaveformCombo;
+    juce::ToggleButton lfo4SyncButton;
+    juce::ToggleButton lfo4TripletButton;  // Triplet timing toggle (only visible when sync is on)
+    juce::ToggleButton lfo4TripletStraightButton;  // Triplet/Straight toggle (only visible when triplet is enabled)
+    juce::Slider lfo4FreeRateSlider;  // Free rate slider (0.01-200 Hz)
+    juce::ComboBox lfo4SyncRateCombo;  // Sync rate combo (1/32 to 8)
+    juce::Slider lfo4DepthSlider;
+    juce::Slider lfo4PhaseSlider;
+    juce::ToggleButton lfo4RetriggerButton;
+
+    juce::Label lfo4WaveformLabel;
+    juce::Label lfo4SyncLabel;
+    juce::Label lfo4RateLabel;
+    juce::Label lfo4RateValueLabel;  // Value display for free rate (Hz) or sync beats
+    juce::Label lfo4DepthLabel;
+    juce::Label lfo4PhaseLabel;
+
+public:
+    //==========================================================================
+    // -- One struct of references per LFO panel, so ModulationPageComponent can
+    // build and lay out all four panels through a single function instead of
+    // four near-identical blocks. LFO1-4's widgets stay ordinary named members
+    // above (their construction and attachments are already tiny per-LFO
+    // blocks, and attachments differ in TYPE per control, which does not
+    // collapse into an array cleanly) -- this struct just gathers references to
+    // them for the one piece that WAS a large, exact duplicate: panel layout.
+    //
+    // Public (and the free layout functions in PluginEditor.cpp that take it are
+    // not friends) so those functions can take it by value without needing
+    // friendship of their own -- everything it points at is still reached only
+    // through parentEditor by ModulationPageComponent, which IS a friend.
+    struct LfoPanelRefs
+    {
+        juce::GroupComponent& group;
+        juce::ToggleButton& enabledButton;
+        juce::ComboBox& waveformCombo;
+        juce::Label& waveformLabel;
+        juce::ToggleButton& syncButton;
+        juce::Label& syncLabel;
+        juce::ToggleButton& tripletButton;
+        juce::ToggleButton& tripletStraightButton;
+        juce::Slider& freeRateSlider;
+        juce::ComboBox& syncRateCombo;
+        juce::Label& rateLabel;
+        juce::Label& rateValueLabel;
+        juce::Slider& depthSlider;
+        juce::Label& depthLabel;
+        juce::Slider& phaseSlider;
+        juce::Label& phaseLabel;
+        juce::ToggleButton& retriggerButton;
+    };
+
+    /** index is 0-3, matching spacedust::numLfos / AssignModeState::colourFor. */
+    LfoPanelRefs lfoPanelRefs(int index);
+
+private:
     // Delay Effect (Effects tab)
     juce::GroupComponent delayGroup;
     juce::GroupComponent reverbGroup;
@@ -1311,11 +1395,33 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfo2FreeRateAttachment;  // Attached to lfo2Rate parameter
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfo2DepthAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfo2PhaseAttachment;
-    
+
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo3EnabledAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> lfo3WaveformAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo3SyncAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo3TripletAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo3TripletStraightAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo3RetriggerAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfo3FreeRateAttachment;  // Attached to lfo3Rate parameter
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfo3DepthAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfo3PhaseAttachment;
+
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo4EnabledAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> lfo4WaveformAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo4SyncAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo4TripletAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo4TripletStraightAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> lfo4RetriggerAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfo4FreeRateAttachment;  // Attached to lfo4Rate parameter
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfo4DepthAttachment;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> lfo4PhaseAttachment;
+
 
     // Listeners for sync rate combos (must be destroyed before components)
     std::unique_ptr<SyncRateComboListener> lfo1SyncRateListener;
     std::unique_ptr<SyncRateComboListener> lfo2SyncRateListener;
+    std::unique_ptr<SyncRateComboListener> lfo3SyncRateListener;
+    std::unique_ptr<SyncRateComboListener> lfo4SyncRateListener;
     std::unique_ptr<SyncRateComboListener> delaySyncRateListener;
     
     // Delay Attachments (Effects Section)
@@ -1475,10 +1581,9 @@ private:
     /** One per assignable knob, created by wrapKnob and owned here. */
     juce::OwnedArray<ModulatableKnob> modKnobs;
 
-    /** One Assign button per LFO panel -- two, because LFOs 3 and 4 have no
-        parameters and no panel yet. Indexed by LFO number. */
+    /** One Assign button per LFO panel. Indexed by LFO number. */
     juce::OwnedArray<juce::TextButton> lfoAssignButtons;
-    static constexpr int numLfoPanels = 2;
+    static constexpr int numLfoPanels = 4;
 
     /** Appears in the tab strip only while assign mode is on. */
     juce::TextButton exitLfoModeButton { "Exit LFO Mode" };

@@ -678,6 +678,8 @@ SpaceDustAudioProcessor::SpaceDustAudioProcessor()
         
         apvts.addParameterListener(juce::ParameterID{"lfo1Retrigger", 1}.getParamID(), this);
         apvts.addParameterListener(juce::ParameterID{"lfo2Retrigger", 1}.getParamID(), this);
+        apvts.addParameterListener(juce::ParameterID{"lfo3Retrigger", 1}.getParamID(), this);
+        apvts.addParameterListener(juce::ParameterID{"lfo4Retrigger", 1}.getParamID(), this);
         apvts.addParameterListener(juce::ParameterID{"filterEnvAttack", 1}.getParamID(), this);
         apvts.addParameterListener(juce::ParameterID{"filterEnvDecay", 1}.getParamID(), this);
         apvts.addParameterListener(juce::ParameterID{"filterEnvRelease", 1}.getParamID(), this);
@@ -744,6 +746,14 @@ SpaceDustAudioProcessor::SpaceDustAudioProcessor()
         {
             lfoRetrigger[1].store(lfo2RetriggerParam->getValue() > 0.5f);
         }
+        if (auto* lfo3RetriggerParam = apvts.getParameter(juce::ParameterID{"lfo3Retrigger", 1}.getParamID()))
+        {
+            lfoRetrigger[2].store(lfo3RetriggerParam->getValue() > 0.5f);
+        }
+        if (auto* lfo4RetriggerParam = apvts.getParameter(juce::ParameterID{"lfo4Retrigger", 1}.getParamID()))
+        {
+            lfoRetrigger[3].store(lfo4RetriggerParam->getValue() > 0.5f);
+        }
     }
     catch (const std::exception& e)
     {
@@ -788,6 +798,8 @@ SpaceDustAudioProcessor::~SpaceDustAudioProcessor()
     apvts.removeParameterListener(juce::ParameterID{"envRelease", 1}.getParamID(), this);
     apvts.removeParameterListener(juce::ParameterID{"lfo1Retrigger", 1}.getParamID(), this);
     apvts.removeParameterListener(juce::ParameterID{"lfo2Retrigger", 1}.getParamID(), this);
+    apvts.removeParameterListener(juce::ParameterID{"lfo3Retrigger", 1}.getParamID(), this);
+    apvts.removeParameterListener(juce::ParameterID{"lfo4Retrigger", 1}.getParamID(), this);
     apvts.removeParameterListener(juce::ParameterID{"filterEnvAttack", 1}.getParamID(), this);
     apvts.removeParameterListener(juce::ParameterID{"filterEnvDecay", 1}.getParamID(), this);
     apvts.removeParameterListener(juce::ParameterID{"filterEnvRelease", 1}.getParamID(), this);
@@ -1603,6 +1615,14 @@ void SpaceDustAudioProcessor::parameterChanged(const juce::String& parameterID, 
     else if (parameterID == juce::ParameterID{"lfo2Retrigger", 1}.getParamID())
     {
         lfoRetrigger[1].store(newValue > 0.5f);
+    }
+    else if (parameterID == juce::ParameterID{"lfo3Retrigger", 1}.getParamID())
+    {
+        lfoRetrigger[2].store(newValue > 0.5f);
+    }
+    else if (parameterID == juce::ParameterID{"lfo4Retrigger", 1}.getParamID())
+    {
+        lfoRetrigger[3].store(newValue > 0.5f);
     }
     else if (parameterID == juce::ParameterID{"filterEnvAttack", 1}.getParamID())
     {
@@ -5634,6 +5654,132 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
                     juce::AudioParameterFloatAttributes().withStringFromValueFunction(twoDecimals)),
                 safeString(pp.id));
     }
+
+    //==============================================================================
+    // -- LFO 3 and LFO 4 Parameters --
+    //
+    // Same nine controls as LFO1 and LFO2, minus Target -- the matrix now
+    // addresses an LFO by index rather than each LFO carrying its own
+    // destination choice. APPENDED HERE, after everything else: a VST3 host
+    // automates by parameter INDEX, so a new parameter inserted anywhere but
+    // the end renumbers every one after it and moves the automation in every
+    // project that already used them.
+
+    // LFO3 Waveform
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"lfo3Waveform", 1}, "LFO3 Waveform",
+            juce::StringArray(safeString("Sine"), safeString("Triangle"), safeString("Saw Up"), safeString("Saw Down"), safeString("Square"), safeString("S&H")), 0),
+        safeString("lfo3Waveform"));
+
+    // LFO3 On (enable/disable modulation)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo3Enabled", 1}, "LFO3 On", false),
+        "lfo3Enabled");
+
+    // LFO3 Depth (0-100%)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"lfo3Depth", 1}, "LFO3 Depth",
+            juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 25.0f),
+        "lfo3Depth");
+
+    // LFO3 Sync (on/off)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo3Sync", 1}, "LFO3 Sync", false),
+        "lfo3Sync");
+
+    // LFO3 Rate (0-12: maps to 0.01-200 Hz when sync off, or tempo divisions when sync on)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"lfo3Rate", 1}, "LFO3 Rate",
+            juce::NormalisableRange<float>(0.0f, 12.0f, 0.01f), 6.0f),
+        "lfo3Rate");
+
+    // LFO3 Phase (0-360Â°)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"lfo3Phase", 1}, "LFO3 Phase",
+            juce::NormalisableRange<float>(0.0f, 360.0f, 0.1f), 0.0f),
+        "lfo3Phase");
+
+    // LFO3 Triplet Enabled (on/off)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo3TripletEnabled", 1}, "LFO3 Triplet", false),
+        "lfo3TripletEnabled");
+
+    // LFO3 Triplet/Straight Toggle (All mode: on/off)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo3TripletStraightToggle", 1}, "LFO3 All", false),
+        "lfo3TripletStraightToggle");
+
+    // LFO3 Retrigger (on/off)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo3Retrigger", 1}, "LFO3 Retrigger", true),
+        "lfo3Retrigger");
+
+    // LFO4 Waveform
+    addParameterWithLogging(params,
+        std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"lfo4Waveform", 1}, "LFO4 Waveform",
+            juce::StringArray(safeString("Sine"), safeString("Triangle"), safeString("Saw Up"), safeString("Saw Down"), safeString("Square"), safeString("S&H")), 0),
+        safeString("lfo4Waveform"));
+
+    // LFO4 On (enable/disable modulation)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo4Enabled", 1}, "LFO4 On", false),
+        "lfo4Enabled");
+
+    // LFO4 Depth (0-100%)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"lfo4Depth", 1}, "LFO4 Depth",
+            juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 25.0f),
+        "lfo4Depth");
+
+    // LFO4 Sync (on/off)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo4Sync", 1}, "LFO4 Sync", false),
+        "lfo4Sync");
+
+    // LFO4 Rate (0-12: maps to 0.01-200 Hz when sync off, or tempo divisions when sync on)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"lfo4Rate", 1}, "LFO4 Rate",
+            juce::NormalisableRange<float>(0.0f, 12.0f, 0.01f), 6.0f),
+        "lfo4Rate");
+
+    // LFO4 Phase (0-360Â°)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"lfo4Phase", 1}, "LFO4 Phase",
+            juce::NormalisableRange<float>(0.0f, 360.0f, 0.1f), 0.0f),
+        "lfo4Phase");
+
+    // LFO4 Triplet Enabled (on/off)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo4TripletEnabled", 1}, "LFO4 Triplet", false),
+        "lfo4TripletEnabled");
+
+    // LFO4 Triplet/Straight Toggle (All mode: on/off)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo4TripletStraightToggle", 1}, "LFO4 All", false),
+        "lfo4TripletStraightToggle");
+
+    // LFO4 Retrigger (on/off)
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"lfo4Retrigger", 1}, "LFO4 Retrigger", true),
+        "lfo4Retrigger");
 
     //==============================================================================
     // -- DEBUG: createParameterLayout End --
