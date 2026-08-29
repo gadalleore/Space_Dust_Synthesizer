@@ -2186,6 +2186,22 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                     buf.setSample(0, s, lfoSmoothedValue[lfo]);
                 }
                 lfoPrevPhase[lfo] = prevPhase;
+
+                // Beat-synced phase is derived from host position, not from
+                // lfoCurrentPhase -- that accumulator belongs to the free-running/
+                // retrigger path below, and this branch must never write it (doing
+                // so would make the LFO jump when the transport stops or retrigger
+                // is switched on). So the display value is published separately,
+                // right here, instead of falling through to a single store at the
+                // bottom of the loop. Do NOT "tidy" this back into one shared store;
+                // lfoCurrentPhase is stale for the whole time this branch runs.
+                // Computed once for the last sample of the block (not tracked per
+                // sample in the loop above, since only the block-end value is ever
+                // read) so it matches what the free-running branch publishes: the
+                // phase closest to what the player is hearing right now.
+                double ppqEnd = ppqStart + static_cast<double>(numSamples - 1) / samplesPerBeat;
+                double phaseEnd = std::fmod(ppqEnd, periodBeats) / periodBeats;
+                lfoPhase01[lfo].store(static_cast<float>(phaseEnd), std::memory_order_relaxed);
             }
             else
             {
@@ -2204,6 +2220,12 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                     buf.setSample(0, s, lfoSmoothedValue[lfo]);
                 }
                 lfoCurrentPhase[lfo] = phase;
+
+                // Publish the phase at the END of the block: the value closest to
+                // what the player is hearing by the time the editor's timer next
+                // reads it. Relaxed store -- this only feeds a visual indicator,
+                // nothing else synchronises on it.
+                lfoPhase01[lfo].store(static_cast<float>(lfoCurrentPhase[lfo]), std::memory_order_relaxed);
             }
         }
         else
@@ -2230,12 +2252,11 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 buf.setSample(0, s, lfoSmoothedValue[lfo]);
             }
             lfoCurrentPhase[lfo] = phase;
-        }
 
-        // Publish the phase at the END of the block: the value closest to what the
-        // player is hearing by the time the editor's timer next reads it. Relaxed
-        // store -- this only feeds a visual indicator, nothing else synchronises on it.
-        lfoPhase01[lfo].store(static_cast<float>(lfoCurrentPhase[lfo]), std::memory_order_relaxed);
+            // Publish the phase at the END of the block, same as the retrigger
+            // branch above. Relaxed store -- display only, nothing synchronises on it.
+            lfoPhase01[lfo].store(static_cast<float>(lfoCurrentPhase[lfo]), std::memory_order_relaxed);
+        }
     }
 
     // Pitch bend snap-back: smooth linear ramp over 0.05s (per-block interpolation, no stepping)
