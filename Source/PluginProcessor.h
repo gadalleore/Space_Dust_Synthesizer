@@ -296,6 +296,15 @@ public:
     // LFO current phases (public for voice access), 0.0 to 1.0
     double lfoCurrentPhase[spacedust::numLfos] { 0.0, 0.0, 0.0, 0.0 };
 
+    /** Where each LFO is in its cycle, 0..1, for the editor's indicator bars.
+
+        Written once per block by the audio thread and read by the editor's timer
+        on the message thread. Relaxed atomics: a bar that is one frame old is
+        invisible to the eye, and a lock here would be worse than the staleness.
+        What is NOT acceptable is the plain double array this replaces -- that was
+        a genuine data race, however harmless it looked. */
+    std::atomic<float> lfoPhase01[spacedust::numLfos] { 0.0f, 0.0f, 0.0f, 0.0f };
+
     // LFO output smoothing (prevents clicks on retrigger/phase jumps)
     float lfoSmoothedValue[spacedust::numLfos] { 0.0f, 0.0f, 0.0f, 0.0f };
 

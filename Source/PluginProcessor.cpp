@@ -2231,6 +2231,11 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             }
             lfoCurrentPhase[lfo] = phase;
         }
+
+        // Publish the phase at the END of the block: the value closest to what the
+        // player is hearing by the time the editor's timer next reads it. Relaxed
+        // store -- this only feeds a visual indicator, nothing else synchronises on it.
+        lfoPhase01[lfo].store(static_cast<float>(lfoCurrentPhase[lfo]), std::memory_order_relaxed);
     }
 
     // Pitch bend snap-back: smooth linear ramp over 0.05s (per-block interpolation, no stepping)

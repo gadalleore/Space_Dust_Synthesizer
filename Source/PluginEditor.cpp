@@ -7845,7 +7845,7 @@ void SpaceDustAudioProcessorEditor::refreshModIndicators()
     float phases[spacedust::numLfos] {};
 
     for (int i = 0; i < spacedust::numLfos; ++i)
-        phases[i] = (float) juce::jlimit(0.0, 1.0, audioProcessor.lfoCurrentPhase[i]);
+        phases[i] = juce::jlimit(0.0f, 1.0f, audioProcessor.lfoPhase01[i].load(std::memory_order_relaxed));
 
     // setLfoPhases repaints only the bar, and only for a knob something actually
     // reaches, so this costs nothing on a patch with no routings.
