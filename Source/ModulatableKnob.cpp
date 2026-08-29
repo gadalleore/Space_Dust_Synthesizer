@@ -21,11 +21,52 @@ ModulatableKnob::ModulatableKnob (juce::Slider& knobToWrap,
       routingChanged (std::move (onRoutingChanged))
 {
     mode.addChangeListener (this);
+
+    // From here on the wrapper tracks the slider itself, so no layout has to
+    // know this exists. See attachToKnobParent in the header for why.
+    knob.addComponentListener (this);
 }
 
 ModulatableKnob::~ModulatableKnob()
 {
+    knob.removeComponentListener (this);
     mode.removeChangeListener (this);
+}
+
+void ModulatableKnob::attachToKnobParent()
+{
+    // addChildComponent, not addAndMakeVisible: whether the wrapper shows is
+    // decided by followVisibility, from the knob it belongs to.
+    if (auto* parent = knob.getParentComponent())
+        parent->addChildComponent (this);
+
+    followKnob();
+    followVisibility();
+}
+
+void ModulatableKnob::followKnob()
+{
+    // The knob's own rectangle, plus the strip on the right that the indicator
+    // bar is drawn in. Nothing around the knob moves to make room -- the strip
+    // is drawn over whatever gap is already beside it.
+    const auto b = getWrappedBounds();
+
+    setBounds (b.withWidth (b.getWidth() + barWidth + barGap));
+    toFront (false);
+}
+
+void ModulatableKnob::followVisibility()
+{
+    setVisible (! suppressed && knob.isVisible() && knob.isEnabled());
+}
+
+void ModulatableKnob::setSuppressed (bool shouldBeSuppressed)
+{
+    if (suppressed == shouldBeSuppressed)
+        return;
+
+    suppressed = shouldBeSuppressed;
+    followVisibility();
 }
 
 void ModulatableKnob::changeListenerCallback (juce::ChangeBroadcaster*)

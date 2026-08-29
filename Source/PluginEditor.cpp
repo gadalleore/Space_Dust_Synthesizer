@@ -3,6 +3,8 @@
 
 #include <cmath>
 #include <limits>
+#include <string>
+#include <unordered_set>
 
 //==============================================================================
 // -- Safe String Helper (Same as PluginProcessor) --
@@ -15,6 +17,42 @@ namespace
             return "(safe fallback)";
         return juce::String(raw);
     }
+
+    //==========================================================================
+    // -- The shaping and unison parameter ids --
+    //
+    // At FILE scope because two places need exactly this list and they must
+    // never drift apart: the constructor builds each knob's attachment from it,
+    // and wrapAssignableKnobs() makes the same knobs assignable from it.
+    //
+    // Retyping them in the second place would have been thirty-six more chances
+    // at a typo -- and a wrong id there is not an error, it is a knob that
+    // silently never lights up in assign mode. One list, used twice, cannot be
+    // wrong in one place and right in the other.
+    //
+    // Verified against createParameterLayout: the shaping five are BendPlus,
+    // BendMinus, BendPlusMinus, Spectrum, Sync on each of osc1 / osc2 / subOsc;
+    // the unison four are UnisonVoices / Detune / Width / Phase on each of
+    // osc1 / osc2 / subOsc / noise. UnisonVoices is an AudioParameterInt, so it
+    // is deliberately NOT a legal destination and wrapKnob passes over it.
+    constexpr int kNumShapingIds = 5;
+    constexpr int kNumUnisonIds  = 4;
+
+    const char* const kOsc1ShapingIds[kNumShapingIds] =
+        { "osc1BendPlus", "osc1BendMinus", "osc1BendPlusMinus", "osc1Spectrum", "osc1Sync" };
+    const char* const kOsc2ShapingIds[kNumShapingIds] =
+        { "osc2BendPlus", "osc2BendMinus", "osc2BendPlusMinus", "osc2Spectrum", "osc2Sync" };
+    const char* const kSubOscShapingIds[kNumShapingIds] =
+        { "subOscBendPlus", "subOscBendMinus", "subOscBendPlusMinus", "subOscSpectrum", "subOscSync" };
+
+    const char* const kOsc1UnisonIds[kNumUnisonIds] =
+        { "osc1UnisonVoices", "osc1UnisonDetune", "osc1UnisonWidth", "osc1UnisonPhase" };
+    const char* const kOsc2UnisonIds[kNumUnisonIds] =
+        { "osc2UnisonVoices", "osc2UnisonDetune", "osc2UnisonWidth", "osc2UnisonPhase" };
+    const char* const kSubOscUnisonIds[kNumUnisonIds] =
+        { "subOscUnisonVoices", "subOscUnisonDetune", "subOscUnisonWidth", "subOscUnisonPhase" };
+    const char* const kNoiseUnisonIds[kNumUnisonIds] =
+        { "noiseUnisonVoices", "noiseUnisonDetune", "noiseUnisonWidth", "noiseUnisonPhase" };
 
     // The starfield moved to SpaceDustLookAndFeel, because the Waveforms window
     // needs the same sky behind it and could not reach a function private to this
@@ -1384,6 +1422,11 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     addAndMakeVisible(parentEditor.lfo2PhaseLabel);
     addAndMakeVisible(parentEditor.lfo2RetriggerButton);
     
+    // The Assign button for each LFO, top-right of its panel. Built in the
+    // editor's constructor ahead of this page, so they exist by now.
+    for (auto* assignButton : parentEditor.lfoAssignButtons)
+        addAndMakeVisible(assignButton);
+
     addAndMakeVisible(parentEditor.modFilterShowButton);
     addAndMakeVisible(parentEditor.modFilterShowButton2);
     addAndMakeVisible(parentEditor.modFilter1Group);
@@ -1637,6 +1680,14 @@ void ModulationPageComponent::resized()
     
     // LFO1 On button (upper-left like Effects tab, larger for visibility)
     parentEditor.lfo1EnabledButton.setBounds(lfo1Content.getX(), lfo1CurrentY, modOnBtnW, modOnBtnH);
+
+    // Assign, on the same row at the far right. That row held only the On button,
+    // so nothing below it moves to make room.
+    const int assignBtnW = 74;
+    if (parentEditor.lfoAssignButtons.size() > 0)
+        parentEditor.lfoAssignButtons[0]->setBounds(lfo1Content.getRight() - assignBtnW,
+                                                    lfo1CurrentY, assignBtnW, modOnBtnH);
+
     lfo1CurrentY += modOnBtnH + modRowSpacing;
     
     // LFO1 Destination (Target) - above Waveform (more important)
@@ -1813,6 +1864,12 @@ void ModulationPageComponent::resized()
     
     // LFO2 On button (upper-left like Effects tab, larger for visibility)
     parentEditor.lfo2EnabledButton.setBounds(lfo2Content.getX(), lfo2CurrentY, modOnBtnW, modOnBtnH);
+
+    // Assign, mirroring LFO 1's.
+    if (parentEditor.lfoAssignButtons.size() > 1)
+        parentEditor.lfoAssignButtons[1]->setBounds(lfo2Content.getRight() - assignBtnW,
+                                                    lfo2CurrentY, assignBtnW, modOnBtnH);
+
     lfo2CurrentY += modOnBtnH + modRowSpacing;
     
     // LFO2 Destination (Target) - above Waveform (more important)
@@ -4263,12 +4320,14 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         const char* const shapingLabels[numShapingKnobs] =
             { "Bend +", "Bend -", "Bend +/-", "Spectrum", "Sync" };
 
-        const char* const osc1Ids[numShapingKnobs] =
-            { "osc1BendPlus", "osc1BendMinus", "osc1BendPlusMinus", "osc1Spectrum", "osc1Sync" };
-        const char* const osc2Ids[numShapingKnobs] =
-            { "osc2BendPlus", "osc2BendMinus", "osc2BendPlusMinus", "osc2Spectrum", "osc2Sync" };
-        const char* const subOscIds[numShapingKnobs] =
-            { "subOscBendPlus", "subOscBendMinus", "subOscBendPlusMinus", "subOscSpectrum", "subOscSync" };
+        // From the one list at the top of this file, which wrapAssignableKnobs()
+        // also reads -- so the attachments and the assign-mode wrappers cannot
+        // name different parameters.
+        static_assert(kNumShapingIds == numShapingKnobs, "shaping id table is the wrong length");
+
+        auto* const* const osc1Ids   = kOsc1ShapingIds;
+        auto* const* const osc2Ids   = kOsc2ShapingIds;
+        auto* const* const subOscIds = kSubOscShapingIds;
 
         const char* const shapingTips[numShapingKnobs] =
         {
@@ -4322,14 +4381,13 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         // -- Voices, Detune and Width --
         const char* const unisonLabels[numUnisonKnobs] = { "Voices", "Detune", "Width", "Random Phase" };
 
-        const char* const osc1UnisonIds[numUnisonKnobs] =
-            { "osc1UnisonVoices", "osc1UnisonDetune", "osc1UnisonWidth", "osc1UnisonPhase" };
-        const char* const osc2UnisonIds[numUnisonKnobs] =
-            { "osc2UnisonVoices", "osc2UnisonDetune", "osc2UnisonWidth", "osc2UnisonPhase" };
-        const char* const subOscUnisonIds[numUnisonKnobs] =
-            { "subOscUnisonVoices", "subOscUnisonDetune", "subOscUnisonWidth", "subOscUnisonPhase" };
-        const char* const noiseUnisonIds[numUnisonKnobs] =
-            { "noiseUnisonVoices", "noiseUnisonDetune", "noiseUnisonWidth", "noiseUnisonPhase" };
+        // Same one list at the top of this file, for the same reason.
+        static_assert(kNumUnisonIds == numUnisonKnobs, "unison id table is the wrong length");
+
+        auto* const* const osc1UnisonIds   = kOsc1UnisonIds;
+        auto* const* const osc2UnisonIds   = kOsc2UnisonIds;
+        auto* const* const subOscUnisonIds = kSubOscUnisonIds;
+        auto* const* const noiseUnisonIds  = kNoiseUnisonIds;
 
         const char* const unisonTips[numUnisonKnobs] =
         {
@@ -6278,6 +6336,45 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     finalEQEnabledButton.addListener(this);
     syncGroupGlow(finalEQEnabledButton, finalEQGroup);
 
+    //==============================================================================
+    // -- Assign buttons, one per LFO panel --
+    // Built BEFORE the pages, because ModulationPageComponent's constructor adds
+    // them as its children and its resized() puts them in the LFO boxes.
+    //
+    // Two, not spacedust::numLfos: LFOs 3 and 4 have their buffers and their
+    // colours but no parameters and no panel yet, so there is nowhere to put a
+    // third button. When they get a panel, this loop grows with it.
+    for (int lfo = 0; lfo < numLfoPanels; ++lfo)
+    {
+        auto* button = lfoAssignButtons.add(new juce::TextButton(safeString("Assign")));
+
+        // The LFO's own colour, so which LFO a lit knob belongs to is the same
+        // colour as the button that lit it.
+        button->setColour(juce::TextButton::buttonColourId,
+                          spacedust::AssignModeState::colourFor(lfo).withAlpha(0.35f));
+        button->setColour(juce::TextButton::buttonOnColourId,
+                          spacedust::AssignModeState::colourFor(lfo).withAlpha(0.85f));
+
+        // A second press on the LFO already being assigned leaves the mode, so
+        // the button that turns it on turns it off again.
+        button->onClick = [this, lfo]
+        {
+            assignMode.setActiveLfo(assignMode.activeLfo() == lfo ? -1 : lfo);
+        };
+
+        button->setTooltip(safeString(
+            "Point this LFO at a knob: press, then drag any knob on another page."));
+    }
+
+    // Lives at the right-hand end of the tab strip, and is only there while the
+    // mode is on -- leaving the mode is then where the eye already is when
+    // switching tabs.
+    exitLfoModeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff4aa3ff));
+    exitLfoModeButton.onClick = [this] { assignMode.setActiveLfo(-1); };
+    addChildComponent(exitLfoModeButton);
+
+    assignMode.addChangeListener(this);
+
     grainDelayFilterHPCutoffSlider.setVisible(false);
     grainDelayFilterHPResonanceSlider.setVisible(false);
     grainDelayFilterLPCutoffSlider.setVisible(false);
@@ -6386,6 +6483,16 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
         // non-text control inside our editor, globalFocusChanged() hands it back.
         juce::Desktop::getInstance().addFocusChangeListener(this);
     }
+
+    //==============================================================================
+    // -- Assign mode: lay a wrapper over every assignable knob --
+    // HERE, and not earlier, for two reasons. Every page exists by now, so each
+    // slider has the parent its wrapper must join; and this is still ahead of
+    // the re-parent into mainView below, so a wrapper over a knob that is a
+    // direct child of the editor travels into mainView with that knob instead
+    // of being left behind on top of everything.
+    wrapAssignableKnobs();
+    logModCoverage();
 
     //==============================================================================
     // -- Drag-resize: move the whole UI into the scalable mainView container --
@@ -7197,6 +7304,11 @@ SpaceDustAudioProcessorEditor::~SpaceDustAudioProcessorEditor()
     // harmless if it was never registered).
     juce::Desktop::getInstance().removeFocusChangeListener(this);
 
+    // Assign mode: stop listening before anything is torn down. The wrappers
+    // deregister themselves in their own destructors -- see the note beside
+    // modKnobs, which is declared last so it dies first.
+    assignMode.removeChangeListener(this);
+
     // Easter egg cleanup
     cheezeGuyGame.reset();
 
@@ -7395,6 +7507,368 @@ void SpaceDustAudioProcessorEditor::rebuildLinkedFilterAttachments()
     setButton(modFilter2KeyTrackAttachment,  modFilter2KeyTrackButton,  link2 ? "filterKeyTrack"       : "modFilter2KeyTrack");
     setButton(modFilter2NoteLockAttachment,  modFilter2NoteLockButton,  link2 ? "filterNoteLock"       : "modFilter2NoteLock");
     setButton(modFilter2HarmonicLockAttachment, modFilter2HarmonicLockButton, link2 ? "filterHarmonicLock" : "modFilter2HarmonicLock");
+
+    // The wrapper follows the attachment. Assigning an LFO to a LINKED mod
+    // filter's cutoff must reach the master cutoff -- the same parameter the
+    // knob itself is now editing -- or the knob would move under a modulation
+    // that was written to a parameter nothing is reading.
+    // Null on the first call: this runs from the constructor before the knobs
+    // are wrapped, and the wrap then picks up whatever is current.
+    if (modFilter1CutoffModKnob != nullptr)
+        modFilter1CutoffModKnob->setDestination(link1 ? "filterCutoff" : "modFilter1Cutoff");
+    if (modFilter1ResonanceModKnob != nullptr)
+        modFilter1ResonanceModKnob->setDestination(link1 ? "filterResonance" : "modFilter1Resonance");
+    if (modFilter2CutoffModKnob != nullptr)
+        modFilter2CutoffModKnob->setDestination(link2 ? "filterCutoff" : "modFilter2Cutoff");
+    if (modFilter2ResonanceModKnob != nullptr)
+        modFilter2ResonanceModKnob->setDestination(link2 ? "filterResonance" : "modFilter2Resonance");
+}
+
+//==============================================================================
+// -- Assign mode --
+//
+// One ModulatableKnob is laid over each assignable knob. It is transparent to
+// the mouse until assign mode is on, so every knob behaves exactly as it always
+// did; while the mode is on it takes the drag instead and writes a routing.
+
+ModulatableKnob* SpaceDustAudioProcessorEditor::wrapKnob(juce::Slider& slider,
+                                                         const juce::String& parameterId)
+{
+    auto* param = audioProcessor.getValueTreeState().getParameter(parameterId);
+    auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(param);
+
+    // A parameter that does not exist is a TYPO in the list below, and it is the
+    // one failure this whole feature is prone to: there are about 150 of these
+    // calls, and a mistyped id used to be skipped in silence and ship as a knob
+    // that simply never lights up -- no error, no crash, nothing in any log.
+    // So it stops the build's first run instead.
+    if (ranged == nullptr)
+    {
+        DBG("Space Dust: wrapKnob - NO SUCH PARAMETER: " + parameterId);
+        jassertfalse;   // <- read the id above; it is misspelled in wrapAssignableKnobs()
+        return nullptr;
+    }
+
+    // A parameter that exists but may not be modulated is the normal case, not a
+    // mistake: Unison Voices is a count, the toggles are bools, and no LFO
+    // control may drive another. Those are passed over without a word, which is
+    // what lets the list below name a knob without checking what kind it is.
+    if (! spacedust::DestinationTable::isLegalDestination(*ranged))
+        return nullptr;
+
+    auto* wrapper = modKnobs.add(new ModulatableKnob(
+        slider,
+        audioProcessor.modMatrix,
+        assignMode,
+        [this] { audioProcessor.rebuildCompiledRoutings(); }));
+
+    wrapper->setDestination(parameterId.toStdString());
+    return wrapper;
+}
+
+void SpaceDustAudioProcessorEditor::wrapAssignableKnobs()
+{
+    // wrapKnob passes over anything that is not a legal destination, so this
+    // list may name a knob without knowing what kind of parameter drives it.
+    // What it may NOT do is misspell one -- see the assert in wrapKnob.
+
+    // -- Oscillators, sub and noise --
+    wrapKnob(osc1CoarseTuneSlider, "osc1CoarseTune");
+    wrapKnob(osc1DetuneSlider,     "osc1Detune");
+    wrapKnob(osc1LevelSlider,      "osc1Level");
+    wrapKnob(osc1PanSlider,        "osc1Pan");
+    wrapKnob(osc2CoarseTuneSlider, "osc2CoarseTune");
+    wrapKnob(osc2DetuneSlider,     "osc2Detune");
+    wrapKnob(osc2LevelSlider,      "osc2Level");
+    wrapKnob(osc2PanSlider,        "osc2Pan");
+    wrapKnob(subOscLevelSlider,    "subOscLevel");
+    wrapKnob(subOscCoarseSlider,   "subOscCoarse");
+    wrapKnob(noiseLevelSlider,     "noiseLevel");
+    wrapKnob(lowShelfAmountSlider,  "lowShelfAmount");
+    wrapKnob(highShelfAmountSlider, "highShelfAmount");
+
+    // -- Shaping and unison, from the one id table at the top of this file --
+    // The same table the attachments were built from, so a knob cannot be
+    // attached to one parameter and assigned to another.
+    for (int i = 0; i < numShapingKnobs; ++i)
+    {
+        wrapKnob(osc1ShapingSliders[i],   kOsc1ShapingIds[i]);
+        wrapKnob(osc2ShapingSliders[i],   kOsc2ShapingIds[i]);
+        wrapKnob(subOscShapingSliders[i], kSubOscShapingIds[i]);
+    }
+
+    for (int i = 0; i < numUnisonKnobs; ++i)
+    {
+        wrapKnob(osc1UnisonSliders[i],   kOsc1UnisonIds[i]);
+        wrapKnob(osc2UnisonSliders[i],   kOsc2UnisonIds[i]);
+        wrapKnob(subOscUnisonSliders[i], kSubOscUnisonIds[i]);
+        wrapKnob(noiseUnisonSliders[i],  kNoiseUnisonIds[i]);
+    }
+
+    // -- Master filter and its envelope --
+    wrapKnob(filterCutoffSlider,     "filterCutoff");
+    wrapKnob(filterResonanceSlider,  "filterResonance");
+    wrapKnob(filterEnvAttackSlider,  "filterEnvAttack");
+    wrapKnob(filterEnvDecaySlider,   "filterEnvDecay");
+    wrapKnob(filterEnvSustainSlider, "filterEnvSustain");
+    wrapKnob(filterEnvReleaseSlider, "filterEnvRelease");
+    wrapKnob(filterEnvAmountSlider,  "filterEnvAmount");
+
+    // -- Amp and pitch envelopes --
+    wrapKnob(envAttackSlider,      "envAttack");
+    wrapKnob(envDecaySlider,       "envDecay");
+    wrapKnob(envSustainSlider,     "envSustain");
+    wrapKnob(envReleaseSlider,     "envRelease");
+    wrapKnob(pitchEnvAmountSlider, "pitchEnvAmount");
+    wrapKnob(pitchEnvTimeSlider,   "pitchEnvTime");
+    wrapKnob(pitchEnvPitchSlider,  "pitchEnvPitch");
+
+    // -- Master section --
+    // pitchBendSlider is deliberately absent: the host drives that one, and
+    // isLegalDestination refuses it.
+    wrapKnob(masterVolumeSlider,    "masterVolume");
+    wrapKnob(pitchBendAmountSlider, "pitchBendAmount");
+    wrapKnob(velocityAmountSlider,  "velocityAmount");
+    wrapKnob(glideTimeSlider,       "glideTime");
+
+    // -- MPE --
+    wrapKnob(mpePitchBendRangeSlider, "mpePitchBendRange");
+    wrapKnob(mpePressureDepthSlider,  "mpePressureDepth");
+    wrapKnob(mpeTimbreDepthSlider,    "mpeTimbreDepth");
+
+    // -- The two modulation-page filters --
+    // Their destination is not fixed: it follows Link to Master, exactly as
+    // their attachments do. rebuildLinkedFilterAttachments re-points them.
+    const bool link1 = safeGetParam("modFilter1LinkToMaster") > 0.5f;
+    const bool link2 = safeGetParam("modFilter2LinkToMaster") > 0.5f;
+
+    modFilter1CutoffModKnob    = wrapKnob(modFilter1CutoffSlider,    link1 ? "filterCutoff"    : "modFilter1Cutoff");
+    modFilter1ResonanceModKnob = wrapKnob(modFilter1ResonanceSlider, link1 ? "filterResonance" : "modFilter1Resonance");
+    modFilter2CutoffModKnob    = wrapKnob(modFilter2CutoffSlider,    link2 ? "filterCutoff"    : "modFilter2Cutoff");
+    modFilter2ResonanceModKnob = wrapKnob(modFilter2ResonanceSlider, link2 ? "filterResonance" : "modFilter2Resonance");
+
+    // -- Delay --
+    wrapKnob(delayFreeRateSlider,           "delayRate");
+    wrapKnob(delayDecaySlider,              "delayDecay");
+    wrapKnob(delayDryWetSlider,             "delayDryWet");
+    wrapKnob(delayFilterHPCutoffSlider,     "delayFilterHPCutoff");
+    wrapKnob(delayFilterHPResonanceSlider,  "delayFilterHPResonance");
+    wrapKnob(delayFilterLPCutoffSlider,     "delayFilterLPCutoff");
+    wrapKnob(delayFilterLPResonanceSlider,  "delayFilterLPResonance");
+
+    // -- Reverb --
+    wrapKnob(reverbWetMixSlider,             "reverbWetMix");
+    wrapKnob(reverbDecayTimeSlider,          "reverbDecayTime");
+    wrapKnob(reverbFilterHPCutoffSlider,     "reverbFilterHPCutoff");
+    wrapKnob(reverbFilterHPResonanceSlider,  "reverbFilterHPResonance");
+    wrapKnob(reverbFilterLPCutoffSlider,     "reverbFilterLPCutoff");
+    wrapKnob(reverbFilterLPResonanceSlider,  "reverbFilterLPResonance");
+
+    // -- Grain delay --
+    wrapKnob(grainDelayTimeSlider,               "grainDelayTime");
+    wrapKnob(grainDelaySizeSlider,               "grainDelaySize");
+    wrapKnob(grainDelayPitchSlider,              "grainDelayPitch");
+    wrapKnob(grainDelayMixSlider,                "grainDelayMix");
+    wrapKnob(grainDelayDecaySlider,              "grainDelayDecay");
+    wrapKnob(grainDelayDensitySlider,            "grainDelayDensity");
+    wrapKnob(grainDelayJitterSlider,             "grainDelayJitter");
+    wrapKnob(grainDelayFilterHPCutoffSlider,     "grainDelayFilterHPCutoff");
+    wrapKnob(grainDelayFilterHPResonanceSlider,  "grainDelayFilterHPResonance");
+    wrapKnob(grainDelayFilterLPCutoffSlider,     "grainDelayFilterLPCutoff");
+    wrapKnob(grainDelayFilterLPResonanceSlider,  "grainDelayFilterLPResonance");
+
+    // -- Phaser --
+    wrapKnob(phaserRateSlider,          "phaserRate");
+    wrapKnob(phaserDepthSlider,         "phaserDepth");
+    wrapKnob(phaserFeedbackSlider,      "phaserFeedback");
+    wrapKnob(phaserMixSlider,           "phaserMix");
+    wrapKnob(phaserCentreSlider,        "phaserCentre");
+    wrapKnob(phaserStereoOffsetSlider,  "phaserStereoOffset");
+
+    // -- Flanger --
+    wrapKnob(flangerRateSlider,     "flangerRate");
+    wrapKnob(flangerDepthSlider,    "flangerDepth");
+    wrapKnob(flangerFeedbackSlider, "flangerFeedback");
+    wrapKnob(flangerWidthSlider,    "flangerWidth");
+    wrapKnob(flangerMixSlider,      "flangerMix");
+
+    // -- Bit crusher, soft clipper, lo-fi --
+    wrapKnob(bitCrusherAmountSlider, "bitCrusherAmount");
+    wrapKnob(bitCrusherRateSlider,   "bitCrusherRate");
+    wrapKnob(bitCrusherMixSlider,    "bitCrusherMix");
+    wrapKnob(softClipperDriveSlider, "softClipperDrive");
+    wrapKnob(softClipperKneeSlider,  "softClipperKnee");
+    wrapKnob(softClipperMixSlider,   "softClipperMix");
+    wrapKnob(lofiAmountSlider,       "lofiAmount");
+    wrapKnob(analogDriftSlider,      "analogDrift");
+
+    // -- Compressor --
+    wrapKnob(compressorThresholdSlider, "compressorThreshold");
+    wrapKnob(compressorRatioSlider,     "compressorRatio");
+    wrapKnob(compressorAttackSlider,    "compressorAttack");
+    wrapKnob(compressorReleaseSlider,   "compressorRelease");
+    wrapKnob(compressorMakeupSlider,    "compressorMakeup");
+    wrapKnob(compressorMixSlider,       "compressorMix");
+
+    // -- Transient --
+    wrapKnob(transientMixSlider,     "transientMix");
+    wrapKnob(transientKaDonkSlider,  "transientKaDonk");
+    wrapKnob(transientCoarseSlider,  "transientCoarse");
+    wrapKnob(transientLengthSlider,  "transientLength");
+
+    // -- Trance gate --
+    wrapKnob(tranceGateRateSlider,    "tranceGateRate");
+    wrapKnob(tranceGateAttackSlider,  "tranceGateAttack");
+    wrapKnob(tranceGateReleaseSlider, "tranceGateRelease");
+    wrapKnob(tranceGateMixSlider,     "tranceGateMix");
+
+    // -- Final EQ --
+    // Three knobs edit whichever band the Node dropdown has chosen, so their
+    // destination follows that choice. setFinalEQEditedBand re-points them, the
+    // same call that rebuilds their attachments. The other four bands' twelve
+    // parameters have no knob of their own at any one moment, which is why they
+    // are the bulk of the unwrapped list logged below.
+    {
+        const juce::String n(finalEQEditedBand_ + 1);
+        finalEQQModKnob    = wrapKnob(finalEQQSlider,    "finalEQB" + n + "Q");
+        finalEQFreqModKnob = wrapKnob(finalEQFreqSlider, "finalEQB" + n + "Freq");
+        finalEQGainModKnob = wrapKnob(finalEQGainSlider, "finalEQB" + n + "Gain");
+    }
+
+    // Every wrapper joins the parent its knob already has, and follows that knob
+    // from then on. Done in one sweep at the end rather than inside wrapKnob so
+    // the list above does not have to care whether a page exists yet.
+    for (auto* wrapper : modKnobs)
+        wrapper->attachToKnobParent();
+}
+
+void SpaceDustAudioProcessorEditor::logModCoverage()
+{
+    // WHY THIS EXISTS
+    //
+    // wrapKnob passes over an illegal destination in silence, and the list above
+    // is about 150 lines long. "Did I get them all?" is not a question care can
+    // answer at that count -- so the answer is printed instead. Every assignable
+    // destination with no knob wrapped is named, then the totals.
+    //
+    // A large gap means a whole group was missed. A small one names exactly
+    // which parameters, and every entry should have a reason.
+    std::unordered_set<std::string> wrapped;
+
+    for (auto* wrapper : modKnobs)
+        wrapped.insert(wrapper->getDestination());
+
+    const int total = audioProcessor.modDestinations.size();
+    juce::StringArray missing;
+
+    for (int slot = 0; slot < total; ++slot)
+    {
+        const auto& id = audioProcessor.modDestinations.idAt(slot);
+
+        if (wrapped.find(id) == wrapped.end())
+            missing.add(juce::String(id));
+    }
+
+    #if JUCE_DEBUG
+    for (const auto& id : missing)
+        DBG("Space Dust: mod coverage - NO KNOB WRAPPED for destination: " + id);
+    #endif
+
+    DBG("Space Dust: mod coverage - wrapped "
+        + juce::String((int) wrapped.size()) + " of " + juce::String(total)
+        + " assignable destinations ("
+        + juce::String(missing.size()) + " with no knob: " + missing.joinIntoString(", ") + ")");
+
+    // Also to the debug log file the rest of this editor writes, so the list can
+    // be read after the fact rather than only in a debugger.
+    #if JUCE_DEBUG
+    try
+    {
+        juce::File logFile = juce::File::getSpecialLocation(juce::File::userDocumentsDirectory)
+            .getChildFile(safeString("SpaceDust_DebugLog.txt"));
+        juce::FileOutputStream out(logFile);
+        if (out.openedOk())
+        {
+            out.setPosition(out.getPosition());
+            out.writeText("Space Dust: mod coverage - wrapped "
+                          + juce::String((int) wrapped.size()) + " of " + juce::String(total)
+                          + "; no knob for: " + missing.joinIntoString(", ") + "\n",
+                          false, false, nullptr);
+            out.flush();
+        }
+    }
+    catch (...) {}
+    #endif
+}
+
+void SpaceDustAudioProcessorEditor::refreshModIndicators()
+{
+    if (modKnobs.isEmpty())
+        return;
+
+    float phases[spacedust::numLfos] {};
+
+    for (int i = 0; i < spacedust::numLfos; ++i)
+        phases[i] = (float) juce::jlimit(0.0, 1.0, audioProcessor.lfoCurrentPhase[i]);
+
+    // setLfoPhases repaints only the bar, and only for a knob something actually
+    // reaches, so this costs nothing on a patch with no routings.
+    for (auto* wrapper : modKnobs)
+        wrapper->setLfoPhases(phases);
+}
+
+void SpaceDustAudioProcessorEditor::syncAssignSuppression()
+{
+    // Nothing is highlighted on the Modulation page: no LFO control may be a
+    // modulation destination, so there is nothing there to point at. The MODE
+    // stays on, so switching to another tab and back carries on where it left
+    // off rather than making the player press Assign again.
+    //
+    // Called from the timer as well as from the mode change, because the TAB can
+    // change without assignMode changing at all -- and leaving the suppression
+    // set after switching away from the Modulation page would put the mode's
+    // whole highlight out on every other page. setSuppressed returns at once
+    // when nothing moved, so the sweep costs a comparison per knob.
+    constexpr int modulationTabIndex = 1;   // the order the tabs are added in, above
+
+    const bool suppress = assignMode.activeLfo() >= 0
+                          && tabbedComponent.getCurrentTabIndex() == modulationTabIndex;
+
+    for (auto* wrapper : modKnobs)
+        wrapper->setSuppressed(suppress);
+}
+
+void SpaceDustAudioProcessorEditor::changeListenerCallback(juce::ChangeBroadcaster* source)
+{
+    if (source != &assignMode || isBeingDestroyed.load())
+        return;
+
+    const bool assigning = assignMode.activeLfo() >= 0;
+
+    syncAssignSuppression();
+
+    for (int lfo = 0; lfo < lfoAssignButtons.size(); ++lfo)
+        lfoAssignButtons[lfo]->setToggleState(assignMode.activeLfo() == lfo,
+                                              juce::dontSendNotification);
+
+    exitLfoModeButton.setVisible(assigning);
+    exitLfoModeButton.setColour(juce::TextButton::buttonColourId,
+                                spacedust::AssignModeState::colourFor(assignMode.activeLfo()));
+
+    layoutPlate();
+}
+
+bool SpaceDustAudioProcessorEditor::keyPressed(const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress::escapeKey && assignMode.activeLfo() >= 0)
+    {
+        assignMode.setActiveLfo(-1);
+        return true;
+    }
+
+    // Everything else falls through, so the Standalone's QWERTY keyboard keeps
+    // every key it already had.
+    return false;
 }
 
 //==============================================================================
@@ -7582,6 +8056,16 @@ void SpaceDustAudioProcessorEditor::setFinalEQEditedBand(int band)
     finalEQGainAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(
         vts, "finalEQB" + n + "Gain", finalEQGainSlider);
 
+    // The assign-mode wrappers follow the attachments onto the new band, or a
+    // routing written on the Gain knob would land on whichever band happened to
+    // be chosen when the editor opened.
+    if (finalEQQModKnob != nullptr)
+        finalEQQModKnob->setDestination(("finalEQB" + n + "Q").toStdString());
+    if (finalEQFreqModKnob != nullptr)
+        finalEQFreqModKnob->setDestination(("finalEQB" + n + "Freq").toStdString());
+    if (finalEQGainModKnob != nullptr)
+        finalEQGainModKnob->setDestination(("finalEQB" + n + "Gain").toStdString());
+
     // Silent, because the selection can arrive from the dropdown itself.
     if (finalEQNodeCombo.getSelectedId() != band + 1)
         finalEQNodeCombo.setSelectedId(band + 1, juce::dontSendNotification);
@@ -7671,6 +8155,12 @@ void SpaceDustAudioProcessorEditor::timerCallback()
     // Remember the active tab so closing/reopening the editor returns here, not Main.
     if (tabbedComponent.getNumTabs() > 0)
         audioProcessor.lastActiveTabIndex = tabbedComponent.getCurrentTabIndex();
+
+    // Assign mode: where each LFO is in its cycle, and whether the highlighting
+    // belongs on the page now showing. Both are cheap and both must keep running
+    // through the pitch-bend branch's early return below, so they go first.
+    refreshModIndicators();
+    syncAssignSuppression();
 
     // Pitch bend snap-back: sync display with processor ramp, then set to 0 when complete
     if (pitchBendSnapActive)
@@ -8364,6 +8854,20 @@ void SpaceDustAudioProcessorEditor::layoutPlate()
     // Expand tab width by 10%
     int tabbedWidth = static_cast<int>((kDesignWidth - masterWidth - masterGap) * 0.9 * 1.1);
     tabbedComponent.setBounds(0, titleHeight, tabbedWidth, layoutHeight - titleHeight);
+    // Exit LFO Mode, at the right-hand end of the tab strip and only while the
+    // mode is on. The strip's own bounds are relative to the tabbed component,
+    // so they are moved into this layout's coordinates before use -- the button
+    // is a sibling of the tabbed component, not a child of it. It takes no room
+    // from the tabs: the five tab buttons end well short of the right edge.
+    if (exitLfoModeButton.isVisible())
+    {
+        auto strip = tabbedComponent.getTabbedButtonBar().getBounds()
+                     + tabbedComponent.getPosition();
+
+        exitLfoModeButton.setBounds(strip.removeFromRight(120).reduced(4, 4));
+        exitLfoModeButton.toFront(false);
+    }
+
     // Tab glow overlay: sits on top of tab bar so parabolic glow shines through (drawn above tabs)
     const int tabBarHeight = 36;
     const int bottomGlowHeight = 90;

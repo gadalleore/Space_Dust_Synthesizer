@@ -17,6 +17,8 @@
 #include "ComboStepper.h"
 #include "WaveformEditorComponent.h"
 #include "SpaceDustDither.h"
+#include "AssignModeState.h"
+#include "ModulatableKnob.h"
 
 // Glow overlays are defined in PluginEditor.cpp; forward-declare them here so the
 // unique_ptr members below resolve under ordinary name lookup. (A `friend class`
@@ -385,6 +387,10 @@ class SpaceDustAudioProcessorEditor : public juce::AudioProcessorEditor,
                                       public juce::Button::Listener,
                                       public juce::AudioProcessorValueTreeState::Listener,
                                       public juce::FocusChangeListener,
+                                      // Assign mode broadcasts through AssignModeState. The editor
+                                      // listens so the Exit button and the Modulation-page
+                                      // suppression follow it without polling.
+                                      public juce::ChangeListener,
                                       // What the Waveforms window needs to resample the synth:
                                       // start a recording, watch it, take it, and strip the
                                       // patch back around what it made. See ResampleHost.
@@ -411,6 +417,11 @@ public:
     void buttonClicked(juce::Button* button) override;
     void buttonStateChanged(juce::Button* button) override;
     void parameterChanged(const juce::String& parameterID, float newValue) override;
+    void changeListenerCallback(juce::ChangeBroadcaster* source) override;
+
+    /** Escape leaves assign mode. Returns false for everything else, so the
+        Standalone's QWERTY keyboard keeps every key it already had. */
+    bool keyPressed(const juce::KeyPress& key) override;
 
     //==============================================================================
     void paint(juce::Graphics&) override;
@@ -447,7 +458,40 @@ private:
     // This ensures proper destruction order: components destroyed before LookAndFeel
     // Prevents juce_LookAndFeel.cpp:82 weak refcount assertion in Ableton Live
     SpaceDustLookAndFeel customLookAndFeel;
-    
+
+    //==============================================================================
+    // -- Assign mode --
+    // Declared HERE, before every slider, so it is destroyed AFTER the modKnobs
+    // at the bottom of this class: each ModulatableKnob deregisters from it (and
+    // from the slider it wraps) in its destructor, and both must still exist.
+    spacedust::AssignModeState assignMode;
+
+    /** Lay a ModulatableKnob over one slider and remember it.
+
+        Returns the wrapper, or nullptr when the parameter is not a legal
+        modulation destination -- a bool, a choice, an int, an LFO control. That
+        is the normal, deliberate case for knobs like Unison Voices, so it is
+        silent. A parameter id that does NOT EXIST is a typo and asserts in
+        Debug; see the implementation. */
+    ModulatableKnob* wrapKnob(juce::Slider& slider, const juce::String& parameterId);
+
+    /** Every wrapKnob call, in one place. Run once from the constructor, after
+        the pages exist so each slider has a parent. */
+    void wrapAssignableKnobs();
+
+    /** Name every assignable destination that ended up with no knob wrapped,
+        then the totals. This is what turns "did I get them all?" into a printed
+        list -- see the note in the implementation. */
+    void logModCoverage();
+
+    /** Push the LFO phases into every wrapper. Driven by the editor's timer. */
+    void refreshModIndicators();
+
+    /** Hide the highlighting while the Modulation page is showing, without
+        leaving the mode. Driven by the mode change AND by the timer, because
+        the tab can change without the mode changing. */
+    void syncAssignSuppression();
+
     // Flag to prevent timerCallback from accessing components during destruction
     std::atomic<bool> isBeingDestroyed{false};
 
@@ -1489,6 +1533,35 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mpePitchBendRangeAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mpePressureDepthAttachment;
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> mpeTimbreDepthAttachment;
+
+    //==============================================================================
+    // -- Assign mode: the parts that must die FIRST --
+    // Declared last, so they are destroyed first: a ModulatableKnob deregisters
+    // from assignMode and from the slider it wraps as it goes, and both are
+    // declared above it.
+
+    /** One per assignable knob, created by wrapKnob and owned here. */
+    juce::OwnedArray<ModulatableKnob> modKnobs;
+
+    /** One Assign button per LFO panel -- two, because LFOs 3 and 4 have no
+        parameters and no panel yet. Indexed by LFO number. */
+    juce::OwnedArray<juce::TextButton> lfoAssignButtons;
+    static constexpr int numLfoPanels = 2;
+
+    /** Appears in the tab strip only while assign mode is on. */
+    juce::TextButton exitLfoModeButton { "Exit LFO Mode" };
+
+    // These knobs do not drive a fixed parameter. The two mod filters follow
+    // their Link to Master toggle, and the Final EQ trio follows the Node
+    // dropdown, exactly as their attachments do -- so their wrappers are
+    // re-pointed in the same two functions that rebuild those attachments.
+    ModulatableKnob* modFilter1CutoffModKnob = nullptr;
+    ModulatableKnob* modFilter1ResonanceModKnob = nullptr;
+    ModulatableKnob* modFilter2CutoffModKnob = nullptr;
+    ModulatableKnob* modFilter2ResonanceModKnob = nullptr;
+    ModulatableKnob* finalEQQModKnob = nullptr;
+    ModulatableKnob* finalEQFreqModKnob = nullptr;
+    ModulatableKnob* finalEQGainModKnob = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(SpaceDustAudioProcessorEditor)
 };

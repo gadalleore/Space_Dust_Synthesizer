@@ -17,7 +17,8 @@
     It also draws the indicator bar, which is visible whether or not assign mode
     is on, because what moves in a patch should always be readable. */
 class ModulatableKnob : public juce::Component,
-                        private juce::ChangeListener
+                        private juce::ChangeListener,
+                        private juce::ComponentListener
 {
 public:
     ModulatableKnob (juce::Slider& knobToWrap,
@@ -31,6 +32,32 @@ public:
     void setDestination (std::string parameterId) { destination = std::move (parameterId); }
 
     const std::string& getDestination() const noexcept { return destination; }
+
+    /** The slider's own rectangle, in the parent's coordinates. The wrapper sits
+        here plus the bar strip on the right. */
+    juce::Rectangle<int> getWrappedBounds() const { return knob.getBounds(); }
+
+    /** Add this wrapper to the slider's parent, then follow that slider for good.
+
+        WHY IT PLACES ITSELF -- the same reason ComboStepper does. The layouts
+        these knobs sit in are dense, hand-tuned, and spread over five page
+        components that re-run their own resized() when a toggle moves; roughly
+        150 of them would have to be positioned from the editor, AFTER whichever
+        layout last moved the knob. Following the slider is the only version of
+        that which cannot be out of date: the wrapper is told when the knob
+        moves, resizes, is hidden or is disabled, and matches it every time.
+
+        Call once, after the slider has a parent. Safe if it has none: the
+        wrapper simply stays unparented and draws nothing. */
+    void attachToKnobParent();
+
+    /** Hold every wrapper off the screen whatever its knob is doing.
+
+        Assign mode stays ON while the Modulation page is showing -- switching
+        away and back carries on where it left off -- but nothing is highlighted
+        there, so the editor suppresses the wrappers rather than leaving the
+        mode. A suppressed wrapper is invisible and takes no mouse. */
+    void setSuppressed (bool shouldBeSuppressed);
 
     /** Where the LFOs are in their cycles, 0..1, for the bar's marker.
         Pushed in by the editor's repaint timer rather than pulled, so one timer
@@ -53,6 +80,18 @@ public:
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 
+    //== following the slider ==================================================
+    void componentMovedOrResized (juce::Component&, bool, bool) override { followKnob(); }
+    void componentVisibilityChanged (juce::Component&) override          { followVisibility(); }
+    void componentEnablementChanged (juce::Component&) override          { followVisibility(); }
+
+    /** Sit over the knob, widened by the strip the indicator bar lives in. */
+    void followKnob();
+
+    /** A ring around a control that is not there is a ring around nothing.
+        Half the effects knobs are hidden until their filter is switched on. */
+    void followVisibility();
+
     juce::Rectangle<int> barArea() const;
 
     /** The one true partition of the bar into lanes. paint() and lfoLaneAt()
@@ -72,6 +111,9 @@ private:
     std::string destination;
 
     float phases[spacedust::numLfos] { 0.0f, 0.0f, 0.0f, 0.0f };
+
+    /** Set by the editor while the Modulation page is showing. See setSuppressed. */
+    bool suppressed = false;
 
     /** Set while a drag is running, so the percentage reads out only then. */
     bool  dragging = false;
