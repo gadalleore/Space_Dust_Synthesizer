@@ -3945,7 +3945,18 @@ void SpaceDustAudioProcessor::migrateWaveformChoicesIfOld(juce::ValueTree& state
     // Version 4 onwards already speaks the new numbering. Anything older -- and a
     // missing attribute, which means version 1 -- stored four built-in shapes
     // followed by the User slots.
-    if (stateVersion >= currentStateVersion || !state.isValid())
+    //
+    // The 4 is a LITERAL and must NEVER become currentStateVersion again. This is
+    // a fact about old files -- the renumber landed in version 4 -- not about the
+    // shared version counter, which moves for every unrelated migration after it.
+    // Written against the moving constant, the very next bump re-armed this on
+    // every already-migrated patch: a version-4 song reloaded as 4 >= 5 == false,
+    // shifted its shapes a SECOND time, and came back on the wrong waveform (10
+    // became 27, anything at or above 12 clamped to the last User slot). Same
+    // freezing rule as legacyOscUserBase below it and as the `!= 2` in
+    // migrateLfoRatesIfOld. Covered by "waveform migration is not re-entrant" in
+    // tools/chunkaudit.
+    if (stateVersion >= 4 || !state.isValid())
         return;
 
     const int inserted = OscShape::numShapes - legacyOscUserBase;

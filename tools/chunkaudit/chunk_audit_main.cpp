@@ -12,6 +12,7 @@
 #include "PluginProcessor.h"
 #include "PresetManager.h"
 
+#include <cmath>
 #include <cstdio>
 #include <memory>
 #include <vector>
@@ -719,6 +720,104 @@ int main()
             }
 
             std::printf ("  a current-format pitch curve is not migrated again.\n");
+        }
+
+        // -- the WAVEFORM migration --
+        //
+        // The built-in shapes grew from four to twenty-one, so every stored
+        // User slot (4 upwards) had to move up by seventeen. That renumber
+        // landed in stateVersion 4, and the guard inside
+        // migrateWaveformChoicesIfOld must stay frozen at that LITERAL 4.
+        //
+        // Written against currentStateVersion instead, the guard re-arms itself
+        // the moment that counter moves for any unrelated reason: every song
+        // already saved at version 4 then reads 4 >= 5 == false, gets shifted a
+        // SECOND time, and comes back on a waveform it was never saved with --
+        // shape 10 as 27, anything at or above 12 clamped to the last User slot.
+        // Both halves are checked below: an already-current patch must come back
+        // untouched, and a genuinely old one must still be carried across.
+        {
+            auto waveformOf = [] (SpaceDustAudioProcessor& sd, const char* id)
+            {
+                return (int) std::lround (sd.getValueTreeState()
+                                            .getRawParameterValue (id)->load());
+            };
+
+            // A patch at the version the renumber landed in. It already speaks
+            // the new numbering, so shape 10 must come back as 10.
+            {
+                std::unique_ptr<juce::AudioProcessor> sourceProc (createPluginFilter());
+                auto* sourceSd = dynamic_cast<SpaceDustAudioProcessor*> (sourceProc.get());
+
+                if (auto* p = sourceSd->getValueTreeState().getParameter ("osc1Waveform"))
+                    p->setValueNotifyingHost (p->convertTo0to1 (10.0f));
+
+                juce::MemoryBlock saved;
+                sourceSd->getStateInformation (saved);
+
+                std::unique_ptr<juce::XmlElement> xml (
+                    juce::AudioProcessor::getXmlFromBinary (saved.getData(), (int) saved.getSize()));
+
+                // The only edit: wind the version back to 4, which is what every
+                // project saved by the shipping build actually carries.
+                xml->setAttribute ("stateVersion", 4);
+
+                std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+                auto* sd = dynamic_cast<SpaceDustAudioProcessor*> (proc.get());
+                loadInto (*sd, *xml);
+
+                const int shape = waveformOf (*sd, "osc1Waveform");
+
+                std::printf ("\n  WAVEFORM migration: stateVersion 4, osc1Waveform saved as 10\n");
+                std::printf ("  osc1Waveform after load: %d (expect 10)\n", shape);
+
+                if (shape != 10)
+                {
+                    std::printf ("  FAIL  a version-4 patch was renumbered a second time.\n");
+                    std::printf ("        The guard in migrateWaveformChoicesIfOld is no longer\n");
+                    std::printf ("        frozen at the literal 4 the renumber landed in.\n");
+                    return 1;
+                }
+
+                std::printf ("  a version-4 patch keeps the shape it was saved with.\n");
+            }
+
+            // The other half: a genuinely old patch must STILL be carried
+            // across, or the fix above would pass just as well with the
+            // migration deleted outright. Stored 4 meant User 1, which now sits
+            // seventeen shapes further up at 21.
+            {
+                std::unique_ptr<juce::AudioProcessor> sourceProc (createPluginFilter());
+                auto* sourceSd = dynamic_cast<SpaceDustAudioProcessor*> (sourceProc.get());
+
+                if (auto* p = sourceSd->getValueTreeState().getParameter ("osc1Waveform"))
+                    p->setValueNotifyingHost (p->convertTo0to1 (4.0f));   // old User 1
+
+                juce::MemoryBlock saved;
+                sourceSd->getStateInformation (saved);
+
+                std::unique_ptr<juce::XmlElement> xml (
+                    juce::AudioProcessor::getXmlFromBinary (saved.getData(), (int) saved.getSize()));
+
+                xml->setAttribute ("stateVersion", 3);   // before the renumber
+
+                std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+                auto* sd = dynamic_cast<SpaceDustAudioProcessor*> (proc.get());
+                loadInto (*sd, *xml);
+
+                const int shape = waveformOf (*sd, "osc1Waveform");
+
+                std::printf ("  stateVersion 3, osc1Waveform saved as 4 (old User 1):\n");
+                std::printf ("  osc1Waveform after load: %d (expect 21)\n", shape);
+
+                if (shape != 21)
+                {
+                    std::printf ("  FAIL  a pre-renumber patch was not carried across.\n");
+                    return 1;
+                }
+
+                std::printf ("  a pre-renumber patch still moves up to the slot it means.\n");
+            }
         }
     }
 
