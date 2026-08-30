@@ -205,6 +205,23 @@ void PresetManager::loadInitPreset()
         }
     }
 
+    // After the parameters, the state that is NOT a parameter. The loop above
+    // cannot reach either of these: a routing list and a drawn curve are not in
+    // the parameter tree, which is exactly why loadPreset has to clear or
+    // restore them by hand. Without this, Init reset every knob and then left
+    // the last patch's LFO movement and pitch shape playing on top of the
+    // defaults -- a "clean slate" button that was not one, and a tooltip that
+    // promised something it did not do.
+    if (auto* spaceDust = dynamic_cast<SpaceDustAudioProcessor*>(&valueTreeState.processor))
+    {
+        spaceDust->modMatrix.clear();
+        spaceDust->pitchCurve.clear();
+
+        // The routing list has just changed, so the audio thread's compiled copy
+        // of it is stale. Same call, same reason and same thread as loadPreset.
+        spaceDust->rebuildCompiledRoutings();
+    }
+
     currentPresetName = "Init";
 }
 

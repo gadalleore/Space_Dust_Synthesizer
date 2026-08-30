@@ -920,5 +920,39 @@ int main()
         std::printf ("  and the previous patch's routing does not leak into it.\n");
     }
 
+    // -- Initialize Preset is a clean slate --
+    //
+    // loadInitPreset walks the parameters and resets each one, which cannot
+    // reach the routing list or the drawn curve: neither is a parameter. Before
+    // this was fixed, Init reset every knob and left the last patch's LFO
+    // movement and pitch shape playing on top of the defaults, which is not what
+    // the button's own tooltip promises.
+    {
+        std::unique_ptr<juce::AudioProcessor> proc (createPluginFilter());
+        auto* sd = dynamic_cast<SpaceDustAudioProcessor*> (proc.get());
+
+        sd->modMatrix.setRouting (0, "filterCutoff", 0.8f);
+        sd->pitchCurve.addPoint (0.5f, -4.0f);
+
+        PresetManager pm (sd->getValueTreeState());
+        pm.loadInitPreset();
+
+        const int routingsLeft = (int) sd->modMatrix.routings().size();
+        const int pointsLeft   = sd->pitchCurve.pointCount();
+
+        std::printf ("\n  INIT preset: a routing and a curve point set, then Initialize Preset\n");
+        std::printf ("  routings after Init: %d (expect 0)\n", routingsLeft);
+        std::printf ("  pitch curve points after Init: %d (expect 0)\n", pointsLeft);
+
+        if (routingsLeft != 0 || pointsLeft != 0)
+        {
+            std::printf ("  FAIL  Initialize Preset left modulation behind, so the\n");
+            std::printf ("        defaults it restored are not what the player hears.\n");
+            return 1;
+        }
+
+        std::printf ("  Initialize Preset really is a clean slate.\n");
+    }
+
     return 0;
 }
