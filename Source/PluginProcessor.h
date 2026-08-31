@@ -347,6 +347,19 @@ public:
         a genuine data race, however harmless it looked. */
     std::atomic<float> lfoPhase01[spacedust::numLfos] { 0.0f, 0.0f, 0.0f, 0.0f };
 
+    /** Each LFO's current OUTPUT, already scaled by its Depth knob.
+
+        Published beside the phase, and for a different job. The phase says where
+        the LFO is in its cycle; this says how hard it is pushing right now, which
+        is what the indicator bar needs -- for a sine, phase 0.25 is the TOP of
+        the swing, not a quarter of the way up it, so drawing a bar from the phase
+        would put the marker in the wrong place for every waveform except a ramp.
+
+        Nominally -1..+1, but Depth reaches 2.0, so a reader must clamp.
+        Relaxed for the same reason as the phase: a marker one frame old is
+        invisible, and a lock here would be worse than the staleness. */
+    std::atomic<float> lfoOutput[spacedust::numLfos] { 0.0f, 0.0f, 0.0f, 0.0f };
+
     // LFO output smoothing (prevents clicks on retrigger/phase jumps)
     float lfoSmoothedValue[spacedust::numLfos] { 0.0f, 0.0f, 0.0f, 0.0f };
 

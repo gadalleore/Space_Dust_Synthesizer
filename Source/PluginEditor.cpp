@@ -1458,11 +1458,25 @@ namespace
         const int modRotaryTextBoxTotalH = modRateKnobSize + gapKnobToValue + modTextBoxH;
 
         r.group.setBounds(area);
-
         auto content = area.reduced(lfoBoxPadH, lfoBoxPadV);
-        int currentY = content.getY() + lfoContentTop;
         const int controlWidth = modComboWidth;
-        const int centreX = content.getX() + content.getWidth() / 2;
+
+        // Laid out ACROSS, not down.
+        //
+        // In a row of four, each panel was a quarter of the page wide and the
+        // full height, so a tall stack was the only thing that fitted. In a 2x2
+        // block each panel is twice as wide and half as tall, and the same stack
+        // overflowed straight into the panel below. Going horizontal spends the
+        // width the new arrangement bought and buys back the height it cost
+        // (Giuseppe, 2026-08-31).
+        //
+        //   On                                    Assign
+        //   Waveform  [combo]        Sync  [button]
+        //   Rate            Depth           Phase
+        //                 Retrigger
+        const int innerGap = 10;
+
+        int currentY = content.getY() + lfoContentTop;
 
         // On button, upper-left; Assign, same row, far right.
         r.enabledButton.setBounds(content.getX(), currentY, modOnBtnW, modOnBtnH);
@@ -1470,52 +1484,77 @@ namespace
             assignButton->setBounds(content.getRight() - assignBtnW, currentY, assignBtnW, modOnBtnH);
         currentY += modOnBtnH + modRowSpacing;
 
-        // Waveform
-        r.waveformLabel.setBounds(centreX - controlWidth / 2, currentY, controlWidth, modLabelHeight);
-        currentY += modLabelHeight + modLabelGap;
-        r.waveformCombo.setBounds(centreX - controlWidth / 2, currentY, controlWidth, modComboHeight);
-        currentY += modComboHeight + modRowSpacing;
+        // -- Waveform and Sync share one row, each centred in its own half --
+        {
+            const int halfWidth = (content.getWidth() - innerGap) / 2;
+            const int waveCentreX = content.getX() + halfWidth / 2;
+            const int syncCentreX = content.getX() + halfWidth + innerGap + halfWidth / 2;
 
-        // Sync
-        r.syncLabel.setBounds(centreX - modButtonWidth / 2, currentY, modButtonWidth, modLabelHeight);
-        currentY += modLabelHeight + modLabelGap;
-        r.syncButton.setBounds(centreX - modButtonWidth / 2, currentY, modButtonWidth, modButtonHeight);
-        currentY += modButtonHeight + modRowSpacing;
+            r.waveformLabel.setBounds(waveCentreX - controlWidth / 2, currentY, controlWidth, modLabelHeight);
+            r.syncLabel.setBounds(syncCentreX - modButtonWidth / 2, currentY, modButtonWidth, modLabelHeight);
+            currentY += modLabelHeight + modLabelGap;
 
-        // Rate (label + knob + Hz/sync value; spacing matches Depth/Phase rows)
-        r.rateLabel.setBounds(centreX - modRateKnobSize / 2, currentY, modRateKnobSize, modLabelHeight);
-        r.rateLabel.setVisible(true);
-        currentY += modLabelHeight + modLabelGap;
-        const juce::Rectangle<int> rateKnobBounds(centreX - modRateKnobSize / 2, currentY,
-                                                   modRateKnobSize, modRateKnobSize);
-        r.freeRateSlider.setBounds(rateKnobBounds);
-        r.rateValueLabel.setBounds(centreX - modRateLabelWidth / 2, currentY + modRateKnobSize + gapKnobToValue,
-                                    modRateLabelWidth, modValueTextH);
-        r.rateValueLabel.setVisible(true);
-        r.rateValueLabel.setAlpha(1.0f);
-        r.syncRateCombo.setBounds(centreX - controlWidth / 2, currentY, controlWidth, modComboHeight);
-        r.tripletButton.setBounds(centreX + modRateKnobSize / 2 + tripletButtonGap,
-                                   currentY + (modRateKnobSize - tripletButtonSize) / 2,
-                                   tripletButtonWidth, tripletButtonSize);
-        r.tripletStraightButton.setBounds(centreX - modRateKnobSize / 2 - tripletButtonGap - tripletButtonSize,
-                                           currentY + (modRateKnobSize - tripletButtonSize) / 2,
-                                           tripletButtonSize, tripletButtonSize);
-        currentY += modRateSliderTotalH + gapValueToNextLabel;
+            r.waveformCombo.setBounds(waveCentreX - controlWidth / 2, currentY, controlWidth, modComboHeight);
+            r.syncButton.setBounds(syncCentreX - modButtonWidth / 2, currentY, modButtonWidth, modButtonHeight);
+            currentY += juce::jmax(modComboHeight, modButtonHeight) + modRowSpacing;
+        }
 
-        // Depth
-        r.depthLabel.setBounds(centreX - modRateKnobSize / 2, currentY, modRateKnobSize, modLabelHeight);
-        currentY += modLabelHeight + modLabelGap;
-        r.depthSlider.setBounds(centreX - modRateKnobSize / 2, currentY, modRateKnobSize, modRotaryTextBoxTotalH);
-        currentY += modRotaryTextBoxTotalH + gapValueToNextLabel;
+        // -- Rate, Depth and Phase side by side --
+        //
+        // Rate gets the widest slot of the three. It is the only one that swaps
+        // control type -- a knob when free-running, a tempo-division combo when
+        // synced -- and it carries the triplet buttons on either side.
+        {
+            const int rateSlot = juce::jmax(controlWidth + 2 * (tripletButtonWidth + tripletButtonGap),
+                                            content.getWidth() / 2);
+            const int otherSlot = (content.getWidth() - rateSlot) / 2;
 
-        // Phase
-        r.phaseLabel.setBounds(centreX - modRateKnobSize / 2, currentY, modRateKnobSize, modLabelHeight);
-        currentY += modLabelHeight + modLabelGap;
-        r.phaseSlider.setBounds(centreX - modRateKnobSize / 2, currentY, modRateKnobSize, modRotaryTextBoxTotalH);
-        currentY += modRotaryTextBoxTotalH + modRowSpacing;
+            const int rateCentreX = content.getX() + rateSlot / 2;
+            const int depthCentreX = content.getX() + rateSlot + otherSlot / 2;
+            const int phaseCentreX = content.getX() + rateSlot + otherSlot + otherSlot / 2;
 
-        // Retrigger
-        r.retriggerButton.setBounds(centreX - modButtonWidth / 2, currentY, modButtonWidth, modButtonHeight);
+            const int rowTop = currentY;
+
+            // Rate: label, then knob or sync combo, with the triplet buttons
+            // flanking the knob.
+            r.rateLabel.setBounds(rateCentreX - modRateKnobSize / 2, rowTop, modRateKnobSize, modLabelHeight);
+            r.rateLabel.setVisible(true);
+            const int rateControlY = rowTop + modLabelHeight + modLabelGap;
+
+            r.freeRateSlider.setBounds(rateCentreX - modRateKnobSize / 2, rateControlY,
+                                       modRateKnobSize, modRateKnobSize);
+            r.rateValueLabel.setBounds(rateCentreX - modRateLabelWidth / 2,
+                                       rateControlY + modRateKnobSize + gapKnobToValue,
+                                       modRateLabelWidth, modValueTextH);
+            r.rateValueLabel.setVisible(true);
+            r.rateValueLabel.setAlpha(1.0f);
+            r.syncRateCombo.setBounds(rateCentreX - controlWidth / 2, rateControlY,
+                                      controlWidth, modComboHeight);
+            r.tripletButton.setBounds(rateCentreX + modRateKnobSize / 2 + tripletButtonGap,
+                                      rateControlY + (modRateKnobSize - tripletButtonSize) / 2,
+                                      tripletButtonWidth, tripletButtonSize);
+            r.tripletStraightButton.setBounds(rateCentreX - modRateKnobSize / 2 - tripletButtonGap - tripletButtonSize,
+                                              rateControlY + (modRateKnobSize - tripletButtonSize) / 2,
+                                              tripletButtonSize, tripletButtonSize);
+
+            // Depth and Phase: label above, rotary with its own text box below.
+            r.depthLabel.setBounds(depthCentreX - modRateKnobSize / 2, rowTop, modRateKnobSize, modLabelHeight);
+            r.depthSlider.setBounds(depthCentreX - modRateKnobSize / 2, rateControlY,
+                                    modRateKnobSize, modRotaryTextBoxTotalH);
+
+            r.phaseLabel.setBounds(phaseCentreX - modRateKnobSize / 2, rowTop, modRateKnobSize, modLabelHeight);
+            r.phaseSlider.setBounds(phaseCentreX - modRateKnobSize / 2, rateControlY,
+                                    modRateKnobSize, modRotaryTextBoxTotalH);
+
+            // The row is as tall as its tallest member.
+            const int rateTotal = modLabelHeight + modLabelGap + modRateSliderTotalH;
+            const int knobTotal = modLabelHeight + modLabelGap + modRotaryTextBoxTotalH;
+            currentY = rowTop + juce::jmax(rateTotal, knobTotal) + modRowSpacing;
+        }
+
+        // -- Retrigger, centred under the three --
+        r.retriggerButton.setBounds(content.getX() + content.getWidth() / 2 - modButtonWidth / 2,
+                                    currentY, modButtonWidth, modButtonHeight);
         currentY += modButtonHeight + modRowSpacing;
 
         // Shrink the box to fit its actual content.
@@ -1692,19 +1731,47 @@ void ModulationPageComponent::resized()
     const int lfoGapToRight = static_cast<int>(oldModulationContentWidth * 0.05);
     const int rightEdge = modulationContent.getRight() - lfoGapToRight;
 
-    // N equal-width columns with (N-1) gaps between them, filling the same span
-    // the original two-column math filled.
-    const int numCols = SpaceDustAudioProcessorEditor::numLfoPanels;
+    // A 2 x 2 block, not a row of four.
+    //
+    // Four panels across squeezed each one to a quarter of the width while
+    // leaving the lower half of the page empty, so every panel was cramped and
+    // the page looked unbalanced. Two by two gives each panel twice the width
+    // and fills the space the deleted mod filters left behind
+    // (Giuseppe, 2026-08-31).
+    const int numCols = 2;
+    const int numRows = (SpaceDustAudioProcessorEditor::numLfoPanels + numCols - 1) / numCols;
+
     const int lfoWidth = (rightEdge - modulationContent.getX() - (numCols - 1) * columnGap) / numCols;
+    const int rowGap = columnGap;
+    const int lfoHeight = (modulationContent.getHeight() - (numRows - 1) * rowGap) / numRows;
 
     // One body for every LFO panel. LFO1 and LFO2's blocks here used to be two
     // copies of this, character for character apart from their names -- now it is
-    // layoutLfoPanel(), called once per column, which is what lets a third and
+    // layoutLfoPanel(), called once per cell, which is what lets a third and
     // fourth panel exist without a third and fourth copy of the block.
-    for (int lfo = 0; lfo < numCols; ++lfo)
+    // Lay the first panel out once to learn how tall its content actually is.
+    // layoutLfoPanel shrinks each box to fit, so spacing the rows by CELL height
+    // would leave a gap the size of whatever the content did not use -- about a
+    // hundred wasted pixels between the two rows. Every panel holds the same
+    // controls, so one measurement serves all four.
     {
-        const int x = modulationContent.getX() + lfo * (lfoWidth + columnGap);
-        const auto area = juce::Rectangle<int>(x, modulationContent.getY(), lfoWidth, modulationContent.getHeight());
+        const auto probe = juce::Rectangle<int>(modulationContent.getX(), modulationContent.getY(),
+                                                lfoWidth, lfoHeight);
+        auto* firstAssign = parentEditor.lfoAssignButtons.isEmpty() ? nullptr : parentEditor.lfoAssignButtons[0];
+        layoutLfoPanel(parentEditor.lfoPanelRefs(0), firstAssign, probe);
+    }
+
+    const int panelHeight = juce::jmin(lfoHeight, parentEditor.lfoPanelRefs(0).group.getHeight());
+
+    for (int lfo = 0; lfo < SpaceDustAudioProcessorEditor::numLfoPanels; ++lfo)
+    {
+        const int col = lfo % numCols;
+        const int row = lfo / numCols;
+
+        const int x = modulationContent.getX() + col * (lfoWidth + columnGap);
+        const int y = modulationContent.getY() + row * (panelHeight + rowGap);
+
+        const auto area = juce::Rectangle<int>(x, y, lfoWidth, lfoHeight);
         auto* assignButton = lfo < parentEditor.lfoAssignButtons.size() ? parentEditor.lfoAssignButtons[lfo] : nullptr;
         layoutLfoPanel(parentEditor.lfoPanelRefs(lfo), assignButton, area);
     }
@@ -6084,12 +6151,17 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     {
         auto* button = lfoAssignButtons.add(new juce::TextButton(safeString("Assign")));
 
-        // The LFO's own colour, so which LFO a lit knob belongs to is the same
-        // colour as the button that lit it.
-        button->setColour(juce::TextButton::buttonColourId,
-                          spacedust::AssignModeState::colourFor(lfo).withAlpha(0.35f));
-        button->setColour(juce::TextButton::buttonOnColourId,
-                          spacedust::AssignModeState::colourFor(lfo).withAlpha(0.85f));
+        // The synth's own toggle colours, not the LFO's. Assign is a toggle like
+        // Sync or Retrigger and should read as one; four differently-coloured
+        // buttons made the panel look like four different kinds of control
+        // (Giuseppe, 2026-08-31).
+        //
+        // The per-LFO colour has not gone away -- it moved to where it actually
+        // answers a question. A lit knob and its indicator bar carry the colour,
+        // so while you are assigning, the colour on the KNOBS tells you which LFO
+        // you are pointing.
+        button->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a5f));
+        button->setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff00d4ff));
 
         // A second press on the LFO already being assigned leaves the mode, so
         // the button that turns it on turns it off again.
@@ -7519,14 +7591,21 @@ void SpaceDustAudioProcessorEditor::refreshModIndicators()
         return;
 
     float phases[spacedust::numLfos] {};
+    float outputs[spacedust::numLfos] {};
 
     for (int i = 0; i < spacedust::numLfos; ++i)
+    {
         phases[i] = juce::jlimit(0.0f, 1.0f, audioProcessor.lfoPhase01[i].load(std::memory_order_relaxed));
 
-    // setLfoPhases repaints only the bar, and only for a knob something actually
+        // Depth reaches 2.0, so the published output can exceed +/-1. Clamped
+        // here rather than in the knob so every reader gets the same promise.
+        outputs[i] = juce::jlimit(-1.0f, 1.0f, audioProcessor.lfoOutput[i].load(std::memory_order_relaxed));
+    }
+
+    // setLfoState repaints only the bar, and only for a knob something actually
     // reaches, so this costs nothing on a patch with no routings.
     for (auto* wrapper : modKnobs)
-        wrapper->setLfoPhases(phases);
+        wrapper->setLfoState(phases, outputs);
 }
 
 void SpaceDustAudioProcessorEditor::changeListenerCallback(juce::ChangeBroadcaster* source)

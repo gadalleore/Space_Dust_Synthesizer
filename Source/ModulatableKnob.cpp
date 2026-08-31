@@ -227,7 +227,7 @@ void ModulatableKnob::mouseUp (const juce::MouseEvent&)
     repaint();
 }
 
-void ModulatableKnob::setLfoPhases (const float* phases01)
+void ModulatableKnob::setLfoState (const float* phases01, const float* outputs01)
 {
     bool changed = false;
 
@@ -236,6 +236,12 @@ void ModulatableKnob::setLfoPhases (const float* phases01)
         if (phases[i] != phases01[i])
         {
             phases[i] = phases01[i];
+            changed = true;
+        }
+
+        if (outputs[i] != outputs01[i])
+        {
+            outputs[i] = outputs01[i];
             changed = true;
         }
     }
@@ -254,15 +260,25 @@ void ModulatableKnob::paint (juce::Graphics& g)
 {
     const int assigning = mode.activeLfo();
 
-    // -- the ring, while assign mode is on --
+    // -- the highlight, while assign mode is on --
+    //
+    // A soft wash over the knob rather than a rectangle drawn around it. The
+    // outline read as a box bolted on beside the control; a tint reads as the
+    // knob itself being lit, which is what "these knobs are assignable" should
+    // look like (Giuseppe, 2026-08-31).
     if (assigning >= 0)
     {
-        // The whole cell, because the bar now lives INSIDE this rectangle
-        // rather than beside it -- trimming the ring back by the bar's width
-        // would cut it across the round knob it is meant to enclose.
-        auto ring = getLocalBounds().toFloat().reduced (1.0f);
-        g.setColour (spacedust::AssignModeState::colourFor (assigning).withAlpha (0.85f));
-        g.drawRoundedRectangle (ring, 4.0f, 2.0f);
+        auto cell = getLocalBounds().toFloat().reduced (1.0f);
+        const auto colour = spacedust::AssignModeState::colourFor (assigning);
+
+        // Two passes: a broad low wash so the whole cell reads as live, and a
+        // brighter edge so neighbouring knobs stay visually separate at the
+        // tight spacings on the Effects page.
+        g.setColour (colour.withAlpha (0.16f));
+        g.fillRoundedRectangle (cell, 4.0f);
+
+        g.setColour (colour.withAlpha (0.40f));
+        g.drawRoundedRectangle (cell, 4.0f, 1.0f);
     }
 
     // -- the bar, whether or not assign mode is on --
@@ -284,17 +300,32 @@ void ModulatableKnob::paint (juce::Graphics& g)
             g.setColour (colour.withAlpha (0.20f));
             g.fillRect (lane);
 
-            // The filled part is the amount, measured from the middle, so a
-            // negative amount reads as clearly as a positive one.
+            // The lit zone is SYMMETRIC about the knob's own value, because an
+            // LFO swings a knob both ways: at +50% it pushes half a range up AND
+            // half a range down. Filling only upward said the modulation went one
+            // direction, which was simply wrong (Giuseppe, 2026-08-31).
+            //
+            // The sign of amount therefore does not change the zone -- it flips
+            // which way the marker travels, which the marker itself shows.
             const float mid = lane.getCentreY();
             const float reach = lane.getHeight() * 0.5f * std::abs (amount);
 
             g.setColour (colour.withAlpha (0.55f));
-            g.fillRect (lane.withY (amount >= 0.0f ? mid - reach : mid)
-                            .withHeight (reach));
+            g.fillRect (lane.withY (mid - reach).withHeight (reach * 2.0f));
 
-            // Where the LFO is in its cycle right now.
-            const float y = lane.getBottom() - lane.getHeight() * phases[lfo];
+            // Where the knob is being pushed RIGHT NOW, inside that zone and
+            // never outside it.
+            //
+            // Driven by the LFO's output, not its phase. For a sine, phase 0.25
+            // is the top of the swing rather than a quarter of the way up it, so
+            // a marker drawn from the phase would sit in the wrong place for
+            // every waveform except a ramp.
+            //
+            // Depth reaches 2.0, so the product can leave the zone; clamping is
+            // what keeps the promise that the marker stays inside the highlight.
+            const float pushed = juce::jlimit (-1.0f, 1.0f, amount * outputs[lfo]);
+            const float y = mid - reach * pushed;
+
             g.setColour (colour);
             g.fillRect (lane.getX(), y - 1.0f, lane.getWidth(), 2.0f);
         }

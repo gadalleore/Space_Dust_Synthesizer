@@ -57,7 +57,14 @@ public:
     /** Where the LFOs are in their cycles, 0..1, for the bar's marker.
         Pushed in by the editor's repaint timer rather than pulled, so one timer
         serves every knob. */
-    void setLfoPhases (const float* phases01);
+    /** Push the LFOs' live state in for the indicator bars.
+
+        Takes both because they answer different questions: the phase is where
+        the LFO is in its cycle, the output is how hard it is pushing. The bar's
+        marker needs the output -- for a sine, phase 0.25 is the TOP of the swing
+        rather than a quarter of the way up it. The phase is kept because it is
+        cheap and a future readout may want it. */
+    void setLfoState (const float* phases01, const float* outputs01);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -112,6 +119,9 @@ private:
     std::string destination;
 
     float phases[spacedust::numLfos] { 0.0f, 0.0f, 0.0f, 0.0f };
+
+    /** Depth-scaled LFO output, -1..+1 nominal. See setLfoState. */
+    float outputs[spacedust::numLfos] { 0.0f, 0.0f, 0.0f, 0.0f };
 
     /** Set while a drag is running, so the percentage reads out only then. */
     bool  dragging = false;

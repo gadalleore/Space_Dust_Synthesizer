@@ -2201,6 +2201,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 double ppqEnd = ppqStart + static_cast<double>(numSamples - 1) / samplesPerBeat;
                 double phaseEnd = std::fmod(ppqEnd, periodBeats) / periodBeats;
                 lfoPhase01[lfo].store(static_cast<float>(phaseEnd), std::memory_order_relaxed);
+                lfoOutput[lfo].store(lfoSmoothedValue[lfo], std::memory_order_relaxed);
             }
             else
             {
@@ -2225,6 +2226,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
                 // reads it. Relaxed store -- this only feeds a visual indicator,
                 // nothing else synchronises on it.
                 lfoPhase01[lfo].store(static_cast<float>(lfoCurrentPhase[lfo]), std::memory_order_relaxed);
+                lfoOutput[lfo].store(lfoSmoothedValue[lfo], std::memory_order_relaxed);
             }
         }
         else
@@ -2255,6 +2257,7 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
             // Publish the phase at the END of the block, same as the retrigger
             // branch above. Relaxed store -- display only, nothing synchronises on it.
             lfoPhase01[lfo].store(static_cast<float>(lfoCurrentPhase[lfo]), std::memory_order_relaxed);
+            lfoOutput[lfo].store(lfoSmoothedValue[lfo], std::memory_order_relaxed);
         }
     }
 
