@@ -3707,8 +3707,14 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     envelopeGroup.getProperties().set("viewportGlow", true);
     masterGroup.getProperties().set("viewportGlow", true);
     modulationGroup.getProperties().set("viewportGlow", true);
+    // All four, not just the two that predate the matrix. LFO 3 and 4 were added
+    // without this line and so drew flat and grey beside their glowing siblings
+    // -- the panels looked like a different part of the plugin
+    // (Giuseppe, 2026-08-31).
     lfo1Group.getProperties().set("viewportGlow", true);
     lfo2Group.getProperties().set("viewportGlow", true);
+    lfo3Group.getProperties().set("viewportGlow", true);
+    lfo4Group.getProperties().set("viewportGlow", true);
     mpeGroup.getProperties().set("viewportGlow", true);
     delayGroup.getProperties().set("viewportGlow", true);
     reverbGroup.getProperties().set("viewportGlow", true);
@@ -6151,20 +6157,22 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     {
         auto* button = lfoAssignButtons.add(new juce::TextButton(safeString("Assign")));
 
-        // The synth's own toggle colours, not the LFO's. Assign is a toggle like
-        // Sync or Retrigger and should read as one; four differently-coloured
-        // buttons made the panel look like four different kinds of control
+        // No colour overrides at all. Assign IS a toggle -- it is either on or it
+        // is not -- so it is made one, and SpaceDustLookAndFeel then draws it
+        // exactly as it draws Sync and Retrigger, glow and all. Setting colours
+        // by hand was what made it look like a different species of control
         // (Giuseppe, 2026-08-31).
         //
-        // The per-LFO colour has not gone away -- it moved to where it actually
-        // answers a question. A lit knob and its indicator bar carry the colour,
-        // so while you are assigning, the colour on the KNOBS tells you which LFO
-        // you are pointing.
-        button->setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a5f));
-        button->setColour(juce::TextButton::buttonOnColourId, juce::Colour(0xff00d4ff));
+        // The per-LFO colour has not gone away -- it moved to where it answers a
+        // question. A lit knob and its indicator bar carry the colour, so while
+        // you are assigning, the KNOBS tell you which LFO you are pointing.
+        button->setClickingTogglesState(true);
 
         // A second press on the LFO already being assigned leaves the mode, so
-        // the button that turns it on turns it off again.
+        // the button that turns it on turns it off again. The mode is the single
+        // source of truth; changeListenerCallback below syncs every button's
+        // toggle state back from it, which is what keeps the other three dark
+        // when this one lights up.
         button->onClick = [this, lfo]
         {
             assignMode.setActiveLfo(assignMode.activeLfo() == lfo ? -1 : lfo);

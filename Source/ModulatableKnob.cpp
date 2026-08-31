@@ -271,14 +271,12 @@ void ModulatableKnob::paint (juce::Graphics& g)
         auto cell = getLocalBounds().toFloat().reduced (1.0f);
         const auto colour = spacedust::AssignModeState::colourFor (assigning);
 
-        // Two passes: a broad low wash so the whole cell reads as live, and a
-        // brighter edge so neighbouring knobs stay visually separate at the
-        // tight spacings on the Effects page.
-        g.setColour (colour.withAlpha (0.16f));
+        // A wash and nothing else. An outline -- even a faint one -- still reads
+        // as a box drawn around the knob, which is the thing being removed. The
+        // fill is a little stronger than it would otherwise be to make up for
+        // having no edge to define it.
+        g.setColour (colour.withAlpha (0.22f));
         g.fillRoundedRectangle (cell, 4.0f);
-
-        g.setColour (colour.withAlpha (0.40f));
-        g.drawRoundedRectangle (cell, 4.0f, 1.0f);
     }
 
     // -- the bar, whether or not assign mode is on --
