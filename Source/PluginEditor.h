@@ -423,6 +423,13 @@ public:
         Standalone's QWERTY keyboard keeps every key it already had. */
     bool keyPressed(const juce::KeyPress& key) override;
 
+    /** Receives clicks forwarded from every LFO panel control.
+
+        The editor registers itself as a mouse listener on each of them, and each
+        carries an "lfoPanel" property saying which panel it belongs to, so a
+        click anywhere in a panel moves the focus corners there. */
+    void mouseDown(const juce::MouseEvent& event) override;
+
     //==============================================================================
     void paint(juce::Graphics&) override;
     void resized() override;
@@ -1585,6 +1592,16 @@ private:
     juce::OwnedArray<ModulatableKnob> modKnobs;
 
     /** One Assign button per LFO panel. Indexed by LFO number. */
+    /** Which LFO panel was last touched, or -1. Drives the focus corners.
+
+        "Touched" means any control inside it was clicked or moved, which is what
+        makes the marks follow attention rather than the mouse -- they stay where
+        you were working while you go and look at something else. */
+    int focusedLfoPanel = -1;
+
+    /** Put the focus corners on one panel and take them off the other three. */
+    void setFocusedLfoPanel(int lfo);
+
     /** ToggleButton, NOT TextButton.
 
         SpaceDustLookAndFeel overrides drawToggleButton, and JUCE calls that only

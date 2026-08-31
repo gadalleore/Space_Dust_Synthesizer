@@ -80,6 +80,12 @@ public:
     static constexpr int barWidth = 6;
     static constexpr int barGap   = 3;
 
+    /** The little x that removes this knob's routing for the LFO being assigned.
+
+        Only drawn in assign mode, and only when there is something to remove --
+        an x offering to delete nothing is a control that lies. */
+    static constexpr int removeSize = 13;
+
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 
@@ -101,6 +107,10 @@ private:
     void followVisibility();
 
     juce::Rectangle<int> barArea() const;
+
+    /** Where the remove-x sits, and whether it is being offered at all. */
+    juce::Rectangle<int> removeArea() const;
+    bool removeOffered() const;
 
     /** The one true partition of the bar into lanes. paint() and lfoLaneAt()
         both call this rather than each computing lane geometry on its own --

@@ -118,6 +118,23 @@ juce::Rectangle<int> ModulatableKnob::barArea() const
     return getLocalBounds().withTrimmedRight (barGap).removeFromRight (barWidth);
 }
 
+bool ModulatableKnob::removeOffered() const
+{
+    // Only while assigning, and only when this knob actually carries a routing
+    // for the LFO being assigned. Offering to delete nothing would be a control
+    // that lies, and it would put an x on all ~120 knobs the moment assign mode
+    // opened.
+    const int active = mode.activeLfo();
+    return active >= 0 && matrix.amountFor (active, destination) != 0.0f;
+}
+
+juce::Rectangle<int> ModulatableKnob::removeArea() const
+{
+    // Top-left. The percentage readout takes the top-RIGHT while a drag is
+    // running, and the two must never sit on each other.
+    return getLocalBounds().removeFromTop (removeSize).removeFromLeft (removeSize);
+}
+
 bool ModulatableKnob::hitTest (int x, int y)
 {
     // This is the actual mechanism that makes the component transparent to the
@@ -189,6 +206,20 @@ void ModulatableKnob::mouseDown (const juce::MouseEvent& event)
     // silently redirect the gesture to whichever LFO already owns that pixel
     // would be a trap. Editing an existing lane by pressing the bar directly
     // is only what happens when assign mode is off.
+    // The remove-x first, because it sits inside the area a drag would otherwise
+    // claim. A press here deletes the routing and starts no drag -- otherwise
+    // the same gesture would remove it and immediately begin setting a new one.
+    if (removeOffered() && removeArea().contains (event.getPosition()))
+    {
+        matrix.clearRouting (mode.activeLfo(), destination);
+
+        if (routingChanged)
+            routingChanged();
+
+        repaint();
+        return;
+    }
+
     if (mode.activeLfo() >= 0)
         dragLfo = mode.activeLfo();
     else
@@ -277,6 +308,25 @@ void ModulatableKnob::paint (juce::Graphics& g)
         // having no edge to define it.
         g.setColour (colour.withAlpha (0.22f));
         g.fillRoundedRectangle (cell, 4.0f);
+
+        // -- the remove x, top-left, only where there is a routing to remove --
+        if (removeOffered())
+        {
+            auto box = removeArea().toFloat().reduced (1.0f);
+
+            g.setColour (juce::Colours::black.withAlpha (0.55f));
+            g.fillRoundedRectangle (box, 3.0f);
+
+            g.setColour (colour.withAlpha (0.75f));
+            g.drawRoundedRectangle (box, 3.0f, 1.0f);
+
+            // The stroke, drawn rather than typed: a glyph at this size lands on
+            // whatever the font decides and will not centre reliably.
+            auto arm = box.reduced (box.getWidth() * 0.30f);
+            g.setColour (colour.brighter (0.4f));
+            g.drawLine (arm.getX(), arm.getY(), arm.getRight(), arm.getBottom(), 1.6f);
+            g.drawLine (arm.getX(), arm.getBottom(), arm.getRight(), arm.getY(), 1.6f);
+        }
     }
 
     // -- the bar, whether or not assign mode is on --

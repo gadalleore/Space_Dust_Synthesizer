@@ -197,6 +197,35 @@ void SpaceDustLookAndFeel::drawGroupComponentOutline(juce::Graphics& g, int widt
                           juce::Justification::centredLeft,
                           labelCyan, 0.2f, 1);
     }
+
+    // -- Focus corners --
+    //
+    // Four short brackets at the corners rather than a fifth full outline. The
+    // box already carries two states in its border -- glowing, and brighter
+    // still when active -- so a third ring would have to compete with both. Corner
+    // marks read as "this one" without adding another closed shape
+    // (Giuseppe, 2026-08-31).
+    if (group.getProperties().getWithDefault("focusCorners", false))
+    {
+        const float armLen = juce::jmin(18.0f, juce::jmin(w, h) * 0.25f);
+        const float bx = x, by = indent, bw = w, bh = h;
+
+        juce::Path corners;
+
+        // Top-left, top-right, bottom-left, bottom-right.
+        corners.startNewSubPath(bx, by + armLen);              corners.lineTo(bx, by);              corners.lineTo(bx + armLen, by);
+        corners.startNewSubPath(bx + bw - armLen, by);          corners.lineTo(bx + bw, by);          corners.lineTo(bx + bw, by + armLen);
+        corners.startNewSubPath(bx, by + bh - armLen);          corners.lineTo(bx, by + bh);          corners.lineTo(bx + armLen, by + bh);
+        corners.startNewSubPath(bx + bw - armLen, by + bh);     corners.lineTo(bx + bw, by + bh);     corners.lineTo(bx + bw, by + bh - armLen);
+
+        const juce::Colour focusHue(0xff00d4ff);
+
+        g.setColour(focusHue.withAlpha(0.25f));
+        g.strokePath(corners, roundedStroke(5.0f));
+
+        g.setColour(focusHue);
+        g.strokePath(corners, roundedStroke(2.0f));
+    }
 }
 
 //==============================================================================

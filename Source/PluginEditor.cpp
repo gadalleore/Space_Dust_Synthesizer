@@ -1400,8 +1400,36 @@ namespace
     /** Adds one LFO panel's widgets (and its Assign button) as children of `parent`. */
     void addLfoPanelChildren(juce::Component& parent,
                               SpaceDustAudioProcessorEditor::LfoPanelRefs r,
-                              juce::ToggleButton* assignButton)
+                              juce::ToggleButton* assignButton,
+                              SpaceDustAudioProcessorEditor* editorForFocus = nullptr,
+                              int lfoIndex = -1)
     {
+        // Every control reports which panel it belongs to when it is touched, so
+        // the focus corners can follow attention. The controls are children of
+        // the PAGE, not of the group box behind them, so there is no parent
+        // relationship to walk -- each one has to be told.
+        const auto claim = [editorForFocus, lfoIndex](juce::Component& c)
+        {
+            if (editorForFocus != nullptr && lfoIndex >= 0)
+            {
+                c.getProperties().set("lfoPanel", lfoIndex);
+                c.addMouseListener(editorForFocus, true);
+            }
+        };
+
+        claim(r.enabledButton);
+        claim(r.waveformCombo);
+        claim(r.syncButton);
+        claim(r.tripletButton);
+        claim(r.tripletStraightButton);
+        claim(r.freeRateSlider);
+        claim(r.syncRateCombo);
+        claim(r.depthSlider);
+        claim(r.phaseSlider);
+        claim(r.retriggerButton);
+        if (assignButton != nullptr)
+            claim(*assignButton);
+
         parent.addAndMakeVisible(r.group);
         parent.addAndMakeVisible(r.enabledButton);
         parent.addAndMakeVisible(r.waveformCombo);
@@ -1578,7 +1606,8 @@ ModulationPageComponent::ModulationPageComponent(SpaceDustAudioProcessorEditor& 
     for (int lfo = 0; lfo < SpaceDustAudioProcessorEditor::numLfoPanels; ++lfo)
         addLfoPanelChildren(*this, parentEditor.lfoPanelRefs(lfo),
                              lfo < parentEditor.lfoAssignButtons.size()
-                                 ? parentEditor.lfoAssignButtons[lfo] : nullptr);
+                                 ? parentEditor.lfoAssignButtons[lfo] : nullptr,
+                             &parentEditor, lfo);
 
 
     // MPE controls
@@ -7843,6 +7872,38 @@ void SpaceDustAudioProcessorEditor::buttonClicked(juce::Button* button)
     juce::ignoreUnused(button);
 }
 
+void SpaceDustAudioProcessorEditor::mouseDown(const juce::MouseEvent& event)
+{
+    if (isBeingDestroyed.load() || event.eventComponent == nullptr)
+        return;
+
+    // -1 for anything that is not an LFO control, which also clears the corners
+    // when you go and work somewhere else on the page.
+    const int lfo = event.eventComponent->getProperties().getWithDefault("lfoPanel", -1);
+    setFocusedLfoPanel(lfo);
+}
+
+void SpaceDustAudioProcessorEditor::setFocusedLfoPanel(int lfo)
+{
+    if (focusedLfoPanel == lfo)
+        return;
+
+    focusedLfoPanel = lfo;
+
+    juce::GroupComponent* groups[] = { &lfo1Group, &lfo2Group, &lfo3Group, &lfo4Group };
+
+    for (int i = 0; i < numLfoPanels; ++i)
+    {
+        groups[i]->getProperties().set("focusCorners", i == lfo);
+        groups[i]->repaint();
+    }
+
+    // The glow spills outside the box, so the page under it has to redraw too or
+    // the old marks leave a ghost behind.
+    if (auto* parent = lfo1Group.getParentComponent())
+        parent->repaint();
+}
+
 void SpaceDustAudioProcessorEditor::buttonStateChanged(juce::Button* button)
 {
     if (isBeingDestroyed.load() || button == nullptr)
@@ -7880,6 +7941,12 @@ void SpaceDustAudioProcessorEditor::buttonStateChanged(juce::Button* button)
         sync(lfo1EnabledButton, lfo1Group);
     else if (button == &lfo2EnabledButton)
         sync(lfo2EnabledButton, lfo2Group);
+    // 3 and 4 were missed when they were added, same as viewportGlow was, so a
+    // running LFO 3 looked no different from a silent one.
+    else if (button == &lfo3EnabledButton)
+        sync(lfo3EnabledButton, lfo3Group);
+    else if (button == &lfo4EnabledButton)
+        sync(lfo4EnabledButton, lfo4Group);
     else if (button == &finalEQEnabledButton)
         sync(finalEQEnabledButton, finalEQGroup);
 }
