@@ -7345,9 +7345,9 @@ ModulatableKnob* SpaceDustAudioProcessorEditor::wrapKnob(juce::Slider& slider,
     }
 
     // A parameter that exists but may not be modulated is the normal case, not a
-    // mistake: Unison Voices is a count, the toggles are bools, and no LFO
-    // control may drive another. Those are passed over without a word, which is
-    // what lets the list below name a knob without checking what kind it is.
+    // mistake: Unison Voices is a count, and the toggles are bools. Those are
+    // passed over without a word, which is what lets the list below name a knob
+    // without checking what kind it is.
     if (! spacedust::DestinationTable::isLegalDestination(*ranged))
         return nullptr;
 
@@ -7522,6 +7522,34 @@ void SpaceDustAudioProcessorEditor::wrapAssignableKnobs()
         finalEQGainModKnob = wrapKnob(finalEQGainSlider, "finalEQB" + n + "Gain");
     }
 
+    // -- the LFOs themselves --
+    //
+    // An LFO may wobble ANOTHER LFO's speed, size or starting point. Rate,
+    // Depth and Phase are the only floats an LFO has, so these twelve are the
+    // whole of it: Waveform, Sync, Triplet and Retrigger are not floats and
+    // wrapKnob passes over them without a word (Giuseppe, 2026-08-31).
+    //
+    // What an LFO may NOT reach is its OWN three, and that cannot be decided
+    // here -- this list says what is modulatable, not by whom. The self rule
+    // lives where the source is known: ModulatableKnob::assignableByActiveLfo
+    // keeps those three dark and refusing the mouse while their own LFO is the
+    // one assigning, and rebuildCompiledRoutings drops any self-routing that
+    // arrives from a patch.
+    juce::Slider* lfoRateSliders[]  { &lfo1FreeRateSlider, &lfo2FreeRateSlider,
+                                      &lfo3FreeRateSlider, &lfo4FreeRateSlider };
+    juce::Slider* lfoDepthSliders[] { &lfo1DepthSlider, &lfo2DepthSlider,
+                                      &lfo3DepthSlider, &lfo4DepthSlider };
+    juce::Slider* lfoPhaseSliders[] { &lfo1PhaseSlider, &lfo2PhaseSlider,
+                                      &lfo3PhaseSlider, &lfo4PhaseSlider };
+
+    for (int i = 0; i < spacedust::numLfos; ++i)
+    {
+        const juce::String n = juce::String(i + 1);
+        wrapKnob(*lfoRateSliders[i],  "lfo" + n + "Rate");
+        wrapKnob(*lfoDepthSliders[i], "lfo" + n + "Depth");
+        wrapKnob(*lfoPhaseSliders[i], "lfo" + n + "Phase");
+    }
+
     // Every wrapper joins the parent its knob already has, and follows that knob
     // from then on -- including out of one parent and into another, because
     // attachToKnobParent runs again on every re-parent. That is what the
@@ -7656,10 +7684,11 @@ void SpaceDustAudioProcessorEditor::changeListenerCallback(juce::ChangeBroadcast
 
     // NOTHING is hidden on any page while the mode is on.
     //
-    // The rule this feature actually has is "an LFO may not modulate an LFO
-    // control", and it is enforced where it belongs: isLegalDestination refuses
-    // every id beginning with "lfo", so wrapKnob never builds a wrapper for one
-    // and there is nothing on the Modulation page to hide.
+    // The rule this feature actually has is "an LFO may not modulate ITSELF",
+    // and it is enforced where the source is known rather than by hiding
+    // anything: an LFO's own Rate, Depth and Phase go dark and refuse the mouse
+    // while that LFO is the one assigning, and the other three LFOs' knobs stay
+    // live like every other destination.
     //
     // An earlier version suppressed every wrapper while that page was showing.
     // That is a cheap approximation of the rule and it is wrong: it also swept
