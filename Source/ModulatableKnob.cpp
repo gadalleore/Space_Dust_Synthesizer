@@ -91,8 +91,25 @@ void ModulatableKnob::followKnob()
     // So the bar is drawn just inside the knob's right edge instead -- see
     // barArea(). That edge is the corner of the square a round knob is drawn
     // in, which is empty space on every knob in the plugin.
+    // Still exactly the knob's rectangle, for horizontal sliders too.
+    //
+    // A first attempt grew the wrapper downward so a pan bar could sit under the
+    // control. It did clear the track -- and landed on the "Pan" label instead,
+    // because a slider's label sits only a few pixels beneath it.
+    //
+    // Measuring showed the growth was never needed: Osc 1 Pan's BOUNDS run to
+    // y=217 while the track JUCE draws inside them stops at y=209. There is
+    // already dead space below the track and inside the control, which is where
+    // the bar belongs -- clear of the track above it and of the label below
+    // (Giuseppe, 2026-08-31).
     setBounds (getWrappedBounds());
     toFront (false);
+}
+
+juce::Rectangle<int> ModulatableKnob::knobArea() const
+{
+    // The wrapper IS the control, in both orientations -- see followKnob.
+    return getLocalBounds();
 }
 
 void ModulatableKnob::followVisibility()
@@ -120,7 +137,7 @@ juce::Rectangle<int> ModulatableKnob::barArea() const
     // left and right, so a vertical strip says nothing about how far the sound
     // is being pushed either way (Giuseppe, 2026-08-31).
     if (isHorizontalControl())
-        return getLocalBounds().withTrimmedBottom (barGap).removeFromBottom (barWidth);
+        return getLocalBounds().removeFromBottom (hBarWidth).reduced (hBarInset, 0);
 
     return getLocalBounds().withTrimmedRight (barGap).removeFromRight (barWidth);
 }
@@ -134,21 +151,37 @@ bool ModulatableKnob::isHorizontalControl() const
         || style == juce::Slider::ThreeValueHorizontal;
 }
 
+int ModulatableKnob::firstRoutedLfo() const
+{
+    for (int lfo = 0; lfo < spacedust::numLfos; ++lfo)
+        if (matrix.amountFor (lfo, destination) != 0.0f)
+            return lfo;
+
+    return 0;
+}
+
 bool ModulatableKnob::removeOffered() const
 {
-    // Only while assigning, and only when this knob actually carries a routing
-    // for the LFO being assigned. Offering to delete nothing would be a control
-    // that lies, and it would put an x on all ~120 knobs the moment assign mode
-    // opened.
-    const int active = mode.activeLfo();
-    return active >= 0 && matrix.amountFor (active, destination) != 0.0f;
+    // Whenever this knob carries a routing at all -- assign mode or not, so a
+    // routing can be taken off without entering the mode to do it
+    // (Giuseppe, 2026-08-31).
+    //
+    // Still never on an empty knob: an x that deletes nothing would appear on
+    // all ~120 of them the moment assign mode opened, and would lie about what
+    // pressing it does.
+    if (mode.activeLfo() >= 0)
+        return matrix.amountFor (mode.activeLfo(), destination) != 0.0f;
+
+    return matrix.hasAnyRouting (destination);
 }
 
 juce::Rectangle<int> ModulatableKnob::removeArea() const
 {
-    // Top-left. The percentage readout takes the top-RIGHT while a drag is
-    // running, and the two must never sit on each other.
-    return getLocalBounds().removeFromTop (removeSize).removeFromLeft (removeSize);
+    // Top-left of the CONTROL, not of the wrapper -- a horizontal slider's
+    // wrapper runs on below it to hold the bar. The percentage readout takes the
+    // top-RIGHT while a drag is running, and the two must never sit on each
+    // other.
+    return knobArea().removeFromTop (removeSize).removeFromLeft (removeSize);
 }
 
 bool ModulatableKnob::hitTest (int x, int y)
@@ -163,6 +196,11 @@ bool ModulatableKnob::hitTest (int x, int y)
     // The bar is clickable even outside assign mode, so an amount can be edited
     // without entering the mode at all. Everything else falls through.
     if (barArea().contains (x, y) && matrix.hasAnyRouting (destination))
+        return true;
+
+    // So is the remove-x, for the same reason: a routing can be taken off
+    // without entering the mode to do it.
+    if (removeOffered() && removeArea().contains (x, y))
         return true;
 
     return mode.activeLfo() >= 0;
@@ -236,7 +274,21 @@ void ModulatableKnob::mouseDown (const juce::MouseEvent& event)
     // the same gesture would remove it and immediately begin setting a new one.
     if (removeOffered() && removeArea().contains (event.getPosition()))
     {
-        matrix.clearRouting (mode.activeLfo(), destination);
+        if (mode.activeLfo() >= 0)
+        {
+            // Assigning: take off the one you are working with, and leave any
+            // others on this knob alone.
+            matrix.clearRouting (mode.activeLfo(), destination);
+        }
+        else
+        {
+            // Not assigning: there is no "the one you are working with", so the
+            // x means what it looks like -- take this knob's modulation off.
+            // With a single routing, which is the ordinary case, the two
+            // branches do the same thing.
+            for (int lfo = 0; lfo < spacedust::numLfos; ++lfo)
+                matrix.clearRouting (lfo, destination);
+        }
 
         if (routingChanged)
             routingChanged();
@@ -328,7 +380,7 @@ void ModulatableKnob::paint (juce::Graphics& g)
     // look like (Giuseppe, 2026-08-31).
     if (assigning >= 0)
     {
-        auto cell = getLocalBounds().toFloat().reduced (1.0f);
+        auto cell = knobArea().toFloat().reduced (1.0f);
         const auto colour = spacedust::AssignModeState::colourFor (assigning);
 
         // Three states, told apart by weight alone -- no outlines, since an
@@ -373,24 +425,6 @@ void ModulatableKnob::paint (juce::Graphics& g)
             g.strokePath (corners, stroke);
         }
 
-        // -- the remove x, top-left, only where there is a routing to remove --
-        if (removeOffered())
-        {
-            auto box = removeArea().toFloat().reduced (1.0f);
-
-            g.setColour (juce::Colours::black.withAlpha (0.55f));
-            g.fillRoundedRectangle (box, 3.0f);
-
-            g.setColour (colour.withAlpha (0.75f));
-            g.drawRoundedRectangle (box, 3.0f, 1.0f);
-
-            // The stroke, drawn rather than typed: a glyph at this size lands on
-            // whatever the font decides and will not centre reliably.
-            auto arm = box.reduced (box.getWidth() * 0.30f);
-            g.setColour (colour.brighter (0.4f));
-            g.drawLine (arm.getX(), arm.getY(), arm.getRight(), arm.getBottom(), 1.6f);
-            g.drawLine (arm.getX(), arm.getBottom(), arm.getRight(), arm.getY(), 1.6f);
-        }
     }
 
     // -- the bar, whether or not assign mode is on --
@@ -461,13 +495,38 @@ void ModulatableKnob::paint (juce::Graphics& g)
         }
     }
 
+    // -- the remove x, whether or not assign mode is on --
+    //
+    // Outside the mode it wears the colour of the LFO it would remove; with
+    // several on one knob it wears the first, and removes them all.
+    if (removeOffered())
+    {
+        const int forLfo = mode.activeLfo() >= 0 ? mode.activeLfo() : firstRoutedLfo();
+        const auto xColour = spacedust::AssignModeState::colourFor (forLfo);
+
+        auto box = removeArea().toFloat().reduced (1.0f);
+
+        g.setColour (juce::Colours::black.withAlpha (0.55f));
+        g.fillRoundedRectangle (box, 3.0f);
+
+        g.setColour (xColour.withAlpha (0.75f));
+        g.drawRoundedRectangle (box, 3.0f, 1.0f);
+
+        // The stroke, drawn rather than typed: a glyph at this size lands on
+        // whatever the font decides and will not centre reliably.
+        auto arm = box.reduced (box.getWidth() * 0.30f);
+        g.setColour (xColour.brighter (0.4f));
+        g.drawLine (arm.getX(), arm.getY(), arm.getRight(), arm.getBottom(), 1.6f);
+        g.drawLine (arm.getX(), arm.getBottom(), arm.getRight(), arm.getY(), 1.6f);
+    }
+
     // -- the percentage, only while a drag is running --
     if (dragging && dragLfo >= 0)
     {
         const int percent = juce::roundToInt (matrix.amountFor (dragLfo, destination) * 100.0f);
         const auto text = juce::String (percent) + "%";
 
-        auto label = getLocalBounds().removeFromTop (14).removeFromRight (46).translated (-barWidth, 0);
+        auto label = knobArea().removeFromTop (14).removeFromRight (46).translated (-barWidth, 0);
 
         g.setColour (juce::Colours::black.withAlpha (0.70f));
         g.fillRoundedRectangle (label.toFloat(), 3.0f);

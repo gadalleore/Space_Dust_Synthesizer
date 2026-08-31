@@ -80,6 +80,19 @@ public:
     static constexpr int barWidth = 6;
     static constexpr int barGap   = 3;
 
+    /** The bar under a HORIZONTAL slider is thinner and shorter than the one
+        beside a rotary, and both numbers were measured rather than guessed.
+
+        Thinner: a pan slider's label sits about eleven pixels under its track,
+        so a six-pixel bar plus its gap lands exactly on the text. Four leaves a
+        clear gap.
+
+        Shorter: the slider's BOUNDS are wider than the track JUCE draws inside
+        them -- measured at 105 against 97 on Osc 1 Pan -- so a bar spanning the
+        full wrapper overhangs the control it is describing. */
+    static constexpr int hBarWidth  = 4;
+    static constexpr int hBarInset  = 4;
+
     /** The little x that removes this knob's routing for the LFO being assigned.
 
         Only drawn in assign mode, and only when there is something to remove --
@@ -117,6 +130,17 @@ private:
         Decides which way the indicator bar lies: beneath a horizontal slider,
         beside a rotary. Pan is the control that makes the difference matter. */
     bool isHorizontalControl() const;
+
+    /** The wrapped control's own rectangle inside this wrapper.
+
+        The same as the whole wrapper for a rotary. For a horizontal slider the
+        wrapper runs on below the control to hold the bar, so this is what the
+        highlight, the x and the focus marks should frame. */
+    juce::Rectangle<int> knobArea() const;
+
+    /** The lowest-numbered LFO reaching this knob, or 0 when none do. Decides
+        what colour the remove-x wears when no LFO is being assigned. */
+    int firstRoutedLfo() const;
 
     /** The one true partition of the bar into lanes. paint() and lfoLaneAt()
         both call this rather than each computing lane geometry on its own --
