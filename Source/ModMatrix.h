@@ -17,6 +17,21 @@ namespace spacedust
 {
     inline constexpr int numLfos = 4;
 
+    /** How far a single routing may be pushed, as a multiple of half the
+        destination's range.
+
+        1.0 sweeps exactly from one end of the knob to the other when the knob
+        sits in the middle. Past that the swing runs off the end and the clamp
+        holds it there, which flattens the peaks -- a squared-off wobble rather
+        than a wider one, and a useful sound in its own right. It is also what
+        lets a knob sitting near one end still be driven all the way to the
+        other (Giuseppe, 2026-08-31).
+
+        2.0 rather than something larger because beyond twice the range almost
+        every waveform is clipped to a square for almost all of its cycle, so the
+        extra travel buys nothing you cannot get from the LFO's own shape. */
+    inline constexpr float maxRoutingAmount = 2.0f;
+
     /** The destinations that are applied INSIDE a per-sample loop, by hand.
 
         These predate the matrix: each was one entry of the LFO Destination
@@ -57,7 +72,7 @@ namespace spacedust
     {
         int         lfoIndex = 0;    // 0..numLfos-1
         std::string destination;     // an APVTS parameter id
-        float       amount = 0.0f;   // -1..+1
+        float       amount = 0.0f;   // -maxRoutingAmount .. +maxRoutingAmount
     };
 
     /** A destination knob's legal range, as the APVTS reports it. */

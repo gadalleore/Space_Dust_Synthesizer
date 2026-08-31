@@ -320,7 +320,7 @@ void ModulatableKnob::mouseDrag (const juce::MouseEvent& event)
 
     // Up is positive. getDistanceFromDragStartY grows downwards, so it is negated.
     const float delta = -(float) event.getDistanceFromDragStartY() / dragPixelsForFullRange;
-    const float amount = juce::jlimit (-1.0f, 1.0f, dragStartAmount + delta);
+    const float amount = juce::jlimit (-spacedust::maxRoutingAmount, spacedust::maxRoutingAmount, dragStartAmount + delta);
 
     // An amount of zero removes the routing, so dragging back through the middle
     // undoes an assignment rather than leaving a dead entry behind.

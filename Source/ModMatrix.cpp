@@ -27,7 +27,7 @@ namespace spacedust
         if (lfoIndex < 0 || lfoIndex >= numLfos || destination.empty())
             return;
 
-        const float a = clampf (amount, -1.0f, 1.0f);
+        const float a = clampf (amount, -maxRoutingAmount, maxRoutingAmount);
 
         // Zero means "not assigned". Storing it would leave an entry that draws
         // an indicator bar and moves nothing.

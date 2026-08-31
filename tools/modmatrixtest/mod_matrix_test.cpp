@@ -128,13 +128,39 @@ int main()
         check(m.amountFor(1, "a") == 0.5f, "and leaves the other LFO alone");
     }
 
-    // -- an amount outside -1..+1 is clamped when stored --
+    // -- an amount may exceed 100%, and is clamped at maxRoutingAmount --
     {
         ModMatrix m;
-        m.setRouting(0, "a",  4.0f);
-        m.setRouting(1, "a", -4.0f);
-        checkNear(m.amountFor(0, "a"),  1.0, 1e-6, "an amount above +1 is clamped");
-        checkNear(m.amountFor(1, "a"), -1.0, 1e-6, "an amount below -1 is clamped");
+
+        // Over 100% is KEPT, not trimmed back to 1.0. That is what lets a sweep
+        // run off the end of a knob and be held there, flattening its peaks.
+        m.setRouting(0, "a",  1.5f);
+        m.setRouting(1, "a", -1.5f);
+        checkNear(m.amountFor(0, "a"),  1.5, 1e-6, "an amount above +1 is kept, not trimmed to 1");
+        checkNear(m.amountFor(1, "a"), -1.5, 1e-6, "an amount below -1 is kept, not trimmed to -1");
+
+        // Only past maxRoutingAmount does it stop.
+        m.setRouting(2, "a",  9.0f);
+        m.setRouting(3, "a", -9.0f);
+        checkNear(m.amountFor(2, "a"),  (double) maxRoutingAmount, 1e-6, "clamped at +maxRoutingAmount");
+        checkNear(m.amountFor(3, "a"), -(double) maxRoutingAmount, 1e-6, "clamped at -maxRoutingAmount");
+    }
+
+    // -- an over-100% amount still cannot push a knob outside its own range --
+    //
+    // This is the guarantee the whole over-100% idea rests on: the extra reach
+    // squares off the peaks, it does not send the parameter somewhere illegal.
+    {
+        ModMatrix m;
+        m.setRouting(0, "filterCutoff", 2.0f);
+
+        const float peak[numLfos]   = {  1.0f, 0.0f, 0.0f, 0.0f };
+        const float trough[numLfos] = { -1.0f, 0.0f, 0.0f, 0.0f };
+
+        checkNear(m.applyByName("filterCutoff", 0.5f, unit, peak),   1.0, 1e-6,
+                  "200% from the middle still stops at the top");
+        checkNear(m.applyByName("filterCutoff", 0.5f, unit, trough), 0.0, 1e-6,
+                  "200% from the middle still stops at the bottom");
     }
 
     // -- an out-of-range LFO index is refused, not stored --
