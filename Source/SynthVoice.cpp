@@ -2218,11 +2218,21 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         // inside the exp; the LFO was the one modulation not speaking the
         // filter's own language. It now joins them.
         //
-        // The span keeps the old sweep's WIDTH and merely centres it:
-        // log2(1.5 / 0.5) is 1.585 octaves end to end, so half of that either
-        // way. Change this one number to make the sweep wider or narrower.
-        const float lfoFilterOctaves = 0.7925f;
-        const float lfoLogOffset = filterMod * lfoFilterOctaves * 0.6931472f;  // x ln(2)
+        // At 100% the sweep reaches the ENDS of the knob's own range, and past
+        // them it simply stops -- the same rule every additive destination
+        // already follows, where the amount buys half the parameter's range
+        // either side of wherever the knob sits (Giuseppe, 2026-08-31).
+        //
+        // For cutoff that range is logMin..logMax, about ten octaves, so 100%
+        // is five octaves either way. From a centred knob that touches both
+        // ends; from a knob already near the top it runs out early and holds
+        // there, which is what "it stops at the limit" means. The jlimit on the
+        // line that builds modulatedCutoff is what does the stopping, so no
+        // clamp is needed here.
+        //
+        // The first version of this was +/-0.79 octaves, chosen to preserve the
+        // width of the old lopsided sweep. That was too timid to be useful.
+        const float lfoLogOffset = filterMod * (logMax - logMin) * 0.5f;
 
         //==============================================================================
         // -- MPE TIMBRE â†’ FILTER CUTOFF MODULATION --

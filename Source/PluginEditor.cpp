@@ -6214,7 +6214,9 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // Lives at the right-hand end of the tab strip, and is only there while the
     // mode is on -- leaving the mode is then where the eye already is when
     // switching tabs.
-    exitLfoModeButton.setColour(juce::TextButton::buttonColourId, juce::Colour(0xff4aa3ff));
+    // No colour overrides -- the LookAndFeel draws it like every other toggle.
+    // Lit while it exists, because it only exists while the mode is on.
+    exitLfoModeButton.setToggleState(true, juce::dontSendNotification);
     exitLfoModeButton.onClick = [this] { assignMode.setActiveLfo(-1); };
     addChildComponent(exitLfoModeButton);
 
@@ -7671,8 +7673,10 @@ void SpaceDustAudioProcessorEditor::changeListenerCallback(juce::ChangeBroadcast
                                               juce::dontSendNotification);
 
     exitLfoModeButton.setVisible(assigning);
-    exitLfoModeButton.setColour(juce::TextButton::buttonColourId,
-                                spacedust::AssignModeState::colourFor(assignMode.activeLfo()));
+
+    // Stays lit whenever it is on screen. Pressing it hides it rather than
+    // unlighting it, so it never needs an "off" appearance.
+    exitLfoModeButton.setToggleState(true, juce::dontSendNotification);
 
     layoutPlate();
 }

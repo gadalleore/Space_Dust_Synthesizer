@@ -1613,7 +1613,14 @@ private:
     static constexpr int numLfoPanels = 4;
 
     /** Appears in the tab strip only while assign mode is on. */
-    juce::TextButton exitLfoModeButton { "Exit LFO Mode" };
+    /** ToggleButton for the same reason the Assign buttons are: the custom
+        painter is hooked to drawToggleButton, which JUCE calls only for that
+        type. As a TextButton this drew as a stock slab beside the synth's own
+        toggles (Giuseppe, 2026-08-31).
+
+        It is lit whenever it is visible, since it only exists while the mode is
+        on -- which is exactly what an "on" toggle should look like. */
+    juce::ToggleButton exitLfoModeButton { "Exit LFO Mode" };
 
     // These knobs do not drive a fixed parameter: the Final EQ trio follows the
     // Node dropdown, exactly as its attachments do -- so their wrappers are

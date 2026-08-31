@@ -454,17 +454,46 @@ void ModulatableKnob::paint (juce::Graphics& g)
             // The sign of amount therefore does not change the zone -- it flips
             // which way the marker travels, which the marker itself shows.
             const bool horizontal = isHorizontalControl();
-
-            const float mid = horizontal ? lane.getCentreX() : lane.getCentreY();
             const float span = horizontal ? lane.getWidth() : lane.getHeight();
-            const float reach = span * 0.5f * std::abs (amount);
+
+            // The dark lane is the knob's WHOLE range, and everything drawn in
+            // it is placed against that range rather than against the middle of
+            // the bar (Giuseppe, 2026-08-31).
+            //
+            // So the lit part starts where the knob actually sits and reaches as
+            // far as the LFO will carry it -- and because it is clipped to the
+            // lane, a knob near the top shows its swing pressed against the top
+            // of the bar, which is exactly what the sound does when the
+            // modulation runs out of knob.
+            //
+            // valueToProportionOfLength, not raw arithmetic: cutoff's range is
+            // skewed, so a linear reading would put the lit zone in the wrong
+            // place on the very control that prompted this.
+            const float norm = juce::jlimit (0.0f, 1.0f,
+                (float) knob.valueToProportionOfLength (knob.getValue()));
+
+            // Amount 1.0 buys half the range either side -- the same contract the
+            // audio applies.
+            const float reachN = 0.5f * std::abs (amount);
+            const float loN = juce::jmax (0.0f, norm - reachN);
+            const float hiN = juce::jmin (1.0f, norm + reachN);
+
+            // 0 at the bottom for a rotary, at the left for a slider.
+            const auto edgeFor = [&] (float n)
+            {
+                return horizontal ? lane.getX() + span * n
+                                  : lane.getBottom() - span * n;
+            };
+
+            const float a = edgeFor (loN);
+            const float b = edgeFor (hiN);
 
             g.setColour (colour.withAlpha (0.55f));
 
             if (horizontal)
-                g.fillRect (lane.withX (mid - reach).withWidth (reach * 2.0f));
+                g.fillRect (lane.withX (juce::jmin (a, b)).withWidth (std::abs (b - a)));
             else
-                g.fillRect (lane.withY (mid - reach).withHeight (reach * 2.0f));
+                g.fillRect (lane.withY (juce::jmin (a, b)).withHeight (std::abs (b - a)));
 
             // Where the knob is being pushed RIGHT NOW, inside that zone and
             // never outside it.
@@ -476,23 +505,58 @@ void ModulatableKnob::paint (juce::Graphics& g)
             //
             // Depth reaches 2.0, so the product can leave the zone; clamping is
             // what keeps the promise that the marker stays inside the highlight.
-            const float pushed = juce::jlimit (-1.0f, 1.0f, amount * outputs[lfo]);
+            // The marker is the knob's position RIGHT NOW: where it sits plus
+            // where the LFO has pushed it, clamped to the range exactly as the
+            // audio clamps it. So when the swing runs past the end of the knob,
+            // the marker sits still against that end instead of travelling off
+            // into a part of the bar the sound never reaches.
+            const float nowN = juce::jlimit (0.0f, 1.0f, norm + 0.5f * amount * outputs[lfo]);
 
             g.setColour (colour);
 
             if (horizontal)
             {
-                // Positive pushes RIGHT, which is where a positive pan goes.
-                const float x = mid + reach * pushed;
+                const float x = edgeFor (nowN);
                 g.fillRect (x - 1.0f, lane.getY(), 2.0f, lane.getHeight());
             }
             else
             {
-                // Positive pushes UP, matching a knob turning clockwise.
-                const float y = mid - reach * pushed;
+                const float y = edgeFor (nowN);
                 g.fillRect (lane.getX(), y - 1.0f, lane.getWidth(), 2.0f);
             }
         }
+    }
+
+    // -- which LFO owns this knob, along the bottom of the highlight --
+    //
+    // Only while assigning. Outside the mode the bar already says which LFO by
+    // its colour, and putting text on every routed knob all the time would
+    // clutter pages that are already tight.
+    if (assigning >= 0 && ! lanes.empty())
+    {
+        juce::String names;
+
+        for (size_t i = 0; i < lanes.size(); ++i)
+            names << (i == 0 ? "" : "  ") << "LFO " << (lanes[i] + 1);
+
+        auto strip = knobArea().removeFromBottom (12);
+
+        if (isHorizontalControl())
+            strip = strip.translated (0, -(hBarWidth + 1));
+
+        // Nearly opaque, because the knob prints its own value along the same
+        // bottom edge and the two were reading as one smudged line. While you
+        // are assigning, which LFO owns a knob matters more than what the knob
+        // says; leaving the mode gives the value straight back.
+        g.setColour (juce::Colour (0xff05050f).withAlpha (0.92f));
+        g.fillRect (strip);
+
+        // One LFO: its own colour. Several: white, because no single colour is
+        // honest about a shared knob.
+        g.setColour (lanes.size() == 1 ? spacedust::AssignModeState::colourFor (lanes[0]).brighter (0.5f)
+                                       : juce::Colours::white.withAlpha (0.9f));
+        g.setFont (9.5f);
+        g.drawText (names, strip, juce::Justification::centred, false);
     }
 
     // -- the remove x, whether or not assign mode is on --
