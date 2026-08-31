@@ -3495,9 +3495,24 @@ void SpaceDustAudioProcessor::rebuildCompiledRoutings()
     // Cleared, not accumulated: a routing that has just been REMOVED must leave
     // its amount at zero, which is what tells the voice, the master gain and the
     // oversample latch that nothing reaches that destination any more.
+    //
+    // EVERY fixed-size amount array has to be cleared here, not just the one.
+    // These arrays are zero-initialised when the CompiledSet is CONSTRUCTED and
+    // never again, so anything left out keeps its last value for the life of
+    // the plugin. lfoParamAmounts was left out once: taking the x off a
+    // cross-routing removed it from the matrix and took the bar off the knob,
+    // while the stale amount went on modulating the LFO, with nothing on screen
+    // left to explain the wobble. There are three buffers, each with its own
+    // copy, so the fault also came and went as they rotated
+    // (Giuseppe, 2026-08-31).
     for (int d = 0; d < spacedust::numPerSampleMod; ++d)
         for (int lfo = 0; lfo < spacedust::numLfos; ++lfo)
             out.perSampleAmounts[d][lfo] = 0.0f;
+
+    for (int dstLfo = 0; dstLfo < spacedust::numLfos; ++dstLfo)
+        for (int which = 0; which < CompiledSet::numLfoParams; ++which)
+            for (int src = 0; src < spacedust::numLfos; ++src)
+                out.lfoParamAmounts[dstLfo][which][src] = 0.0f;
 
     bool touchesEffects = false;
     int  voiceSlotsRefused = 0;
