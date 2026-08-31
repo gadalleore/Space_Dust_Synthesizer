@@ -43,7 +43,26 @@ namespace spacedust
             }
         }
 
+        /** Which knob was last clicked or dragged while assigning, by parameter
+            id, or empty for none.
+
+            Lives here rather than in the knob because exactly one knob may wear
+            the focus marks at a time, and a knob cannot know that another one
+            has taken them. Every ModulatableKnob already listens to this object,
+            so setting it repaints the one gaining focus and the one losing it. */
+        const std::string& focusedDestination() const noexcept { return focused; }
+
+        void setFocusedDestination (std::string destination)
+        {
+            if (destination == focused)
+                return;
+
+            focused = std::move (destination);
+            sendChangeMessage();
+        }
+
     private:
         int active = -1;
+        std::string focused;
     };
 }

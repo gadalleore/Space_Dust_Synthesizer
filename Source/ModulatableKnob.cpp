@@ -115,7 +115,23 @@ juce::Rectangle<int> ModulatableKnob::barArea() const
     // drawn round the whole cell in assign mode is not sat on. The wrapper is
     // exactly the knob's rectangle -- see followKnob for why it may not be a
     // pixel wider -- so this is the one place the bar's geometry is decided.
+    // A HORIZONTAL slider gets a horizontal bar underneath it, not a vertical
+    // one beside it. Pan is the case that makes this obvious: the control moves
+    // left and right, so a vertical strip says nothing about how far the sound
+    // is being pushed either way (Giuseppe, 2026-08-31).
+    if (isHorizontalControl())
+        return getLocalBounds().withTrimmedBottom (barGap).removeFromBottom (barWidth);
+
     return getLocalBounds().withTrimmedRight (barGap).removeFromRight (barWidth);
+}
+
+bool ModulatableKnob::isHorizontalControl() const
+{
+    const auto style = knob.getSliderStyle();
+    return style == juce::Slider::LinearHorizontal
+        || style == juce::Slider::LinearBar
+        || style == juce::Slider::TwoValueHorizontal
+        || style == juce::Slider::ThreeValueHorizontal;
 }
 
 bool ModulatableKnob::removeOffered() const
@@ -165,6 +181,15 @@ juce::Rectangle<float> ModulatableKnob::laneBoundsFor (int laneIndex, int laneCo
     // lfoLaneAt() would silently disagree about which pixel belongs to which
     // lane. Both call this same function so there is only one partition to
     // get right.
+    // Lanes stack ACROSS the bar's short axis, so which axis that is depends on
+    // which way the bar lies: side by side under a rotary, one above another
+    // beneath a horizontal slider.
+    if (isHorizontalControl())
+    {
+        const float laneHeight = bar.getHeight() / (float) laneCount;
+        return bar.withHeight (laneHeight).withY (bar.getY() + laneHeight * (float) laneIndex);
+    }
+
     const float laneWidth = bar.getWidth() / (float) laneCount;
 
     return bar.withWidth (laneWidth).withX (bar.getX() + laneWidth * (float) laneIndex);
@@ -227,6 +252,10 @@ void ModulatableKnob::mouseDown (const juce::MouseEvent& event)
 
     if (dragLfo < 0)
         return;
+
+    // This knob now wears the focus marks, and whichever one had them loses
+    // them. The state broadcasts, so both repaint.
+    mode.setFocusedDestination (destination);
 
     dragging = true;
     dragStartAmount = matrix.amountFor (dragLfo, destination);
@@ -302,12 +331,47 @@ void ModulatableKnob::paint (juce::Graphics& g)
         auto cell = getLocalBounds().toFloat().reduced (1.0f);
         const auto colour = spacedust::AssignModeState::colourFor (assigning);
 
-        // A wash and nothing else. An outline -- even a faint one -- still reads
-        // as a box drawn around the knob, which is the thing being removed. The
-        // fill is a little stronger than it would otherwise be to make up for
-        // having no edge to define it.
-        g.setColour (colour.withAlpha (0.22f));
+        // Three states, told apart by weight alone -- no outlines, since an
+        // outline is the box that was removed.
+        //
+        //   assignable, empty       a faint wash: "you could put one here"
+        //   already carries this    a much stronger wash: "this one is taken"
+        //   focused                 the above, plus corner marks
+        //
+        // Before this, every assignable knob wore the identical wash, so a knob
+        // already carrying a routing looked exactly like an empty one and the
+        // only cues were the x and the bar (Giuseppe, 2026-08-31).
+        const bool alreadyRouted = matrix.amountFor (assigning, destination) != 0.0f;
+
+        g.setColour (colour.withAlpha (alreadyRouted ? 0.42f : 0.14f));
         g.fillRoundedRectangle (cell, 4.0f);
+
+        // -- corner marks on the knob being edited --
+        //
+        // On the KNOB, not on the LFO panel. The panel version was invisible
+        // exactly when it was wanted: assigning happens on Main and Effects,
+        // and the panels are on Modulation.
+        if (mode.focusedDestination() == destination)
+        {
+            const float armLen = juce::jmin (10.0f, juce::jmin (cell.getWidth(), cell.getHeight()) * 0.30f);
+            const float cx = cell.getX(), cy = cell.getY(), cw = cell.getWidth(), ch = cell.getHeight();
+
+            juce::Path corners;
+            corners.startNewSubPath (cx, cy + armLen);            corners.lineTo (cx, cy);            corners.lineTo (cx + armLen, cy);
+            corners.startNewSubPath (cx + cw - armLen, cy);       corners.lineTo (cx + cw, cy);       corners.lineTo (cx + cw, cy + armLen);
+            corners.startNewSubPath (cx, cy + ch - armLen);       corners.lineTo (cx, cy + ch);       corners.lineTo (cx + armLen, cy + ch);
+            corners.startNewSubPath (cx + cw - armLen, cy + ch);  corners.lineTo (cx + cw, cy + ch);  corners.lineTo (cx + cw, cy + ch - armLen);
+
+            const auto stroke = juce::PathStrokeType (2.0f, juce::PathStrokeType::curved,
+                                                      juce::PathStrokeType::rounded);
+
+            g.setColour (colour.withAlpha (0.30f));
+            g.strokePath (corners, juce::PathStrokeType (4.5f, juce::PathStrokeType::curved,
+                                                         juce::PathStrokeType::rounded));
+
+            g.setColour (colour.brighter (0.5f));
+            g.strokePath (corners, stroke);
+        }
 
         // -- the remove x, top-left, only where there is a routing to remove --
         if (removeOffered())
@@ -355,11 +419,18 @@ void ModulatableKnob::paint (juce::Graphics& g)
             //
             // The sign of amount therefore does not change the zone -- it flips
             // which way the marker travels, which the marker itself shows.
-            const float mid = lane.getCentreY();
-            const float reach = lane.getHeight() * 0.5f * std::abs (amount);
+            const bool horizontal = isHorizontalControl();
+
+            const float mid = horizontal ? lane.getCentreX() : lane.getCentreY();
+            const float span = horizontal ? lane.getWidth() : lane.getHeight();
+            const float reach = span * 0.5f * std::abs (amount);
 
             g.setColour (colour.withAlpha (0.55f));
-            g.fillRect (lane.withY (mid - reach).withHeight (reach * 2.0f));
+
+            if (horizontal)
+                g.fillRect (lane.withX (mid - reach).withWidth (reach * 2.0f));
+            else
+                g.fillRect (lane.withY (mid - reach).withHeight (reach * 2.0f));
 
             // Where the knob is being pushed RIGHT NOW, inside that zone and
             // never outside it.
@@ -372,10 +443,21 @@ void ModulatableKnob::paint (juce::Graphics& g)
             // Depth reaches 2.0, so the product can leave the zone; clamping is
             // what keeps the promise that the marker stays inside the highlight.
             const float pushed = juce::jlimit (-1.0f, 1.0f, amount * outputs[lfo]);
-            const float y = mid - reach * pushed;
 
             g.setColour (colour);
-            g.fillRect (lane.getX(), y - 1.0f, lane.getWidth(), 2.0f);
+
+            if (horizontal)
+            {
+                // Positive pushes RIGHT, which is where a positive pan goes.
+                const float x = mid + reach * pushed;
+                g.fillRect (x - 1.0f, lane.getY(), 2.0f, lane.getHeight());
+            }
+            else
+            {
+                // Positive pushes UP, matching a knob turning clockwise.
+                const float y = mid - reach * pushed;
+                g.fillRect (lane.getX(), y - 1.0f, lane.getWidth(), 2.0f);
+            }
         }
     }
 

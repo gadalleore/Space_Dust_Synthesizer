@@ -112,6 +112,12 @@ private:
     juce::Rectangle<int> removeArea() const;
     bool removeOffered() const;
 
+    /** Whether the wrapped control runs left-to-right rather than round.
+
+        Decides which way the indicator bar lies: beneath a horizontal slider,
+        beside a rotary. Pan is the control that makes the difference matter. */
+    bool isHorizontalControl() const;
+
     /** The one true partition of the bar into lanes. paint() and lfoLaneAt()
         both call this rather than each computing lane geometry on its own --
         two independent computations of the same pixels is how they end up
