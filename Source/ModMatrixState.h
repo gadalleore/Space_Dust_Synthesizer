@@ -37,6 +37,16 @@ namespace spacedust
             can decide which knobs light up in assign mode. */
         static bool isLegalDestination (const juce::RangedAudioParameter& p);
 
+        /** Which LFO owns this parameter, or -1 if it is not an LFO control.
+
+            "lfo3Rate" gives 2. Used to stop an LFO reaching its own controls:
+            legality alone cannot decide that, because it depends on which LFO is
+            doing the reaching. Applied when routings are compiled, so a
+            self-routing arriving from an edited patch is dropped rather than
+            trusted, and again in assign mode so an LFO's own knobs never light
+            up while it is the one being assigned. */
+        static int lfoOwnerOf (const std::string& parameterId);
+
     private:
         std::vector<std::string>                 ids;
         std::vector<DestRange>                   ranges;

@@ -2071,18 +2071,57 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // for character apart from their names, so folding them into a loop changes
     // nothing about how either one sounds -- and it is what lets the modulation
     // matrix address an LFO by number.
+    // Every LFO's value as its buffer ENDED the last block, captured before any
+    // buffer is refilled.
+    //
+    // This is what makes cross-modulation symmetric. The buffers are filled in
+    // order, so reading live values would let LFO 1 move LFO 2 within this block
+    // while LFO 4 moving LFO 1 could only ever see the last one -- the same
+    // patch would sound different depending on which way round the two LFOs were
+    // numbered. Everyone reading from the same instant costs a block of lag,
+    // about eleven milliseconds, and removes the asymmetry entirely.
+    float lfoBlockStart[spacedust::numLfos];
+
+    for (int i = 0; i < spacedust::numLfos; ++i)
+        lfoBlockStart[i] = lfoSmoothedValue[i];
+
+    const auto& compiledForLfos = compiledBuffers[blockCompiledIndex];
+
     for (int lfo = 0; lfo < spacedust::numLfos; ++lfo)
     {
         const auto& ids = lfoParamIds[lfo];
         auto&       buf = lfoBuffers[lfo];
 
+        // How far the OTHER LFOs are pushing this one's Rate, Depth and Phase.
+        // The diagonal is zero by construction, so an LFO cannot reach itself
+        // however the patch was edited.
+        const auto crossMod = [&] (int which) noexcept
+        {
+            float sum = 0.0f;
+
+            for (int src = 0; src < spacedust::numLfos; ++src)
+                sum += compiledForLfos.lfoParamAmounts[lfo][which][src] * lfoBlockStart[src];
+
+            return sum;
+        };
+
         const bool  lfoEnabled    = safeGetParam(apvts, ids.enabled) > 0.5f;
-        const float lfoDepth      = lfoEnabled ? (safeGetParam(apvts, ids.depth) * 2.0f / 100.0f) : 0.0f;  // 0-2.0 when on
+
+        const float depthKnob     = juce::jlimit(0.0f, 100.0f,
+                                        safeGetParam(apvts, ids.depth) + crossMod(CompiledSet::lp_depth));
+        const float lfoDepth      = lfoEnabled ? (depthKnob * 2.0f / 100.0f) : 0.0f;  // 0-2.0 when on
+
         const bool  lfoSync       = safeGetParam(apvts, ids.sync) > 0.5f;
-        const float lfoRate       = safeGetParam(apvts, ids.rate);  // 0-12
+
+        const float lfoRate       = juce::jlimit(0.0f, 12.0f,
+                                        safeGetParam(apvts, ids.rate) + crossMod(CompiledSet::lp_rate));
+
         const bool  lfoTriplet    = safeGetParam(apvts, ids.triplet) > 0.5f;
         const bool  lfoAll        = safeGetParam(apvts, ids.tripletAll) > 0.5f;
-        const float lfoPhaseParam = safeGetParam(apvts, ids.phase);
+
+        const float lfoPhaseParam = juce::jlimit(0.0f, 360.0f,
+                                        safeGetParam(apvts, ids.phase) + crossMod(CompiledSet::lp_phase));
+
         const int   lfoWaveform   = static_cast<int>(safeGetParam(apvts, ids.waveform));
 
         if (lfoSync)
@@ -3474,6 +3513,40 @@ void SpaceDustAudioProcessor::rebuildCompiledRoutings()
             continue;
 
         const auto range = modDestinations.rangeAt (slot);
+        const auto& destId = modDestinations.idAt (slot);
+
+        // -- an LFO reaching another LFO's Rate, Depth or Phase --
+        const int targetLfo = spacedust::DestinationTable::lfoOwnerOf (destId);
+
+        if (targetLfo >= 0)
+        {
+            // Never its own. Dropped here rather than refused at the editor
+            // alone, so a self-routing typed straight into a preset file cannot
+            // reach the audio either.
+            if (targetLfo == r.lfoIndex)
+                continue;
+
+            int which = -1;
+
+            if (destId.size() > 4)
+            {
+                const auto tail = destId.substr (4);
+                which = tail == "Rate"  ? CompiledSet::lp_rate
+                      : tail == "Depth" ? CompiledSet::lp_depth
+                      : tail == "Phase" ? CompiledSet::lp_phase
+                                        : -1;
+            }
+
+            // Only those three are floats, so anything else is a parameter this
+            // build gained since -- skipped rather than guessed at.
+            if (which < 0)
+                continue;
+
+            out.lfoParamAmounts[targetLfo][which][r.lfoIndex] = r.amount * range.halfRange();
+
+            // Still compiled below, so the editor's bar and hasAnyRouting stay
+            // honest about it.
+        }
 
         // A per-sample destination takes its amount RAW and takes no scratch
         // row: its formula is proportional, written by hand into the per-sample
@@ -3496,6 +3569,13 @@ void SpaceDustAudioProcessor::rebuildCompiledRoutings()
         {
             // No voice scratch row, and never counted as an effect parameter --
             // both would apply this modulation a second time.
+        }
+        else if (targetLfo >= 0)
+        {
+            // Already stored in lfoParamAmounts above, and applied where the LFO
+            // buffers are filled. Falling through would hand it a voice scratch
+            // row that nothing reads -- burning one of the sixteen and, worse,
+            // making the cap refuse a real voice routing later.
         }
         else if (isEffectParameter (modDestinations.idAt (slot)))
         {

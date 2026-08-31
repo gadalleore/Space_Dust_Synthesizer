@@ -142,6 +142,13 @@ private:
         what colour the remove-x wears when no LFO is being assigned. */
     int firstRoutedLfo() const;
 
+    /** Whether the LFO currently being assigned is allowed to reach this knob.
+
+        False for every knob when nothing is being assigned, and false for an
+        LFO's own Rate, Depth and Phase while that LFO is the one assigning --
+        an LFO may wobble the others but not itself. */
+    bool assignableByActiveLfo() const;
+
     /** The one true partition of the bar into lanes. paint() and lfoLaneAt()
         both call this rather than each computing lane geometry on its own --
         two independent computations of the same pixels is how they end up

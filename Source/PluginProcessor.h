@@ -639,6 +639,29 @@ private:
             so the audio thread gets it from the one latched index and cannot see
             amounts from a different edit than the routings it is walking. */
         float perSampleAmounts[spacedust::numPerSampleMod][spacedust::numLfos] { };
+
+        /** How far each LFO moves each OTHER LFO's Rate, Depth and Phase.
+
+            Indexed [target LFO][which of the three][source LFO], pre-multiplied
+            by half the target parameter's range like every other additive
+            destination.
+
+            The diagonal is always zero: an LFO may not reach its own controls,
+            and that is enforced when this is filled rather than trusted from the
+            patch, so a self-routing typed into a preset file is dropped rather
+            than obeyed.
+
+            Every source is read at the START of the block, from the value its
+            own buffer ended the LAST block with. That is what makes LFO 4
+            wobbling LFO 1 behave exactly like LFO 1 wobbling LFO 4: with the
+            buffers filled in order, reading live values would make the two
+            directions different, one seeing this block and the other the last.
+            The cost is a block of lag on cross-modulation, about eleven
+            milliseconds, which is nothing on a control that moves at LFO
+            speed (Giuseppe, 2026-08-31). */
+        enum LfoParam { lp_rate = 0, lp_depth, lp_phase, numLfoParams };
+
+        float lfoParamAmounts[spacedust::numLfos][numLfoParams][spacedust::numLfos] { };
     };
 
     /** THREE buffers, an atomic index, and a reader epoch -- not two buffers.

@@ -1,5 +1,7 @@
 #include "ModulatableKnob.h"
 
+#include "ModMatrixState.h"   // DestinationTable::lfoOwnerOf, for the self rule
+
 #include <cmath>
 #include <vector>
 
@@ -160,6 +162,20 @@ int ModulatableKnob::firstRoutedLfo() const
     return 0;
 }
 
+bool ModulatableKnob::assignableByActiveLfo() const
+{
+    const int active = mode.activeLfo();
+
+    if (active < 0)
+        return false;
+
+    // An LFO may reach another LFO's controls but never its own. So while LFO 2
+    // is being assigned, LFO 2's own Rate, Depth and Phase stay dark and refuse
+    // the mouse, while LFO 1's, 3's and 4's light up like anything else
+    // (Giuseppe, 2026-08-31).
+    return spacedust::DestinationTable::lfoOwnerOf (destination) != active;
+}
+
 bool ModulatableKnob::removeOffered() const
 {
     // Whenever this knob carries a routing at all -- assign mode or not, so a
@@ -203,7 +219,7 @@ bool ModulatableKnob::hitTest (int x, int y)
     if (removeOffered() && removeArea().contains (x, y))
         return true;
 
-    return mode.activeLfo() >= 0;
+    return assignableByActiveLfo();
 }
 
 juce::Rectangle<float> ModulatableKnob::laneBoundsFor (int laneIndex, int laneCount) const
@@ -297,7 +313,7 @@ void ModulatableKnob::mouseDown (const juce::MouseEvent& event)
         return;
     }
 
-    if (mode.activeLfo() >= 0)
+    if (assignableByActiveLfo())
         dragLfo = mode.activeLfo();
     else
         dragLfo = lfoLaneAt (event.getPosition());
@@ -370,7 +386,10 @@ void ModulatableKnob::resized()
 
 void ModulatableKnob::paint (juce::Graphics& g)
 {
-    const int assigning = mode.activeLfo();
+    // -1 when nothing is being assigned AND when the LFO being assigned is not
+    // allowed to reach this knob -- its own Rate, Depth or Phase. Both cases
+    // draw the same: no highlight, no marks, and hitTest refuses the mouse.
+    const int assigning = assignableByActiveLfo() ? mode.activeLfo() : -1;
 
     // -- the highlight, while assign mode is on --
     //

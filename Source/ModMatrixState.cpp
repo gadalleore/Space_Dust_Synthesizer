@@ -11,16 +11,39 @@ namespace spacedust
 
         const auto id = p.paramID.toStdString();
 
-        // No LFO control may be a destination, including the LFO's own. This is
-        // what makes assign mode unnecessary on the Modulation page.
-        if (id.rfind ("lfo", 0) == 0)
-            return false;
+        // An LFO's own controls ARE destinations now, so one LFO can wobble
+        // another's Rate, Depth or Phase -- those three are the only floats an
+        // LFO has, so the float rule above already picks exactly them and leaves
+        // Waveform, Sync and Retrigger alone (Giuseppe, 2026-08-31).
+        //
+        // What is NOT allowed is an LFO reaching its OWN controls, and that
+        // cannot be decided here: this function is asked "may anything modulate
+        // this?", not "may LFO 2 modulate this?". The self rule is enforced
+        // where the source is known -- lfoOwnerOf below, applied when routings
+        // are compiled and again when assign mode decides what to light up.
 
         // The host drives this one.
         if (id == "pitchBend")
             return false;
 
         return true;
+    }
+
+    int DestinationTable::lfoOwnerOf (const std::string& parameterId)
+    {
+        // "lfo" then a single digit, so "lfo3Rate" gives 2. Anything else, and
+        // anything numbered outside the LFOs that exist, is not an LFO control.
+        if (parameterId.rfind ("lfo", 0) != 0 || parameterId.size() < 4)
+            return -1;
+
+        const char digit = parameterId[3];
+
+        if (digit < '1' || digit > '9')
+            return -1;
+
+        const int index = digit - '1';
+
+        return index < numLfos ? index : -1;
     }
 
     void DestinationTable::build (juce::AudioProcessorValueTreeState& apvts)
