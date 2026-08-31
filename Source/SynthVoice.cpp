@@ -2204,8 +2204,25 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         const float logFullRange = logMin + E * (logMax - logMin);
         float logModulated = (1.0f - blend) * logKnob + blend * logFullRange;
 
-        const float lfoFilterScale = 0.5f;
-        float lfoFactor = juce::jmax(0.0f, 1.0f + filterMod * lfoFilterScale);
+        // The LFO sweeps the cutoff in LOG space, like every other thing that
+        // moves it.
+        //
+        // It used to be a linear multiplier applied outside the exp below:
+        // cutoff * (1 + mod * 0.5), so mod +1 gave x1.5 and mod -1 gave x0.5.
+        // That is centred arithmetically and lopsided musically -- from 2093 Hz
+        // it reached +0.58 of an octave up but a full octave down, so the wobble
+        // dived nearly twice as far as it rose and did not feel centred on the
+        // knob at all (Giuseppe, 2026-08-31).
+        //
+        // Timbre, key tracking and velocity were already log-space offsets added
+        // inside the exp; the LFO was the one modulation not speaking the
+        // filter's own language. It now joins them.
+        //
+        // The span keeps the old sweep's WIDTH and merely centres it:
+        // log2(1.5 / 0.5) is 1.585 octaves end to end, so half of that either
+        // way. Change this one number to make the sweep wider or narrower.
+        const float lfoFilterOctaves = 0.7925f;
+        const float lfoLogOffset = filterMod * lfoFilterOctaves * 0.6931472f;  // x ln(2)
 
         //==============================================================================
         // -- MPE TIMBRE â†’ FILTER CUTOFF MODULATION --
@@ -2245,7 +2262,7 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
         const float masterKeyTrackOffset = filterKeyTrack ? keyTrackLogOffset : 0.0f;
         // velocityLogOffset joins the other log-space offsets: it is zero at full
         // velocity and closes the filter for softer notes.
-        float modulatedCutoff = std::exp(juce::jlimit(logMin, logMax, logModulated + timbreLogOffset + masterKeyTrackOffset + velocityLogOffset)) * lfoFactor;
+        float modulatedCutoff = std::exp(juce::jlimit(logMin, logMax, logModulated + timbreLogOffset + masterKeyTrackOffset + velocityLogOffset + lfoLogOffset));
         modulatedCutoff = juce::jlimit(20.0f, 20000.0f, modulatedCutoff);
 
         // Apply normal cutoff smoothing, but use a much slower slew (extra damping)
