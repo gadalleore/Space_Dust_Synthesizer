@@ -1585,7 +1585,14 @@ private:
     juce::OwnedArray<ModulatableKnob> modKnobs;
 
     /** One Assign button per LFO panel. Indexed by LFO number. */
-    juce::OwnedArray<juce::TextButton> lfoAssignButtons;
+    /** ToggleButton, NOT TextButton.
+
+        SpaceDustLookAndFeel overrides drawToggleButton, and JUCE calls that only
+        for a juce::ToggleButton. A TextButton falls through to JUCE's stock
+        painter, which is why these drew as solid grey slabs beside the outlined
+        On, Sync and Retrigger toggles no matter what colours were set on them
+        (Giuseppe, 2026-08-31). The type is the styling. */
+    juce::OwnedArray<juce::ToggleButton> lfoAssignButtons;
     static constexpr int numLfoPanels = 4;
 
     /** Appears in the tab strip only while assign mode is on. */

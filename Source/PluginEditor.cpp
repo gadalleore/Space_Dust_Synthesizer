@@ -1400,7 +1400,7 @@ namespace
     /** Adds one LFO panel's widgets (and its Assign button) as children of `parent`. */
     void addLfoPanelChildren(juce::Component& parent,
                               SpaceDustAudioProcessorEditor::LfoPanelRefs r,
-                              juce::TextButton* assignButton)
+                              juce::ToggleButton* assignButton)
     {
         parent.addAndMakeVisible(r.group);
         parent.addAndMakeVisible(r.enabledButton);
@@ -1429,7 +1429,7 @@ namespace
         are set directly on `r`. This is the single body LFO1 and LFO2's layout blocks
         used to duplicate character-for-character apart from their names. */
     void layoutLfoPanel(SpaceDustAudioProcessorEditor::LfoPanelRefs r,
-                         juce::TextButton* assignButton,
+                         juce::ToggleButton* assignButton,
                          juce::Rectangle<int> area)
     {
         const int modRateKnobSize = 38;
@@ -6155,7 +6155,7 @@ SpaceDustAudioProcessorEditor::SpaceDustAudioProcessorEditor(SpaceDustAudioProce
     // them as its children and its resized() puts them in the LFO boxes.
     for (int lfo = 0; lfo < numLfoPanels; ++lfo)
     {
-        auto* button = lfoAssignButtons.add(new juce::TextButton(safeString("Assign")));
+        auto* button = lfoAssignButtons.add(new juce::ToggleButton(safeString("Assign")));
 
         // No colour overrides at all. Assign IS a toggle -- it is either on or it
         // is not -- so it is made one, and SpaceDustLookAndFeel then draws it
