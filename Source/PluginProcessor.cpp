@@ -1389,7 +1389,31 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
     // Not a modulation-matrix destination (not in SPACEDUST_VOICE_PARAMS) -- the
     // curve's own shape is what task 12's editor draws, and stretching it via an
     // LFO on top is a separate feature this task does not add.
-    const float pitchCurveTimeValue = juce::jlimit(0.0f, 10.0f, safeGetParam(apvts, "pitchCurveTime"));
+    float pitchCurveTimeValue = juce::jlimit(0.0f, 10.0f, safeGetParam(apvts, "pitchCurveTime"));
+
+    const bool pitchCurveLoop = safeGetParam(apvts, "pitchCurveLoop") > 0.5f;
+
+    if (safeGetParam(apvts, "pitchCurveSync") > 0.5f)
+    {
+        // One division at the host's tempo. Worked out HERE rather than in the
+        // voice on purpose: the voice takes a duration in SECONDS and knows
+        // nothing about tempo or playheads, so tempo sync costs it not one
+        // line.
+        //
+        // Read from the cached tempo, NOT from the playhead, because this
+        // function also runs from prepareToPlay() and setStateInformation() --
+        // see lastKnownTempo in the header.
+        const double tempo = lastKnownTempo.load(std::memory_order_relaxed);
+
+        const int division = juce::jlimit(0, spacedust::numPitchCurveDivisions - 1,
+            static_cast<int>(std::round(safeGetParam(apvts, "pitchCurveDivision"))));
+
+        // 8 bars at a slow tempo is a long time -- 32 s at 60 BPM. That is why
+        // SynthVoice::setPitchCurveTime clamps at 60 s and not at the Time
+        // knob's 10; see the comment there.
+        pitchCurveTimeValue = static_cast<float>(
+            spacedust::pitchCurveDivisionBeats[division] * 60.0 / tempo);
+    }
 
     // Pitch bend parameters (use get() for actual value - separate from pitch envelope).
     // pitchBend itself (the -1..1 wheel position) is NOT routed: it is host-driven
@@ -1547,6 +1571,7 @@ void SpaceDustAudioProcessor::updateVoicesWithParameters(float lfo1Modulation, f
             voice->setLegatoGlide(legatoGlide);
             voice->setPitchCurve(&pitchCurve);
             voice->setPitchCurveTime(pitchCurveTimeValue);
+            voice->setPitchCurveLoop(pitchCurveLoop);
             voice->setSubOscOn(safeGetParam(apvts, "subOscOn") > 0.5f);
             voice->setSubOscWaveform(static_cast<int>(safeGetParam(apvts, "subOscWaveform")));
             voice->setSubOscLevel(subOscLevel);
@@ -1868,6 +1893,17 @@ void SpaceDustAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, juc
     // message-thread parameterChanged, so it can't race note rendering. No-op unless
     // mpeMode/mpePitchBendRange changed since the last block.
     applyPendingMpeReconfig();
+
+    // Keep the cached tempo current -- see lastKnownTempo in the header for who
+    // reads it and why they cannot ask the playhead themselves. Updated BEFORE
+    // the zero-sample guard below, because a host tweaking knobs with empty
+    // blocks is exactly when the message-thread readers run.
+    if (auto* tempoPlayHead = getPlayHead())
+    {
+        const auto tempoPos = tempoPlayHead->getPosition();
+        if (tempoPos.hasValue() && tempoPos->getBpm().hasValue() && *tempoPos->getBpm() > 0.0)
+            lastKnownTempo.store(*tempoPos->getBpm(), std::memory_order_relaxed);
+    }
 
     // Pick up any newly imported waveforms and hand the previous set back to be
     // freed on the message thread. One atomic exchange, and a no-op on every block
@@ -6022,6 +6058,37 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
             juce::ParameterID{"pitchCurveTime", 1}, "Pitch Curve Time",
             pitchCurveTimeRange, 0.0f),
         "pitchCurveTime");
+
+    //==============================================================================
+    // -- Pitch Curve Sync / Division / Loop --
+    // Appended AFTER pitchCurveTime, still at the very end of the layout, for
+    // the reason given above it: a VST3 parameter's automation index is a
+    // contract with every host that has already automated this plugin.
+    //
+    // All three default to what the plugin did before they existed -- sync off,
+    // loop off -- so every saved patch and every project sounds identical after
+    // this build, and no migration path is needed.
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"pitchCurveSync", 1}, "Pitch Curve Sync", false),
+        "pitchCurveSync");
+
+    // Names and default both come from PitchCurveDivisions.h, which is also
+    // where the beats the duration is worked out from live -- see that header.
+    juce::StringArray divisionNames;
+    for (int i = 0; i < spacedust::numPitchCurveDivisions; ++i)
+        divisionNames.add(spacedust::pitchCurveDivisionNames[i]);
+
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{"pitchCurveDivision", 1}, "Pitch Curve Division",
+            divisionNames, spacedust::defaultPitchCurveDivision),
+        "pitchCurveDivision");
+
+    ADD_PARAM_WITH_LOG(params,
+        std::make_unique<juce::AudioParameterBool>(
+            juce::ParameterID{"pitchCurveLoop", 1}, "Pitch Curve Loop", false),
+        "pitchCurveLoop");
 
     //==============================================================================
     // -- DEBUG: createParameterLayout End --

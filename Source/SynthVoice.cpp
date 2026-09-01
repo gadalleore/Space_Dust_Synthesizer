@@ -1650,7 +1650,16 @@ void SynthVoice::renderNextBlock(juce::AudioBuffer<float>& outputBuffer,
             && pitchCurveTime >= 0.0001f && sampleRate > 0.0f)
         {
             const float elapsedSec = pitchEnvSamplesElapsed / static_cast<float>(sampleRate);
-            const float t01 = elapsedSec / pitchCurveTime;
+            float t01 = elapsedSec / pitchCurveTime;
+
+            // Looping wraps the timebase and nothing else, so the shape simply
+            // starts again. If what was drawn does not END where it STARTS,
+            // every wrap is an instant pitch jump -- that is the shape doing
+            // what it says, not a fault, and it is exactly what a stepped or
+            // sawtooth pitch pattern is drawn for. Nothing here forces the ends
+            // to meet: doing so would quietly change a shape the player drew.
+            if (pitchCurveLoop)
+                t01 -= std::floor(t01);
 
             const float semitones = juce::jlimit(-48.0f, 48.0f, pitchCurve->valueAt(t01));
             pitchEnvShapingNow = (semitones != 0.0f);
@@ -3262,7 +3271,11 @@ void SynthVoice::setLegatoGlide(bool enabled)
 
 void SynthVoice::setPitchCurveTime(float seconds)
 {
-    pitchCurveTime = juce::jlimit(0.0f, 10.0f, seconds);
+    // 60 s, not the Time knob's 10. The knob cannot ask for more than 10, but
+    // tempo sync can: 8 bars of 4/4 is 32 beats, which is 32 s at 60 BPM and
+    // 48 s at 40. Clamping at 10 here would have silently cut every long
+    // synced division down to a tenth of a bar and left no sign of why.
+    pitchCurveTime = juce::jlimit(0.0f, 60.0f, seconds);
 }
 
 void SynthVoice::setPitchBendAmount(float semitones)

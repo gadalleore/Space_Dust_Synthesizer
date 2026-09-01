@@ -65,7 +65,10 @@ float PitchCurvePlot::xToT01 (float x) const noexcept
 
 float PitchCurvePlot::yToSemitones (float y) const noexcept
 {
-    const float t = juce::jlimit (0.0f, 1.0f, y / juce::jmax (1.0f, (float) getHeight()));
+    const float top    = verticalInset;
+    const float bottom = juce::jmax (top + 1.0f, (float) getHeight() - verticalInset);
+    const float t      = juce::jlimit (0.0f, 1.0f, (y - top) / (bottom - top));
+
     return juce::jmap (t, 0.0f, 1.0f, maxSemitones, minSemitones);
 }
 
@@ -76,7 +79,32 @@ float PitchCurvePlot::t01ToX (float t01) const noexcept
 
 float PitchCurvePlot::semitonesToY (float semitones) const noexcept
 {
-    return juce::jmap (semitones, maxSemitones, minSemitones, 0.0f, (float) getHeight());
+    const float top    = verticalInset;
+    const float bottom = juce::jmax (top + 1.0f, (float) getHeight() - verticalInset);
+
+    return juce::jmap (semitones, maxSemitones, minSemitones, top, bottom);
+}
+
+float PitchCurvePlot::snapSemitones (float semitones, const juce::ModifierKeys& mods) noexcept
+{
+    // Shift is the OVERRIDE, not the trigger. A pitch envelope is nearly always
+    // wanted in whole semitones -- an octave drop, a fifth, a two-semitone
+    // scoop -- and the times it is not (a slow drift, a deliberately detuned
+    // fall) are the exception you ask for. Snapping by default also means the
+    // grid drawn behind the plot is telling the truth about where a node will
+    // land, which a grid that only decorates would not be.
+    if (mods.isShiftDown())
+        return semitones;
+
+    return std::round (semitones);
+}
+
+float PitchCurvePlot::snapTime (float t01, const juce::ModifierKeys& mods) noexcept
+{
+    if (mods.isShiftDown())
+        return t01;
+
+    return std::round (t01 * (float) timeSnapDivisions) / (float) timeSnapDivisions;
 }
 
 int PitchCurvePlot::findNearest (juce::Point<float> position) const noexcept
@@ -137,6 +165,74 @@ void PitchCurvePlot::refresh()
     repaint();
 }
 
+void PitchCurvePlot::setTimeGrid (bool syncedToTempo, double beats)
+{
+    if (gridSynced == syncedToTempo && gridBeats == beats)
+        return;
+
+    gridSynced = syncedToTempo;
+    gridBeats  = beats;
+    repaint();
+}
+
+void PitchCurvePlot::paintTimeGrid (juce::Graphics& g, juce::Rectangle<float> area) const
+{
+    const float width = area.getWidth();
+
+    if (width <= 1.0f)
+        return;
+
+    // Weight 1, faintest: the SNAP positions. Every place a node can land gets
+    // a line, for the same reason every semitone gets a hairline -- a grid that
+    // does not mark where a node will land is decoration, not a grid.
+    const float snapSpacing = width / (float) timeSnapDivisions;
+
+    if (snapSpacing >= minGridSpacing)
+    {
+        g.setColour (juce::Colour (0xff17172f));
+
+        for (int i = 1; i < timeSnapDivisions; ++i)
+            g.drawVerticalLine ((int) (snapSpacing * (float) i), 0.0f, area.getHeight());
+    }
+
+    // Free running: there is no musical unit, because the shape plays over
+    // however many seconds the Time knob says. Quarters of the span are still
+    // worth marking, and nothing here pretends they are beats.
+    if (! gridSynced)
+    {
+        g.setColour (juce::Colour (0xff26264a));
+
+        for (int i = 1; i < 4; ++i)
+            g.drawVerticalLine ((int) (width * (float) i / 4.0f), 0.0f, area.getHeight());
+
+        return;
+    }
+
+    // Weight 2, brighter: BEATS. Weight 3, brightest: BARS. Each is drawn only
+    // while it is far enough apart to still read as separate lines -- at eight
+    // bars the beats would be on top of each other, so the beats go and the
+    // bars stay.
+    const double beats       = juce::jmax (0.0, gridBeats);
+    const float  beatSpacing = beats > 0.0 ? width / (float) beats : 0.0f;
+    const float  barSpacing  = beatSpacing * 4.0f;
+
+    if (beatSpacing >= minGridSpacing)
+    {
+        g.setColour (juce::Colour (0xff26264a));
+
+        for (int b = 1; b < (int) std::ceil (beats); ++b)
+            g.drawVerticalLine ((int) (beatSpacing * (float) b), 0.0f, area.getHeight());
+    }
+
+    if (barSpacing >= minGridSpacing && beats >= 4.0)
+    {
+        g.setColour (juce::Colour (0xff3a3a68));
+
+        for (int bar = 1; bar < (int) std::ceil (beats / 4.0); ++bar)
+            g.drawVerticalLine ((int) (barSpacing * (float) bar), 0.0f, area.getHeight());
+    }
+}
+
 void PitchCurvePlot::paint (juce::Graphics& g)
 {
     auto area = getLocalBounds().toFloat();
@@ -144,15 +240,61 @@ void PitchCurvePlot::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xff0f0f26));
     g.fillRect (area);
 
-    // Zero line: no bend, same meaning as the box's centre line.
-    const float zeroY = semitonesToY (0.0f);
-    g.setColour (juce::Colour (0xff4a4a7a));
-    g.drawHorizontalLine ((int) zeroY, 0.0f, area.getWidth());
+    // Time first, pitch over it: the horizontal lines are the ones a node
+    // actually snaps to, so they are the ones that must stay readable where the
+    // two cross.
+    paintTimeGrid (g, area);
 
-    // +/-12 semitone guides, for a sense of scale -- an octave either way.
-    g.setColour (juce::Colour (0xff2a2a4a));
-    g.drawHorizontalLine ((int) semitonesToY (12.0f),  0.0f, area.getWidth());
-    g.drawHorizontalLine ((int) semitonesToY (-12.0f), 0.0f, area.getWidth());
+    // -- The semitone grid --
+    //
+    // Three weights, because they answer three different questions. A hairline
+    // at every semitone is what a snapped node lands on, so it has to be there
+    // to be landed on. A brighter line every twelve is the octave, which is
+    // what the ear actually counts in. The number beside that one says WHICH
+    // octave, so a shape drawn near the top does not have to be counted up
+    // from zero.
+    //
+    // Forty-eight semitones over a plot this size puts the hairlines about
+    // four pixels apart, which is close enough that they read as a texture
+    // rather than as separate lines. That is the intended reading: the texture
+    // says "this axis is quantised", and the octave lines say by how much.
+    // The hairline colour is deliberately near the background for the same
+    // reason -- it must not compete with the curve drawn over it.
+    // The ENDS are not drawn: +24 lands on y=0 and -24 on y=height, and only
+    // the first of those is inside the component -- the second is one pixel
+    // past the bottom and is clipped away. That asymmetry showed as a line
+    // above the "+24" label with nothing to match it under "-24". The border
+    // box drawn at the end of this method is the boundary those two were
+    // trying to be, so they are left out rather than nudged inwards
+    // (Giuseppe, 2026-09-01).
+    for (int s = -23; s <= 23; ++s)
+    {
+        if (s == 0)
+            continue;   // the zero line is drawn last, over the top of the rest
+
+        g.setColour (s % 12 == 0 ? juce::Colour (0xff3a3a5f)
+                                 : juce::Colour (0xff1c1c38));
+        g.drawHorizontalLine ((int) semitonesToY ((float) s), 0.0f, area.getWidth());
+    }
+
+    // Zero line: no bend, same meaning as the box's centre line.
+    g.setColour (juce::Colour (0xff4a4a7a));
+    g.drawHorizontalLine ((int) semitonesToY (0.0f), 0.0f, area.getWidth());
+
+    // Octave numbers, down the left-hand edge. Clamped inside the plot so the
+    // outermost two are not cut in half by the top and bottom edges.
+    g.setColour (juce::Colour (0xff5a5a8a));
+    g.setFont (10.0f);
+
+    for (int s = -24; s <= 24; s += 12)
+    {
+        const int y = juce::jlimit (0, juce::jmax (0, getHeight() - octaveLabelHeight),
+                                    (int) semitonesToY ((float) s) - octaveLabelHeight / 2);
+
+        g.drawText (s > 0 ? ("+" + juce::String (s)) : juce::String (s),
+                    3, y, octaveLabelWidth, octaveLabelHeight,
+                    juce::Justification::centredLeft, false);
+    }
 
     // The curve itself. Reads through PitchCurve::valueAt(), which is safe to
     // call from this (message) thread -- see PitchCurve.h's class comment --
@@ -172,16 +314,36 @@ void PitchCurvePlot::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xffa0d8ff));
     g.strokePath (path, juce::PathStrokeType (2.0f));
 
-    // Point handles, the one being dragged drawn brighter and larger.
-    for (const auto& w : working)
+    // Point handles: the one being dragged is brighter and larger, and the one
+    // merely under the mouse wears a ring. The ring is what says WHICH point the
+    // tooltip is talking about when two of them sit close together.
+    for (int i = 0; i < (int) working.size(); ++i)
     {
+        const auto& w = working[(size_t) i];
+
         const juce::Point<float> p (t01ToX (w.t01), semitonesToY (w.semitones));
         const bool isDragging = (w.id == draggingId);
+        const bool isHovered  = (i == hoveredIndex) && ! isDragging;
         const float r = isDragging ? 6.0f : 4.5f;
+
+        if (isHovered)
+        {
+            g.setColour (juce::Colour (0x8000d4ff));
+            g.drawEllipse (p.x - r - 3.0f, p.y - r - 3.0f,
+                           (r + 3.0f) * 2.0f, (r + 3.0f) * 2.0f, 1.5f);
+        }
 
         g.setColour (isDragging ? juce::Colour (0xffffffff) : juce::Colour (0xff00d4ff));
         g.fillEllipse (p.x - r, p.y - r, r * 2.0f, r * 2.0f);
     }
+
+    // The frame, drawn LAST so nothing crosses it -- a curve that reaches the
+    // full +/-24 would otherwise sit on top of its own boundary. Dimmer than
+    // the panel's own border on purpose: this is the plot inside the window,
+    // not a second window, and two edges of equal weight would read as one box
+    // drawn twice.
+    g.setColour (juce::Colour (0xff00d4ff).withAlpha (0.45f));
+    g.drawRect (area, 1.0f);
 }
 
 void PitchCurvePlot::mouseDown (const juce::MouseEvent& event)
@@ -209,8 +371,8 @@ void PitchCurvePlot::mouseDown (const juce::MouseEvent& event)
     if ((int) working.size() >= spacedust::PitchCurve::maxPoints)
         return;   // At the cap -- see PitchCurve::maxPoints. Move or remove one first.
 
-    const float t01      = xToT01 (event.position.x);
-    const float semitones = yToSemitones (event.position.y);
+    const float t01      = snapTime (xToT01 (event.position.x), event.mods);
+    const float semitones = snapSemitones (yToSemitones (event.position.y), event.mods);
 
     working.push_back ({ t01, semitones, nextId });
     draggingId = nextId;
@@ -224,8 +386,8 @@ void PitchCurvePlot::mouseDrag (const juce::MouseEvent& event)
     if (draggingId < 0)
         return;
 
-    const float t01       = xToT01 (event.position.x);
-    const float semitones  = yToSemitones (event.position.y);
+    const float t01       = snapTime (xToT01 (event.position.x), event.mods);
+    const float semitones  = snapSemitones (yToSemitones (event.position.y), event.mods);
 
     for (auto& w : working)
     {
@@ -240,9 +402,97 @@ void PitchCurvePlot::mouseDrag (const juce::MouseEvent& event)
     commit();
 }
 
-void PitchCurvePlot::mouseUp (const juce::MouseEvent&)
+void PitchCurvePlot::mouseUp (const juce::MouseEvent& event)
 {
     draggingId = -1;
+
+    // The point may have moved out from under the mouse, or a right-click may
+    // have just removed the one the index pointed at -- either way the stored
+    // index is about to be wrong. Re-ask rather than keep it.
+    const int nowOver = findNearest (event.position);
+
+    if (nowOver != hoveredIndex)
+    {
+        hoveredIndex = nowOver;
+        repaint();
+    }
+}
+
+void PitchCurvePlot::mouseDoubleClick (const juce::MouseEvent& event)
+{
+    const int hit = findNearest (event.position);
+
+    if (hit < 0)
+        return;
+
+    working.erase (working.begin() + hit);
+
+    // The point the hover ring and the tooltip were pointing at has just gone,
+    // and the index would otherwise name whichever point slid into its place.
+    hoveredIndex = -1;
+    draggingId   = -1;
+
+    commit();
+}
+
+void PitchCurvePlot::mouseMove (const juce::MouseEvent& event)
+{
+    const int nowOver = findNearest (event.position);
+
+    if (nowOver == hoveredIndex)
+        return;
+
+    hoveredIndex = nowOver;
+    repaint();
+}
+
+void PitchCurvePlot::mouseExit (const juce::MouseEvent&)
+{
+    if (hoveredIndex < 0)
+        return;
+
+    hoveredIndex = -1;
+    repaint();
+}
+
+juce::String PitchCurvePlot::describeSemitones (float semitones)
+{
+    const bool whole = (semitones == std::floor (semitones));
+    const juce::String number (semitones, whole ? 0 : 2);
+
+    return (semitones > 0.0f ? "+" : "") + number + " st";
+}
+
+juce::String PitchCurvePlot::describeTime (float t01) const
+{
+    if (gridSynced && gridBeats > 0.0)
+    {
+        // Beats are counted from one, the way a musician counts them.
+        const double beat = (double) t01 * gridBeats + 1.0;
+
+        return "beat " + juce::String (beat, 2).trimCharactersAtEnd ("0")
+                                               .trimCharactersAtEnd (".");
+    }
+
+    return juce::String (juce::roundToInt (t01 * 100.0f)) + "% in";
+}
+
+juce::String PitchCurvePlot::getTooltip()
+{
+    if (hoveredIndex >= 0 && hoveredIndex < (int) working.size())
+    {
+        const auto& w = working[(size_t) hoveredIndex];
+
+        return describeSemitones (w.semitones) + " at " + describeTime (w.t01)
+             + "\nDrag to move it. Double-click or right-click to remove it."
+               "\nIt snaps to whole semitones and to 1/32 of the shape."
+               "\nHold Shift while dragging to put it anywhere.";
+    }
+
+    return "Click to add a point."
+           "\nPoints snap to whole semitones and to 1/32 of the shape."
+           "\nHold Shift while clicking or dragging to put one anywhere."
+           "\nDouble-click or right-click a point to remove it.";
 }
 
 //==============================================================================
@@ -289,6 +539,52 @@ PitchCurveEditorPanel::PitchCurveEditorPanel (spacedust::PitchCurve& curveToEdit
     timeLabel.setLookAndFeel (&lookAndFeel);
     addAndMakeVisible (timeLabel);
 
+    // A knob, not a dropdown, and it needs no list of its own: pitchCurveDivision
+    // is a Choice parameter, so its normalisable range is already 0..8 in steps
+    // of one, and JUCE's SliderParameterAttachment gives the knob a
+    // textFromValueFunction built on the parameter's own getText(). The readout
+    // therefore says "1/4" and "8/1" rather than 3 and 8, and the names can only
+    // ever come from the parameter -- there is no second list here to fall out
+    // of step with the divisionBeats[] table in processBlock.
+    divisionSlider.setSliderStyle (juce::Slider::RotaryVerticalDrag);
+    divisionSlider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 55, 18);
+    divisionSlider.setLookAndFeel (&lookAndFeel);
+    divisionAttachment = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (
+        stateToUse, "pitchCurveDivision", divisionSlider);
+
+    // The grid under the curve counts whatever this knob says, so it has to
+    // follow every move of it -- including moves that come from the host rather
+    // than from the mouse, which is why this is onValueChange and not a drag
+    // callback.
+    divisionSlider.onValueChange = [this] { updateSyncControls(); };
+    addChildComponent (divisionSlider);
+
+    divisionLabel.setText ("Division", juce::dontSendNotification);
+    divisionLabel.setJustificationType (juce::Justification::centred);
+    divisionLabel.setColour (juce::Label::textColourId, juce::Colour (0xffa0d8ff));
+    divisionLabel.setFont (lookAndFeel.getBodyFont (12.0f, true));
+    divisionLabel.setLookAndFeel (&lookAndFeel);
+    addChildComponent (divisionLabel);
+
+    syncButton.setColour (juce::ToggleButton::textColourId, juce::Colour (0xffa0d8ff));
+    syncButton.setLookAndFeel (&lookAndFeel);
+    syncAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        stateToUse, "pitchCurveSync", syncButton);
+
+    // onStateChange rather than onClick: the parameter can also move from the
+    // HOST -- automation, a preset load -- and the swap has to follow it then
+    // too, not only when the button itself is pressed.
+    syncButton.onStateChange = [this] { updateSyncControls(); };
+    addAndMakeVisible (syncButton);
+
+    loopButton.setColour (juce::ToggleButton::textColourId, juce::Colour (0xffa0d8ff));
+    loopButton.setLookAndFeel (&lookAndFeel);
+    loopAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (
+        stateToUse, "pitchCurveLoop", loopButton);
+    addAndMakeVisible (loopButton);
+
+    updateSyncControls();
+
     closeButton.setLookAndFeel (&lookAndFeel);
     closeButton.onClick = [this] { hidePanel(); };
     addAndMakeVisible (closeButton);
@@ -305,6 +601,10 @@ PitchCurveEditorPanel::~PitchCurveEditorPanel()
 
     timeSlider.setLookAndFeel (nullptr);
     timeLabel.setLookAndFeel (nullptr);
+    divisionSlider.setLookAndFeel (nullptr);
+    divisionLabel.setLookAndFeel (nullptr);
+    syncButton.setLookAndFeel (nullptr);
+    loopButton.setLookAndFeel (nullptr);
     closeButton.setLookAndFeel (nullptr);
 }
 
@@ -335,15 +635,59 @@ void PitchCurveEditorPanel::resized()
 
     area = area.reduced (frameInset, 0).withTrimmedBottom (frameInset);
 
-    constexpr int timeRowHeight = 74;
-    auto timeRow = area.removeFromBottom (timeRowHeight);
+    // The controls read top to bottom as a sentence: the two switches decide
+    // WHAT the knob under them means, so they sit above it rather than beside
+    // it, and the knob is the one thing the eye lands on last.
+    constexpr int controlsRowHeight = 104;
+    auto controlsRow = area.removeFromBottom (controlsRowHeight);
 
-    constexpr int timeKnobSize = 56;
-    auto timeCol = timeRow.withSizeKeepingCentre (timeKnobSize, timeRowHeight);
-    timeLabel.setBounds (timeCol.removeFromTop (16));
-    timeSlider.setBounds (timeCol.withSizeKeepingCentre (timeKnobSize, timeKnobSize));
+    constexpr int toggleHeight = 26;
+    constexpr int toggleWidth  = 84;
+    constexpr int toggleGap    = 12;
+
+    auto togglePair = controlsRow.removeFromTop (toggleHeight)
+                                 .withSizeKeepingCentre (toggleWidth * 2 + toggleGap,
+                                                         toggleHeight);
+    syncButton.setBounds (togglePair.removeFromLeft (toggleWidth));
+    togglePair.removeFromLeft (toggleGap);
+    loopButton.setBounds (togglePair.removeFromLeft (toggleWidth));
+
+    controlsRow.removeFromTop (6);
+
+    // Time and Division are given the SAME rectangle, because only one of them
+    // is ever visible -- see updateSyncControls(). Two knobs in one place, not
+    // two places with one empty.
+    constexpr int knobSize  = 56;
+    constexpr int knobColumn = 96;
+    auto knobCol = controlsRow.withSizeKeepingCentre (knobColumn, controlsRow.getHeight());
+    const auto labelRow = knobCol.removeFromTop (16);
+    timeLabel.setBounds (labelRow);
+    divisionLabel.setBounds (labelRow);
+
+    const auto knobBounds = knobCol.withSizeKeepingCentre (knobSize, knobSize);
+    timeSlider.setBounds (knobBounds);
+    divisionSlider.setBounds (knobBounds);
 
     plot.setBounds (area.withTrimmedBottom (8));
+}
+
+void PitchCurveEditorPanel::updateSyncControls()
+{
+    const bool synced = syncButton.getToggleState();
+
+    timeSlider.setVisible (! synced);
+    timeLabel.setVisible (! synced);
+    divisionSlider.setVisible (synced);
+    divisionLabel.setVisible (synced);
+
+    // The plot's vertical grid counts the same division the shape is played to.
+    // Clamped rather than trusted: the knob's value comes from a parameter a
+    // host can automate, and an out-of-range index here would read off the end
+    // of the beats table.
+    const int division = juce::jlimit (0, spacedust::numPitchCurveDivisions - 1,
+                                       (int) std::round (divisionSlider.getValue()));
+
+    plot.setTimeGrid (synced, spacedust::pitchCurveDivisionBeats[division]);
 }
 
 juce::Rectangle<int> PitchCurveEditorPanel::titleBarArea() const
@@ -428,9 +772,19 @@ void PitchCurveEditorPanel::OutsideClickWatcher::mouseDown (const juce::MouseEve
 void PitchCurveEditorPanel::showFor (juce::Component* anchorBox)
 {
     plot.refresh();
+    updateSyncControls();
 
-    constexpr int width  = 360;
-    constexpr int height = 300;
+    // Bigger than it was, for two reasons that both came in with this build.
+    // Wider: the octave numbers now sit down the left-hand edge and would
+    // otherwise crowd a curve drawn near t=0. Taller: 48 semitones over the old
+    // 186-pixel plot put the hairlines under four pixels apart, which is below
+    // where a grid stops reading as a grid.
+    // Taller than it was again: the switches moved from beside the knob to above
+    // it, which costs 30 pixels the plot must not pay for. 48 semitones over the
+    // plot this leaves puts the hairlines about five pixels apart, which is
+    // where a grid still reads as a grid.
+    constexpr int width  = 380;
+    constexpr int height = 380;
     setSize (width, height);
 
     if (auto* parent = getParentComponent())
@@ -438,7 +792,27 @@ void PitchCurveEditorPanel::showFor (juce::Component* anchorBox)
         if (! hasBeenMoved && anchorBox != nullptr)
         {
             const auto anchor = parent->getLocalArea (anchorBox, anchorBox->getLocalBounds());
-            setTopLeftPosition (anchor.getX(), anchor.getBottom() + 4);
+
+            const int usableBottom = keepAboveBottom > 0
+                                   ? juce::jmin (parent->getHeight(), keepAboveBottom)
+                                   : parent->getHeight();
+
+            // Below the box when there is room, above it when there is not, and
+            // never ON it. The box is the control that OPENS this panel, so a
+            // panel lying over its own button turns the next click meant for
+            // that button into a click in the plot -- which draws a point
+            // instead of doing nothing, and leaves the player wondering where
+            // the point came from. The old 300-pixel panel already overlapped
+            // the box once the keyboard strip pushed it up; at 380 it covers it
+            // outright (Giuseppe, 2026-09-01).
+            const int below = anchor.getBottom() + 4;
+            const int above = anchor.getY() - getHeight() - 4;
+
+            const int y = (below + getHeight() <= usableBottom) ? below
+                        : (above >= 0                          ? above
+                                                               : below);
+
+            setTopLeftPosition (anchor.getX(), y);
         }
 
         clampInsideParent();

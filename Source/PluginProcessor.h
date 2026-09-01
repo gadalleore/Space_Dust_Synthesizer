@@ -26,6 +26,7 @@
 #include "ResampleCapture.h"
 #include "ModMatrixState.h"
 #include "PitchCurveState.h"
+#include "PitchCurveDivisions.h"
 
 //==============================================================================
 /**
@@ -554,6 +555,18 @@ private:
     // the note stack desyncs from the host across a loop → wrong / stuck notes.
     bool   wasPlayingState = false;
     double lastPpqPosition = 0.0;
+
+    /** The host's tempo, read once per block on the audio thread.
+
+        Everything else that wants tempo -- the LFOs, the delay -- asks the
+        playhead directly, and can, because it runs inside processBlock().
+        updateVoicesWithParameters() cannot: it works out the pitch curve's
+        tempo-synced duration, and it is ALSO called from prepareToPlay() and
+        setStateInformation(), where reaching into the playhead would mean
+        reading the wrapper's process context from the message thread while the
+        audio thread writes it. It reads this instead. 120 until a host says
+        otherwise, which is the same fallback every other sync path uses. */
+    std::atomic<double> lastKnownTempo { 120.0 };
 
     //==============================================================================
     // -- Effects chain chunking --

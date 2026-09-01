@@ -279,7 +279,12 @@ public:
     // SAME one, the way setLfoModAmounts points every voice at the same
     // compiled routings, so drawing a new shape reaches a held note immediately.
     void setPitchCurve(const spacedust::PitchCurve* curveToUse) noexcept { pitchCurve = curveToUse; }
-    void setPitchCurveTime(float seconds);  // 0-10 s
+    void setPitchCurveTime(float seconds);  // 0-60 s -- see the clamp's comment
+
+    /** One-shot (false, the default) or round and round (true). The voice is
+        told a plain bool: whether the duration above came from the Time knob
+        or from a tempo division is the processor's business, not a voice's. */
+    void setPitchCurveLoop(bool shouldLoop) noexcept { pitchCurveLoop = shouldLoop; }
 
     // Pitch bend (scaled by pitchBendAmount: 0-24 semitones) - separate from pitch envelope
     void setPitchBendAmount(float semitones);  // Range for pitch bend (0-24)
@@ -910,7 +915,8 @@ private:
     
     // Pitch curve (drawn shape, played over time from note-on)
     const spacedust::PitchCurve* pitchCurve = nullptr;  // Owned by the processor; not owned here
-    float pitchCurveTime = 0.0f;          // 0-10 s
+    float pitchCurveTime = 0.0f;          // 0-60 s (the Time knob reaches 10; sync reaches further)
+    bool  pitchCurveLoop = false;         // false == one-shot, the behaviour before looping existed
     float pitchEnvSamplesElapsed = 0.0f;  // Samples since note-on (for the curve's timebase)
     
     /** How far each LFO moves each per-sample destination, copied from the
