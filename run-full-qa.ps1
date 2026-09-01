@@ -67,8 +67,31 @@ Record 'safe-mode-marker' $hasMarker
 # comments/strings. Allow when the same line OR the next two lines contain a known
 # ownership-transfer call (setContentOwned, addVoice, std::unique_ptr, etc.).
 $ownershipPattern = 'setContentOwned|addVoice|return new|alertWindow|std::unique_ptr|make_unique|std::make_shared'
+$sourceFiles = @(Get-ChildItem -Path "$root/Source" -Include *.cpp,*.h -Recurse)
+
+# juce::OwnedArray<T>::add() TAKES ownership, so `array.add(new T(...))` is a
+# correct hand-over, not a leak. Rather than whitelist every `.add(new` -- which
+# would also bless juce::Array<T*>, where it really would leak -- collect the
+# names actually DECLARED as OwnedArray and allow only those. Two such adds
+# (lfoAssignButtons, modKnobs) failed CI on 2026-08-31 with no fault in the code.
+$ownedArrayNames = @()
+foreach ($file in $sourceFiles) {
+    foreach ($m in ([regex]'OwnedArray\s*<.*>\s*([A-Za-z_][A-Za-z_0-9]*)').Matches((Get-Content $file.FullName -Raw))) {
+        $ownedArrayNames += $m.Groups[1].Value
+    }
+}
+$ownedArrayNames = $ownedArrayNames | Sort-Object -Unique
+
+# Empty is possible (no OwnedArray anywhere), and an empty alternation would
+# match everything -- so an unmatchable pattern stands in for "allow nothing".
+$ownedAddPattern = if ($ownedArrayNames.Count -gt 0) {
+    '\b(' + (($ownedArrayNames | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')\s*\.\s*add\s*\('
+} else {
+    '(?!)'
+}
+
 $rawNewMatches = @()
-foreach ($file in (Get-ChildItem -Path "$root/Source" -Include *.cpp,*.h -Recurse)) {
+foreach ($file in $sourceFiles) {
     $lines = Get-Content $file.FullName
     for ($i = 0; $i -lt $lines.Length; $i++) {
         $line = $lines[$i]
@@ -78,6 +101,7 @@ foreach ($file in (Get-ChildItem -Path "$root/Source" -Include *.cpp,*.h -Recurs
         # Look at this line plus the next two for an ownership-transfer call
         $window = ($lines[$i..([Math]::Min($i + 2, $lines.Length - 1))]) -join "`n"
         if ($window -match $ownershipPattern) { continue }
+        if ($window -match $ownedAddPattern) { continue }
         $rawNewMatches += [pscustomobject]@{ File = $file.Name; Line = ($i + 1); Text = $line.Trim() }
     }
 }
