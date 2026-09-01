@@ -5778,10 +5778,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout SpaceDustAudioProcessor::cre
     // a new parameter inserted anywhere but the end renumbers every one after it
     // and moves the automation in every project that already used them. New
     // parameters go here, at the bottom.
+    // Defaults to ZERO, so Initialize Preset gives a patch that ignores how hard
+    // a note is played until the knob is raised. Init resets every parameter to
+    // its default, so this IS what Init does -- there is no separate Init value
+    // to set. A brand-new instance starts the same way, which is the point: the
+    // blank slate a player starts from and the one Init returns them to should
+    // not be two different sounds. Saved presets carry their own value and are
+    // untouched (Giuseppe, 2026-09-01).
     ADD_PARAM_WITH_LOG(params,
         std::make_unique<juce::AudioParameterFloat>(
             juce::ParameterID{"velocityAmount", 1}, "Velocity Amount",
-            juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 100.0f),
+            juce::NormalisableRange<float>(0.0f, 100.0f, 0.1f), 0.0f),
         "velocityAmount");
 
     //==========================================================================
