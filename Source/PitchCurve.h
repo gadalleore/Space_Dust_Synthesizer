@@ -54,6 +54,40 @@ namespace spacedust
         {
             float t01 = 0.0f;
             float semitones = 0.0f;
+
+            /** How the line LEAVING this point bows on its way to the next.
+
+                -1..+1, zero being straight, and positive always meaning the
+                middle of the segment sits ABOVE the straight line between its
+                ends -- whether that segment rises or falls. Keeping "positive
+                is up" true in both directions costs a sign flip when the shape
+                is published and saves the player from a control that reverses
+                itself halfway down a shape (see publish()).
+
+                The bow is SYMMETRIC about the middle of the segment: both
+                halves mirror each other, and the line meets its end points at
+                the same angle it leaves them. +/-1 is the monotonic limit --
+                at the extreme the middle sits a quarter of the segment's own
+                height off the straight line, and any further would fold the
+                line back on itself. See interpolate().
+
+                The LAST point's bend is meaningless: there is no segment after
+                it. It is kept, saved and restored anyway, so that dragging a
+                point past the end of the shape and back does not silently lose
+                the bend it had. */
+            float bend = 0.0f;
+
+            /** Where along the segment the bow PEAKS.
+
+                -1..+1, zero putting it exactly halfway. Positive leans it
+                towards the later of the two points, negative towards the
+                earlier. This is the axis you get by pulling the handle ALONG
+                the line rather than away from it, so one handle carries both
+                how far the line bows and where it bows most.
+
+                Costs the bow some depth as it leans -- see publish(). That is
+                the price of the line never folding back on itself. */
+            float skew = 0.0f;
         };
 
         /** Hard cap on point count.
@@ -73,7 +107,8 @@ namespace spacedust
         /** Points are kept sorted by time, so drawing right to left works.
             Silently ignored once pointCount() has reached maxPoints -- see
             maxPoints. */
-        void addPoint (float t01, float semitones);
+        void addPoint (float t01, float semitones,
+                       float bend = 0.0f, float skew = 0.0f);
 
         /** Replace every point at once, as a single atomic publish.
 
@@ -112,12 +147,30 @@ namespace spacedust
         struct Snapshot
         {
             Point points[maxPoints];
+
+            /** Each segment's bend, with its sign already resolved against the
+                direction that segment runs. See publish() for why that is
+                decided here, and interpolate() for the expression using it.
+
+                bendK[i] belongs to the segment from points[i] to points[i+1].
+                Zero is a straight line, and zero is what an unbent shape
+                stores, so nothing has to branch on "is this bent" -- the
+                straight case falls out of the same expression. */
+            float bendK[maxPoints] {};
+
+            /** Each segment's lean, straight through from Point::skew. Unlike
+                the bend it needs no sign resolving: leaning "towards the later
+                point" means the same thing whether the segment rises or
+                falls, because it is a lean along TIME. */
+            float skewK[maxPoints] {};
+
             int   count = 0;
             bool  flat  = true;
         };
 
-        /** Straight-line interpolation, shared so valueAt() has one definition. */
-        static float interpolate (const Point* pts, int count, float t01) noexcept;
+        /** Interpolation, shared so valueAt() has one definition. */
+        static float interpolate (const Point* pts, const float* bendK,
+                                  const float* skewK, int count, float t01) noexcept;
 
         /** Build a Snapshot from `points` and hand it over. Message thread. */
         void publish();

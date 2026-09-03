@@ -99,6 +99,65 @@ float PitchCurvePlot::snapSemitones (float semitones, const juce::ModifierKeys& 
     return std::round (semitones);
 }
 
+juce::Point<float> PitchCurvePlot::bendHandleFor (int index) const
+{
+    if (index < 0 || index + 1 >= (int) working.size())
+        return { -1000.0f, -1000.0f };
+
+    const float midT = (working[(size_t) index].t01
+                        + working[(size_t) index + 1].t01) * 0.5f;
+
+    // Read the height through the CURVE, not through the two end points, so the
+    // handle sits on the bent line rather than on the straight one it used to
+    // be. That is what lets it stay under the finger while a bend is dragged.
+    return { t01ToX (midT), semitonesToY (curve.valueAt (midT)) };
+}
+
+int PitchCurvePlot::bendHandleAt (juce::Point<float> position) const
+{
+    int   best         = -1;
+    float bestDistance = bendHitRadius;
+
+    for (int i = 0; i + 1 < (int) working.size(); ++i)
+    {
+        const float d = bendHandleFor (i).getDistanceFrom (position);
+
+        if (d <= bestDistance)
+        {
+            bestDistance = d;
+            best = i;
+        }
+    }
+
+    return best;
+}
+
+void PitchCurvePlot::paintBendHandle (juce::Graphics& g, int index) const
+{
+    const auto centre = bendHandleFor (index);
+
+    if (centre.x < 0.0f)
+        return;
+
+    const float r = bendHandleRadius;
+
+    // A filled disc first, so the icon reads against the curve line running
+    // underneath it rather than fighting with it.
+    g.setColour (juce::Colour (0xff0f0f26));
+    g.fillEllipse (centre.x - r, centre.y - r, r * 2.0f, r * 2.0f);
+
+    g.setColour (juce::Colour (0xff00d4ff));
+    g.drawEllipse (centre.x - r, centre.y - r, r * 2.0f, r * 2.0f, 1.2f);
+
+    // The glyph: a small arc bowing upwards, which is what the gesture does.
+    juce::Path arc;
+    arc.startNewSubPath (centre.x - r * 0.55f, centre.y + r * 0.35f);
+    arc.quadraticTo     (centre.x,             centre.y - r * 0.75f,
+                         centre.x + r * 0.55f, centre.y + r * 0.35f);
+
+    g.strokePath (arc, juce::PathStrokeType (1.4f));
+}
+
 float PitchCurvePlot::snapTime (float t01, const juce::ModifierKeys& mods) noexcept
 {
     if (mods.isShiftDown())
@@ -137,7 +196,7 @@ void PitchCurvePlot::commit()
     toPublish.reserve (working.size());
 
     for (const auto& w : working)
-        toPublish.push_back ({ w.t01, w.semitones });
+        toPublish.push_back ({ w.t01, w.semitones, w.bend, w.skew });
 
     // ONE atomic publish for the whole shape -- see PitchCurve::setPoints.
     // clear() + addPoint() in a loop would let a playing voice sample an
@@ -158,10 +217,13 @@ void PitchCurvePlot::refresh()
     for (int i = 0; i < n; ++i)
     {
         const auto p = curve.pointAt (i);
-        working.push_back ({ p.t01, p.semitones, nextId++ });
+        working.push_back ({ p.t01, p.semitones, p.bend, p.skew, nextId++ });
     }
 
-    draggingId = -1;
+    draggingId     = -1;
+    bendingSegment = -1;
+    hoveredIndex   = -1;
+    hoveredSegment = -1;
     repaint();
 }
 
@@ -314,6 +376,14 @@ void PitchCurvePlot::paint (juce::Graphics& g)
     g.setColour (juce::Colour (0xffa0d8ff));
     g.strokePath (path, juce::PathStrokeType (2.0f));
 
+    // The bend arc, under the points so a point is never hidden by it. Drawn
+    // for the segment under the mouse, and for one being dragged even after the
+    // pointer has run off the arc it grabbed.
+    if (bendingSegment >= 0)
+        paintBendHandle (g, bendingSegment);
+    else if (hoveredSegment >= 0)
+        paintBendHandle (g, hoveredSegment);
+
     // Point handles: the one being dragged is brighter and larger, and the one
     // merely under the mouse wears a ring. The ring is what says WHICH point the
     // tooltip is talking about when two of them sit close together.
@@ -350,11 +420,26 @@ void PitchCurvePlot::mouseDown (const juce::MouseEvent& event)
 {
     const int hit = findNearest (event.position);
 
+    // A point wins over a bend handle wherever the two are close enough to
+    // compete: the point is the thing you meant if you are on top of one.
+    const int handle = (hit >= 0) ? -1 : bendHandleAt (event.position);
+
     if (event.mods.isRightButtonDown())
     {
         if (hit >= 0)
         {
             working.erase (working.begin() + hit);
+            commit();
+        }
+        else if (handle >= 0)
+        {
+            // Right-clicking the arc straightens that segment, which is the
+            // only way back to a straight line short of dragging by eye. Both
+            // axes go, not just the bow: a segment with no bow but a leftover
+            // lean is straight on screen and would silently bend the moment it
+            // was bowed again.
+            working[(size_t) handle].bend = 0.0f;
+            working[(size_t) handle].skew = 0.0f;
             commit();
         }
 
@@ -368,13 +453,26 @@ void PitchCurvePlot::mouseDown (const juce::MouseEvent& event)
         return;
     }
 
+    if (handle >= 0)
+    {
+        // Start bending, and do NOT add a point: the arc sits on the curve, so
+        // without this every attempt to bend would drop a point on the line.
+        bendingSegment = handle;
+        bendStartValue = working[(size_t) handle].bend;
+        skewStartValue = working[(size_t) handle].skew;
+        bendStartMouse = event.position;
+        return;
+    }
+
     if ((int) working.size() >= spacedust::PitchCurve::maxPoints)
         return;   // At the cap -- see PitchCurve::maxPoints. Move or remove one first.
 
     const float t01      = snapTime (xToT01 (event.position.x), event.mods);
     const float semitones = snapSemitones (yToSemitones (event.position.y), event.mods);
 
-    working.push_back ({ t01, semitones, nextId });
+    // A new point leaves a STRAIGHT line behind it -- bending is a separate,
+    // deliberate gesture on the arc, never something a click inherits.
+    working.push_back ({ t01, semitones, 0.0f, 0.0f, nextId });
     draggingId = nextId;
     ++nextId;
 
@@ -383,6 +481,57 @@ void PitchCurvePlot::mouseDown (const juce::MouseEvent& event)
 
 void PitchCurvePlot::mouseDrag (const juce::MouseEvent& event)
 {
+    if (bendingSegment >= 0)
+    {
+        if (bendingSegment + 1 < (int) working.size())
+        {
+            const auto& p0 = working[(size_t) bendingSegment];
+            const auto& p1 = working[(size_t) bendingSegment + 1];
+
+            const juce::Point<float> a (t01ToX (p0.t01), semitonesToY (p0.semitones));
+            const juce::Point<float> b (t01ToX (p1.t01), semitonesToY (p1.semitones));
+
+            const float dx  = b.x - a.x;
+            const float dy  = b.y - a.y;
+            const float len = std::sqrt (dx * dx + dy * dy);
+
+            if (len >= 1.0f)
+            {
+                // The drag is measured against the LINE, not against the
+                // screen: away from it bows, along it leans. That is what makes
+                // the handle feel like it belongs to the line rather than being
+                // a knob that happens to sit on one, and it means a steep
+                // segment behaves like a shallow one.
+                //
+                // Both axes are measured from where the drag STARTED rather
+                // than from the previous move, so a slow drag and a quick one
+                // over the same distance end in the same place.
+                const float alongX = dx / len, alongY = dy / len;
+
+                // Rotate "along" by a quarter turn to get the side of the line.
+                // In screen space y grows downward, so this is the UP side --
+                // which is the side positive bend already means.
+                const float upX = alongY, upY = -alongX;
+
+                const auto  delta = event.position - bendStartMouse;
+                const float away  = delta.x * upX    + delta.y * upY;
+                const float along = delta.x * alongX + delta.y * alongY;
+
+                // A long segment should not need the same little flick as a
+                // short one to lean fully -- see minSkewDragRange.
+                const float skewRange = juce::jmax (minSkewDragRange, len * 0.5f);
+
+                auto& seg = working[(size_t) bendingSegment];
+                seg.bend = juce::jlimit (-1.0f, 1.0f, bendStartValue + away  / bendDragRange);
+                seg.skew = juce::jlimit (-1.0f, 1.0f, skewStartValue + along / skewRange);
+
+                commit();
+            }
+        }
+
+        return;
+    }
+
     if (draggingId < 0)
         return;
 
@@ -404,7 +553,8 @@ void PitchCurvePlot::mouseDrag (const juce::MouseEvent& event)
 
 void PitchCurvePlot::mouseUp (const juce::MouseEvent& event)
 {
-    draggingId = -1;
+    draggingId     = -1;
+    bendingSegment = -1;
 
     // The point may have moved out from under the mouse, or a right-click may
     // have just removed the one the index pointed at -- either way the stored
@@ -423,7 +573,20 @@ void PitchCurvePlot::mouseDoubleClick (const juce::MouseEvent& event)
     const int hit = findNearest (event.position);
 
     if (hit < 0)
+    {
+        // On the arc instead: straighten that segment, the same as right-click.
+        const int handle = bendHandleAt (event.position);
+
+        if (handle >= 0 && (working[(size_t) handle].bend != 0.0f
+                            || working[(size_t) handle].skew != 0.0f))
+        {
+            working[(size_t) handle].bend = 0.0f;
+            working[(size_t) handle].skew = 0.0f;
+            commit();
+        }
+
         return;
+    }
 
     working.erase (working.begin() + hit);
 
@@ -437,21 +600,24 @@ void PitchCurvePlot::mouseDoubleClick (const juce::MouseEvent& event)
 
 void PitchCurvePlot::mouseMove (const juce::MouseEvent& event)
 {
-    const int nowOver = findNearest (event.position);
+    const int nowOver   = findNearest (event.position);
+    const int nowOverSeg = (nowOver >= 0) ? -1 : bendHandleAt (event.position);
 
-    if (nowOver == hoveredIndex)
+    if (nowOver == hoveredIndex && nowOverSeg == hoveredSegment)
         return;
 
-    hoveredIndex = nowOver;
+    hoveredIndex   = nowOver;
+    hoveredSegment = nowOverSeg;
     repaint();
 }
 
 void PitchCurvePlot::mouseExit (const juce::MouseEvent&)
 {
-    if (hoveredIndex < 0)
+    if (hoveredIndex < 0 && hoveredSegment < 0)
         return;
 
-    hoveredIndex = -1;
+    hoveredIndex   = -1;
+    hoveredSegment = -1;
     repaint();
 }
 
@@ -479,6 +645,30 @@ juce::String PitchCurvePlot::describeTime (float t01) const
 
 juce::String PitchCurvePlot::getTooltip()
 {
+    if (hoveredSegment >= 0 && hoveredSegment < (int) working.size())
+    {
+        const float bend = working[(size_t) hoveredSegment].bend;
+        const float skew = working[(size_t) hoveredSegment].skew;
+
+        juce::String state ("This line is straight.");
+
+        if (bend != 0.0f)
+        {
+            state = "This line is bent by "
+                  + juce::String (juce::roundToInt (bend * 100.0f)) + "%";
+
+            state += (skew == 0.0f)
+                   ? juce::String (".")
+                   : ", leaning " + juce::String (juce::roundToInt (std::abs (skew) * 100.0f))
+                       + "% " + (skew > 0.0f ? "right." : "left.");
+        }
+
+        return state
+             + "\nDrag away from the line to bend it."
+               "\nDrag along the line to lean the bend towards either point."
+               "\nDouble-click or right-click to straighten it.";
+    }
+
     if (hoveredIndex >= 0 && hoveredIndex < (int) working.size())
     {
         const auto& w = working[(size_t) hoveredIndex];

@@ -362,6 +362,26 @@ add_custom_target(notelock-test
     COMMENT "Running Note Lock grid tests")
 
 #==============================================================================
+# pitchcurve-test — standalone check of the drawn pitch shape's interpolation.
+# valueAt() runs once per sample in every voice and is no longer a straight
+# line: it bows and leans. Symmetry, direction, and above all that nothing ever
+# folds back on itself are properties with right answers, and none of it needs
+# JUCE, so it builds in seconds on its own.
+# Usage: cmake --build build --config Release --target pitchcurve-test
+#==============================================================================
+add_executable(pitchcurve_test
+    tools/pitchcurvetest/pitchcurve_test.cpp
+    Source/PitchCurve.cpp)
+set_target_properties(pitchcurve_test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/pitchcurve_test")
+target_compile_features(pitchcurve_test PRIVATE cxx_std_17)
+
+add_custom_target(pitchcurve-test
+    COMMAND $<TARGET_FILE:pitchcurve_test>
+    DEPENDS pitchcurve_test
+    COMMENT "Running pitch curve interpolation tests")
+
+#==============================================================================
 # wavetable-test — standalone check of the sample-import analysis.
 # Pitch detection, harmonic measurement and band-limited table rendering all have
 # right answers that can be checked against generated signals of known pitch and

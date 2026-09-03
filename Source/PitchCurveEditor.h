@@ -108,6 +108,12 @@ private:
     {
         float t01 = 0.0f;
         float semitones = 0.0f;
+
+        /** How the line leaving this point bows, and where the bow peaks --
+            see PitchCurve::Point. */
+        float bend = 0.0f;
+        float skew = 0.0f;
+
         int   id = 0;
     };
 
@@ -191,6 +197,24 @@ private:
         a snapped point reads "+7 st", not "+7.00 st". */
     static juce::String describeSemitones (float semitones);
 
+    /** Where the bend handle for the segment leaving point `index` sits.
+
+        On the curve itself, halfway along the segment in TIME -- so it rides
+        the line it bends and stays under the finger as the bend takes hold,
+        rather than floating off the shape it belongs to. */
+    juce::Point<float> bendHandleFor (int index) const;
+
+    /** Index of the segment whose bend handle is under this position, or -1.
+
+        Only ever one segment: handles sit at segment midpoints, so two can
+        only compete on a segment too short to hold a handle, and the nearer
+        wins. Points are tested BEFORE this by every caller -- a point is the
+        thing you meant if you are on top of one. */
+    int bendHandleAt (juce::Point<float> position) const;
+
+    /** Draws the little arc that says "this line can be bent". */
+    void paintBendHandle (juce::Graphics& g, int index) const;
+
     /** Index into `working` of the point under the mouse, or -1.
 
         Kept as state because JUCE asks a component WHAT to say without telling
@@ -198,6 +222,37 @@ private:
         the hover ring, so the tooltip's subject is visible when two points sit
         close enough together to be ambiguous. */
     int hoveredIndex = -1;
+
+    /** Segment whose bend handle is under the mouse, or -1. The icon appears
+        only here: an arc drawn on every segment at all times would be six more
+        things to look at on a shape that is mostly about its points. */
+    int hoveredSegment = -1;
+
+    /** Set while a bend is being dragged, with what it started from, so the
+        drag is measured from where it began rather than accumulating rounding
+        from each small move. */
+    int   bendingSegment   = -1;
+    float bendStartValue   = 0.0f;
+    float skewStartValue   = 0.0f;
+    juce::Point<float> bendStartMouse;
+
+    /** How far the mouse travels AWAY from the line for the full -1..+1 of
+        bend. */
+    static constexpr float bendDragRange = 90.0f;
+
+    /** The shortest travel ALONG the line that will lean the bow fully. Real
+        segments use half their own length instead, so a long line does not
+        need the same little flick as a short one -- this is only the floor,
+        for segments too short to measure against themselves. */
+    static constexpr float minSkewDragRange = 40.0f;
+
+    /** How near the handle the mouse has to be for the icon to appear and take
+        the click. Larger than a point's hitRadius because the handle is a
+        smaller target that sits on a line the mouse is often near anyway. */
+    static constexpr float bendHitRadius = 9.0f;
+
+    /** The arc icon's drawn size. */
+    static constexpr float bendHandleRadius = 7.0f;
 
     spacedust::PitchCurve& curve;
 
